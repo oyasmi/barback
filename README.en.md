@@ -157,3 +157,7 @@ The full documents are in Simplified Chinese:
 
 - [Requirements](docs/requirements.md) — positioning, scope, user journeys, itemized requirements
 - [Design](docs/design.md) — architecture, state machines, data model, GUI, packaging and test strategy
+
+## License
+
+[Apache License 2.0](LICENSE) © 2026 oyasmi

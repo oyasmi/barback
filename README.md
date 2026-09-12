@@ -153,3 +153,7 @@ Tests/                 CoreTests 纯函数单测 · ProcessTests 真实进程 ·
 
 - [需求文档](docs/requirements.md)——定位、范围、用户路径、逐条需求
 - [设计文档](docs/design.md)——架构、状态机、数据模型、GUI、打包与测试策略
+
+## 许可证
+
+[Apache License 2.0](LICENSE) © 2026 oyasmi
