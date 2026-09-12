@@ -33,10 +33,10 @@ final class StatusItemController: NSObject, NSMenuDelegate {
             symbolName = "exclamationmark.triangle.fill"
         } else if snapshot.oneshotRunningCount > 0 {
             symbolName = "circle.dotted"
-        } else if snapshot.stoppedCount > 0 {
-            symbolName = "cup.and.saucer"
+        } else if snapshot.runningCount > 0 {
+            symbolName = "wineglass.fill"
         } else {
-            symbolName = "cup.and.saucer.fill"
+            symbolName = "wineglass"
         }
         let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "Barback")
         image?.isTemplate = true
