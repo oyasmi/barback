@@ -111,7 +111,7 @@ final class WindowController: NSObject, NSWindowDelegate {
     func showPreferencesWindow() {
         if preferencesWindow == nil {
             let view = PreferencesWindowView(appState: appState)
-            let window = makeWindow(title: "偏好设置", size: NSSize(width: 520, height: 420), content: view)
+            let window = makeWindow(title: "偏好设置", size: NSSize(width: 480, height: 520), content: view)
             window.delegate = self
             preferencesWindow = window
         }

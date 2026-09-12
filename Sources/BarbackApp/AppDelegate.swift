@@ -12,8 +12,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var windowController: WindowController!
     private var onboardingWindow: NSWindow?
     private var isTerminating = false
+    /// Last time each (program, notification kind) pair was posted, for APP-4 debouncing.
+    private var lastNotified: [String: Date] = [:]
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        Preferences.registerDefaults()
         do {
             try AppPaths.ensureDirectoriesExist()
             store = try Store(dbPath: AppPaths.dbPath, backupsDir: AppPaths.backupsDir)
@@ -36,11 +39,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self?.appState.snapshot = snapshot
             self?.statusItemController.refreshIcon()
         }
+        // Both callbacks fire on the supervisor queue; hop to main before touching the
+        // debounce table or AppKit.
         supervisor.onNotify = { [weak self] kind in
-            self?.postNotification(for: kind)
+            DispatchQueue.main.async { self?.postNotification(for: kind) }
         }
         supervisor.onOneshotNotify = { [weak self] program, outcome, duration in
-            self?.postOneshotNotification(program: program, outcome: outcome, duration: duration)
+            DispatchQueue.main.async {
+                self?.postOneshotNotification(program: program, outcome: outcome, duration: duration)
+            }
         }
 
         // UNUserNotificationCenter requires a real .app bundle identity; guard so running
@@ -94,28 +101,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func postNotification(for kind: NotificationKind) {
         guard Bundle.main.bundleIdentifier != nil else { return }
         let content = UNMutableNotificationContent()
+        let debounceKey: String
         switch kind {
         case .enteredFatal(let name):
+            guard Preferences.notifyFatal else { return }
+            debounceKey = "fatal:\(name)"
             content.title = "服务启动失败"
             content.body = "\(name) 已进入 FATAL 状态，重试已停止。"
         case .unexpectedRestart(let name):
+            guard Preferences.notifyRestart else { return }
+            debounceKey = "restart:\(name)"
             content.title = "服务已重启"
             content.body = "\(name) 意外退出，已自动重启。"
         case .stopTimeout(let name):
+            // Grouped under the FATAL switch: both are "这个服务出问题了" alerts.
+            guard Preferences.notifyFatal else { return }
+            debounceKey = "stopTimeout:\(name)"
             content.title = "停止超时"
             content.body = "\(name) 未在期限内退出，已强制终止。"
         }
+        guard passesDebounce(key: debounceKey) else { return }
         let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
         UNUserNotificationCenter.current().add(request)
     }
 
     private func postOneshotNotification(program: Program, outcome: OneshotState, duration: TimeInterval) {
-        guard Bundle.main.bundleIdentifier != nil else { return }
+        guard Bundle.main.bundleIdentifier != nil, Preferences.notifyOneshot else { return }
         let content = UNMutableNotificationContent()
         content.title = program.name
         content.body = "\(outcome.displayText) · \(String(format: "%.1fs", duration))"
+        // Deliberately not debounced: a one-shot only finishes because someone ran it, so
+        // dropping the second result inside the window would just lose an answer.
         let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
         UNUserNotificationCenter.current().add(request)
+    }
+
+    /// Drops a repeat of the same service notification inside the debounce window, so a
+    /// restart storm produces one banner instead of one per crash (requirements.md APP-4).
+    private func passesDebounce(key: String) -> Bool {
+        let now = Date()
+        if let last = lastNotified[key], now.timeIntervalSince(last) < Preferences.notifyDebounce {
+            return false
+        }
+        lastNotified[key] = now
+        return true
     }
 
     // MARK: - Termination (design.md §3.6)

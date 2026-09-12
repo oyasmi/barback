@@ -14,20 +14,6 @@ struct GeneralTab: View {
     var body: some View {
         Form {
             Section {
-                FormRow(label: "名称", messages: index.messages(.name)) {
-                    TextField("", text: $program.name)
-                        .frame(maxWidth: 260)
-                }
-                Toggle("启用", isOn: $program.enabled)
-            } header: {
-                FormSectionHeader(title: "标识")
-            } footer: {
-                Text("名称用于日志文件名与状态栏菜单，只能包含字母、数字、`.`、`_`、`-`。停用后不会随 Barback 启动，也不参与「全部启动」。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            Section {
                 FormRow(label: "命令", messages: index.messages(.command)) {
                     TextField("/usr/local/bin/foo --flag", text: $program.command, axis: .vertical)
                         .font(.system(.body, design: .monospaced))
@@ -51,6 +37,10 @@ struct GeneralTab: View {
             }
 
             Section {
+                FormRow(label: "名称", messages: index.messages(.name)) {
+                    TextField("", text: $program.name)
+                        .frame(maxWidth: 260)
+                }
                 FormRow(label: "分组") {
                     HStack {
                         TextField("默认", text: optionalText($program.groupName))
@@ -69,15 +59,30 @@ struct GeneralTab: View {
                 FormRow(label: "优先级") {
                     HStack(spacing: 8) {
                         IntField(value: $program.priority)
-                        Text("数字越小越先启动").font(.caption).foregroundStyle(.secondary)
+                        Text("越小越先启动").font(.caption).foregroundStyle(.secondary)
                     }
                 }
                 FormRow(label: "备注") {
                     TextField("", text: optionalText($program.notes), axis: .vertical)
                         .lineLimit(2...4)
                 }
+                Toggle("启用", isOn: $program.enabled)
             } header: {
-                FormSectionHeader(title: "组织")
+                FormSectionHeader(title: "标识与分组")
+            } footer: {
+                Text("名称用于日志文件名与状态栏菜单，只能包含字母、数字、`.`、`_`、`-`。停用后不会随 Barback 启动，也不参与「全部启动」。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section {
+                EnvironmentEditor(program: $program)
+            } header: {
+                FormSectionHeader(title: environmentTitle)
+            } footer: {
+                Text("每行一个 KEY=VALUE，覆盖登录环境快照中的同名变量；在 KEY 前加 `*` 标记敏感值，导出与诊断包中会打码。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
@@ -85,6 +90,10 @@ struct GeneralTab: View {
         .onChange(of: program.command) { _ in refreshHint() }
         .onChange(of: program.useShell) { _ in refreshHint() }
         .onChange(of: program.directory) { _ in refreshHint() }
+    }
+
+    private var environmentTitle: String {
+        program.environment.isEmpty ? "环境变量" : "环境变量（\(program.environment.count)）"
     }
 
     private func refreshHint() {
@@ -101,7 +110,7 @@ struct GeneralTab: View {
     }
 }
 
-// MARK: - 启动与重启（服务）
+// MARK: - 启动与停止（服务）
 
 struct StartupTab: View {
     @Binding var program: Program
@@ -173,6 +182,8 @@ struct StartupTab: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+
+            StopSection(program: $program, index: index)
         }
         .formStyle(.grouped)
     }
@@ -202,7 +213,7 @@ struct StartupTab: View {
     }
 }
 
-// MARK: - 执行（一次性命令）
+// MARK: - 执行与停止（一次性命令）
 
 struct ExecutionTab: View {
     @Binding var program: Program
@@ -228,6 +239,8 @@ struct ExecutionTab: View {
             } header: {
                 FormSectionHeader(title: "执行", reset: resetExecution)
             }
+
+            StopSection(program: $program, index: index)
         }
         .formStyle(.grouped)
     }
@@ -241,39 +254,38 @@ struct ExecutionTab: View {
     }
 }
 
-// MARK: - 停止
+// MARK: - 停止（服务与一次性命令共用）
 
-struct StopTab: View {
+/// The stop settings, shown as the last section of whichever lifecycle tab the program kind
+/// gets — "启动与停止" for services, "执行与停止" for one-shots.
+struct StopSection: View {
     @Binding var program: Program
     let index: FieldErrorIndex
 
     var body: some View {
-        Form {
-            Section {
-                FormRow(label: "停止信号") {
-                    Picker("", selection: $program.stopSignal) {
-                        ForEach(["TERM", "INT", "HUP", "QUIT"], id: \.self) { Text($0).tag($0) }
-                    }
-                    .labelsHidden()
-                    .frame(maxWidth: 140)
+        Section {
+            FormRow(label: "停止信号") {
+                Picker("", selection: $program.stopSignal) {
+                    ForEach(["TERM", "INT", "HUP", "QUIT"], id: \.self) { Text($0).tag($0) }
                 }
-                FormRow(label: "等待秒数", messages: index.messages(.number("stopWaitSeconds"))) {
-                    HStack(spacing: 6) {
-                        IntField(value: $program.stopWaitSeconds)
-                        Text("秒后发送 KILL").font(.caption).foregroundStyle(.secondary)
-                    }
-                }
-                Toggle("按进程组停止", isOn: $program.stopAsGroup)
-                Toggle("按进程组强杀", isOn: $program.killAsGroup)
-            } header: {
-                FormSectionHeader(title: "停止", reset: resetStop)
-            } footer: {
-                Text("按进程组操作会把信号发给整棵子进程树，适合会派生子进程的服务。")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                .labelsHidden()
+                .frame(maxWidth: 140)
             }
+            FormRow(label: "强杀等待", messages: index.messages(.number("stopWaitSeconds"))) {
+                HStack(spacing: 6) {
+                    IntField(value: $program.stopWaitSeconds)
+                    Text("秒后发送 KILL").font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            Toggle("停止时发送给整个进程组", isOn: $program.stopAsGroup)
+            Toggle("强杀时发送给整个进程组", isOn: $program.killAsGroup)
+        } header: {
+            FormSectionHeader(title: "停止", reset: resetStop)
+        } footer: {
+            Text("按进程组发送会把信号送达整棵子进程树，适合会派生子进程的命令。")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
-        .formStyle(.grouped)
     }
 
     private func resetStop() {
@@ -287,30 +299,28 @@ struct StopTab: View {
 
 // MARK: - 环境变量
 
-struct EnvironmentTab: View {
+/// The KEY=VALUE editor, embedded as a section of 常规 rather than a tab of its own.
+struct EnvironmentEditor: View {
     @Binding var program: Program
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("每行一个 KEY=VALUE")
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Text("\(program.environment.count) 个变量")
-                    .foregroundStyle(.secondary)
+        TextEditor(text: envBinding)
+            .font(.system(.body, design: .monospaced))
+            .frame(minHeight: 120)
+            .scrollContentBackground(.hidden)
+            .padding(4)
+            .overlay(alignment: .topLeading) {
+                if program.environment.isEmpty {
+                    Text("FOO=bar")
+                        .font(.system(.body, design: .monospaced))
+                        .foregroundStyle(.tertiary)
+                        .padding(.horizontal, 9)
+                        .padding(.vertical, 8)
+                        .allowsHitTesting(false)
+                }
             }
-            .font(.caption)
-
-            TextEditor(text: envBinding)
-                .font(.system(.body, design: .monospaced))
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.secondary.opacity(0.3)))
-
-            Text("在 KEY 前加 `*` 标记敏感值（保存后在导出与诊断包中打码）。这里的变量会覆盖登录环境快照中的同名变量。")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .padding(20)
+            .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
+            .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Color.secondary.opacity(0.3)))
     }
 
     private var envBinding: Binding<String> {

@@ -15,8 +15,6 @@ enum FormTab: String, CaseIterable, Identifiable {
     case general
     case startup
     case execution
-    case stop
-    case environment
     case log
 
     var id: String { rawValue }
@@ -24,18 +22,16 @@ enum FormTab: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .general: return "常规"
-        case .startup: return "启动与重启"
-        case .execution: return "执行"
-        case .stop: return "停止"
-        case .environment: return "环境"
+        case .startup: return "启动与停止"
+        case .execution: return "执行与停止"
         case .log: return "日志"
         }
     }
 
     static func tabs(for kind: ProgramKind) -> [FormTab] {
         switch kind {
-        case .service: return [.general, .startup, .stop, .environment, .log]
-        case .oneshot: return [.general, .execution, .stop, .environment, .log]
+        case .service: return [.general, .startup, .log]
+        case .oneshot: return [.general, .execution, .log]
         }
     }
 
@@ -43,10 +39,12 @@ enum FormTab: String, CaseIterable, Identifiable {
     var fields: [FormField] {
         switch self {
         case .general: return [.name, .command, .directory]
-        case .startup: return [.number("startSeconds"), .number("startRetries"), .number("backoffBase"), .number("backoffMax")]
-        case .execution: return [.number("timeoutSeconds"), .number("historyLimit")]
-        case .stop: return [.number("stopWaitSeconds")]
-        case .environment, .log: return []
+        case .startup:
+            return [.number("startSeconds"), .number("startRetries"), .number("backoffBase"),
+                    .number("backoffMax"), .number("stopWaitSeconds")]
+        case .execution:
+            return [.number("timeoutSeconds"), .number("historyLimit"), .number("stopWaitSeconds")]
+        case .log: return []
         }
     }
 }

@@ -90,6 +90,8 @@ struct HistoryWindowView: View {
 private struct RunOutputSheet: View {
     let run: RunRecord
     @Environment(\.dismiss) private var dismiss
+    @AppStorage(Preferences.Key.logFontSize) private var fontSize = 11.0
+
     var body: some View {
         VStack {
             HStack {
@@ -98,7 +100,7 @@ private struct RunOutputSheet: View {
                 Button("关闭") { dismiss() }
             }.padding()
             if let path = run.logPath {
-                LogTextView(text: (try? String(contentsOfFile: path, encoding: .utf8)) ?? "(无输出)")
+                LogTextView(text: (try? String(contentsOfFile: path, encoding: .utf8)) ?? "(无输出)", fontSize: fontSize)
             } else {
                 Text("无输出文件").foregroundStyle(.secondary)
             }

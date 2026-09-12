@@ -76,8 +76,14 @@ enum ProgramMenuBuilder {
         return item
     }
 
+    /// Compact density trims the top-level lines to glyph + name and leans on the glyph for
+    /// state; nothing is lost, the detail is still one hover away in the submenu
+    /// (requirements.md APP-6 「菜单密度」).
     static func titleLine(for snap: ProgramSnapshot) -> String {
-        "\(statusGlyph(snap)) \(snap.program.name)  \(snap.statusText)"
+        guard Preferences.menuDensity == .normal else {
+            return "\(statusGlyph(snap)) \(snap.program.name)"
+        }
+        return "\(statusGlyph(snap)) \(snap.program.name)  \(snap.statusText)"
     }
 
     private static func statusGlyph(_ snap: ProgramSnapshot) -> String {
@@ -160,7 +166,9 @@ enum ProgramMenuBuilder {
             let duration = run.duration.map { String(format: "%.1fs", $0) } ?? ""
             return "上次 \(outcome) · \(formatDate(run.startedAt)) · \(duration)"
         } ?? "尚未执行"
-        let item = NSMenuItem(title: "\(snap.program.name)  \(snap.oneshotState == .running ? "执行中" : lastResult)", action: nil, keyEquivalent: "")
+        let trailing = snap.oneshotState == .running ? "执行中" : lastResult
+        let title = Preferences.menuDensity == .normal ? "\(snap.program.name)  \(trailing)" : snap.program.name
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         item.representedObject = snap.id
         item.submenu = oneshotSubmenu(snap, appState: appState, windowController: windowController, lastResult: lastResult)
         return item

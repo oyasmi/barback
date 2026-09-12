@@ -10,6 +10,7 @@ struct LogViewerView: View {
     @StateObject private var model: LogTailModel
     @State private var searchText = ""
     @State private var isFollowing = true
+    @AppStorage(Preferences.Key.logFontSize) private var fontSize = 11.0
 
     init(programName: String, path: String) {
         self.programName = programName
@@ -34,7 +35,7 @@ struct LogViewerView: View {
             }
             .padding(8)
             Divider()
-            LogTextView(text: model.displayText(matching: searchText))
+            LogTextView(text: model.displayText(matching: searchText), fontSize: fontSize)
             Divider()
             HStack {
                 Text(path).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
@@ -52,17 +53,26 @@ struct LogViewerView: View {
 /// per design.md §4, for large-text performance.
 struct LogTextView: NSViewRepresentable {
     let text: String
+    var fontSize: Double = 11
 
     func makeNSView(context: Context) -> NSScrollView {
         let scrollView = NSTextView.scrollableTextView()
         let textView = scrollView.documentView as! NSTextView
         textView.isEditable = false
-        textView.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+        textView.font = .monospacedSystemFont(ofSize: fontSize, weight: .regular)
         return scrollView
     }
 
     func updateNSView(_ nsView: NSScrollView, context: Context) {
         guard let textView = nsView.documentView as? NSTextView else { return }
+        if textView.font?.pointSize != CGFloat(fontSize) {
+            let font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+            textView.font = font
+            // `font` only applies to new text, so restyle what is already laid out.
+            textView.textStorage?.addAttribute(
+                .font, value: font, range: NSRange(location: 0, length: textView.string.utf16.count)
+            )
+        }
         if textView.string != text {
             let wasAtBottom = isScrolledToBottom(nsView)
             textView.string = text

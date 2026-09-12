@@ -2,8 +2,9 @@ import SwiftUI
 import BarbackCore
 
 /// The detail pane: a fixed identity header, a segmented tab bar, and a sticky commit bar.
-/// Splitting the form into tabs keeps every page to roughly one screen instead of the
-/// two-to-three-screen scroll the single stacked form produced (design.md §6.5, CFG-3).
+/// Splitting the form into three tabs — 常规 / 生命周期 / 日志 — keeps every page to roughly
+/// one screen instead of the two-to-three-screen scroll the single stacked form produced
+/// (design.md §6.5, CFG-3).
 struct ProgramFormView: View {
     @Binding var program: Program
     let snapshot: ProgramSnapshot?
@@ -111,10 +112,6 @@ struct ProgramFormView: View {
             StartupTab(program: $program, index: index)
         case .execution:
             ExecutionTab(program: $program, index: index)
-        case .stop:
-            StopTab(program: $program, index: index)
-        case .environment:
-            EnvironmentTab(program: $program)
         case .log:
             LogTab(program: $program)
         }
