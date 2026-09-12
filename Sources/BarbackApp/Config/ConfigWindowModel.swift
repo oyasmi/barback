@@ -62,6 +62,8 @@ final class ConfigWindowModel: ObservableObject {
     }
 
     private var baseline: Program?
+    /// The last non-nil draft, kept only to feed `draftBinding` — see the comment there.
+    private var lastDraft: Program?
     private var validationTask: Task<Void, Never>?
 
     /// Set by `WindowController` to drive the title-bar edited dot.
@@ -77,6 +79,27 @@ final class ConfigWindowModel: ObservableObject {
     // MARK: - Derived state
 
     var isCreatingNew: Bool { currentId == Self.newDraftId }
+
+    /// A non-trapping `Binding` to the draft, for the detail form.
+    ///
+    /// `Binding($model.draft)` reads equivalently but force-unwraps on every get. Clearing
+    /// the draft — deleting the selected program, reverting a new one — does not retire the
+    /// form's bindings synchronously: SwiftUI still refreshes them once in the same
+    /// transaction that re-evaluates the parent, and that read crashes the app
+    /// (EXC_BREAKPOINT in `BindingOperations.ForceUnwrapping.get`). Falling back to the last
+    /// draft keeps that final read harmless, and the write is dropped because the form is on
+    /// its way out.
+    var draftBinding: Binding<Program> {
+        Binding(
+            get: { [weak self] in
+                self?.draft ?? self?.lastDraft ?? Program(name: "", kind: .service, command: "")
+            },
+            set: { [weak self] newValue in
+                guard let self, self.draft != nil else { return }
+                self.draft = newValue
+            }
+        )
+    }
 
     /// The live snapshot behind the current selection; `nil` while editing an unsaved draft.
     var selectedSnapshot: ProgramSnapshot? {
@@ -238,6 +261,7 @@ final class ConfigWindowModel: ObservableObject {
 
     private func setDraft(_ value: Program?, baseline: Program?) {
         self.baseline = baseline
+        if let value { lastDraft = value }
         self.draft = value
     }
 

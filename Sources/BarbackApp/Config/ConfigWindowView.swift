@@ -52,9 +52,9 @@ struct ConfigWindowView: View {
     // MARK: - Detail
 
     @ViewBuilder private var detail: some View {
-        if let draft = Binding($model.draft) {
+        if model.draft != nil {
             ProgramFormView(
-                program: draft,
+                program: model.draftBinding,
                 snapshot: model.selectedSnapshot,
                 errors: model.visibleErrors,
                 isDirty: model.isDirty,
