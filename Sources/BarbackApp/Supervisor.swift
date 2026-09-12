@@ -28,6 +28,10 @@ public final class Supervisor: @unchecked Sendable {
     private var timeoutTimers: [Int64: DispatchSourceTimer] = [:]
     private var backoffEndDates: [Int64: Date] = [:]
     private var isOwnChild: [Int64: Bool] = [:]
+    /// Programs whose runtime-affecting config changed while they were running, so the live
+    /// process no longer matches what is on disk (design.md §5 「运行时字段」). Cleared the
+    /// moment a fresh process is spawned with the new config.
+    private var needsRestartIds: Set<Int64> = []
     private var pendingTerminationHandlers: [() -> Void] = []
     private var recoveredCount = 0
 
@@ -232,7 +236,7 @@ public final class Supervisor: @unchecked Sendable {
                     try store.updateProgram(saved)
                     programs[saved.id] = saved
                     if let old, runtimeFieldsChanged(old, saved), isRunning(saved.id) {
-                        markNeedsRestart(saved.id)
+                        needsRestartIds.insert(saved.id)
                     }
                 }
                 try? backupConfig()
@@ -273,6 +277,7 @@ public final class Supervisor: @unchecked Sendable {
             programs.removeValue(forKey: id)
             serviceRuntimes.removeValue(forKey: id)
             oneshotRuntimes.removeValue(forKey: id)
+            needsRestartIds.remove(id)
             publishSnapshot()
             completion()
         }
@@ -280,12 +285,6 @@ public final class Supervisor: @unchecked Sendable {
 
     private func isRunning(_ id: Int64) -> Bool {
         serviceRuntimes[id]?.state.isActive == true || oneshotRuntimes[id]?.state.isActive == true
-    }
-
-    private func markNeedsRestart(_ id: Int64) {
-        var live = LiveRecord(programId: id, appBootId: appBootId, state: serviceRuntimes[id]?.state.rawValue ?? "STOPPED")
-        live.needsRestart = true
-        try? store.upsertLive(live)
     }
 
     private func runtimeFieldsChanged(_ a: Program, _ b: Program) -> Bool {
@@ -414,6 +413,8 @@ public final class Supervisor: @unchecked Sendable {
     }
 
     private func spawnService(program: Program, trigger: RunTrigger) {
+        // Whatever we are about to launch uses the saved config, so the drift is gone.
+        needsRestartIds.remove(program.id)
         do {
             let logFDs = try LogManager.openServiceLogs(
                 name: program.name,
@@ -559,6 +560,7 @@ public final class Supervisor: @unchecked Sendable {
     }
 
     private func spawnOneshot(program: Program) {
+        needsRestartIds.remove(program.id)
         do {
             let runId = try store.insertRun(RunRecord(programId: program.id, trigger: .manual))
             let logFDs = try LogManager.openRunLog(name: program.name, runId: runId, logsDir: AppPaths.logsDir)
@@ -632,20 +634,24 @@ public final class Supervisor: @unchecked Sendable {
         let snapshotPrograms: [ProgramSnapshot] = programs.values.map { program in
             let lastRun = (try? store.fetchRuns(programId: program.id, limit: 1))?.first
             let runCount = (try? store.fetchRuns(programId: program.id, limit: 100000))?.count ?? 0
+            let drifted = needsRestartIds.contains(program.id)
             if program.kind == .service {
                 let runtime = serviceRuntimes[program.id] ?? ServiceRuntime()
                 let remaining = backoffEndDates[program.id].map { max(0, $0.timeIntervalSinceNow) }
                 return ProgramSnapshot(
                     program: program, serviceState: runtime.state, oneshotState: nil,
                     pid: runtime.pid, startedAt: runtime.startedAt, retryCount: runtime.retryCount,
-                    backoffRemaining: remaining, lastRun: lastRun, runCount: runCount, needsRestart: false
+                    backoffRemaining: remaining, lastRun: lastRun, runCount: runCount,
+                    // Only worth saying while a process is actually running the old config.
+                    needsRestart: drifted && runtime.state.isActive
                 )
             } else {
                 let runtime = oneshotRuntimes[program.id] ?? OneshotRuntime()
                 return ProgramSnapshot(
                     program: program, serviceState: nil, oneshotState: runtime.state,
                     pid: runtime.pid, startedAt: nil, retryCount: 0,
-                    backoffRemaining: nil, lastRun: lastRun, runCount: runCount, needsRestart: false
+                    backoffRemaining: nil, lastRun: lastRun, runCount: runCount,
+                    needsRestart: drifted && runtime.state.isActive
                 )
             }
         }.sorted { $0.program.priority < $1.program.priority }

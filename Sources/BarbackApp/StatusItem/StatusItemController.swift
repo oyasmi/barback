@@ -1,15 +1,21 @@
 import AppKit
+import SwiftUI
 import BarbackCore
 
-/// Builds the two status-bar menus fresh each time they open (design.md §6.2) so idle
-/// time costs nothing: no persistent menu object, no timer while closed.
+/// Owns the status item and its two click targets: a SwiftUI panel on the left, the
+/// app-level `NSMenu` on the right (design.md §6.2).
+///
+/// Both are built only when opened and dropped when closed — the panel's per-second
+/// sampling therefore exists exactly while it is on screen, which is what keeps idle cost
+/// at zero (design.md §6.2 常态零开销).
 @MainActor
-final class StatusItemController: NSObject, NSMenuDelegate {
+final class StatusItemController: NSObject, NSPopoverDelegate {
     private let statusItem: NSStatusItem
     private let appState: AppState
     weak var windowController: WindowController?
 
-    private var refreshTimer: Timer?
+    private var popover: NSPopover?
+    private var panelModel: StatusPanelModel?
 
     init(appState: AppState) {
         self.appState = appState
@@ -50,42 +56,62 @@ final class StatusItemController: NSObject, NSMenuDelegate {
     @objc private func handleClick(_ sender: NSStatusBarButton) {
         guard let event = NSApp.currentEvent else { return }
         let isRight = event.type == .rightMouseUp || (event.type == .leftMouseUp && event.modifierFlags.contains(.control))
-        let menu = isRight ? buildAppMenu() : buildProgramMenu()
-        menu.delegate = self
+        if isRight {
+            showAppMenu()
+        } else {
+            togglePanel()
+        }
+    }
+
+    // MARK: - Left click: the program panel
+
+    private func togglePanel() {
+        if let popover, popover.isShown {
+            popover.performClose(nil)
+            return
+        }
+        guard let button = statusItem.button else { return }
+
+        let model = StatusPanelModel(appState: appState, windowController: windowController)
+        model.onRequestClose = { [weak self] in self?.closePanel() }
+        let popover = NSPopover()
+        popover.behavior = .transient
+        popover.delegate = self
+        popover.contentViewController = NSHostingController(
+            rootView: StatusPanelView(appState: appState, model: model)
+        )
+        self.popover = popover
+        self.panelModel = model
+
+        popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+        // Without this the panel's buttons would need a click to focus the window first.
+        popover.contentViewController?.view.window?.makeKey()
+        button.highlight(true)
+        model.startTicking()
+    }
+
+    private func closePanel() {
+        popover?.performClose(nil)
+    }
+
+    func popoverDidClose(_ notification: Notification) {
+        guard let closed = notification.object as? NSPopover, closed === popover else { return }
+        panelModel?.stopTicking()
+        panelModel = nil
+        popover?.contentViewController = nil
+        popover = nil
+        statusItem.button?.highlight(false)
+    }
+
+    // MARK: - Right click: the app menu
+
+    private func showAppMenu() {
+        closePanel()
+        let menu = AppMenuBuilder.build(appState: appState, windowController: windowController)
+        // Handing the menu to the status item (rather than popping it up directly) keeps the
+        // button's highlight in sync; it is removed again so the next click still runs `action`.
         statusItem.menu = menu
         statusItem.button?.performClick(nil)
         statusItem.menu = nil
-    }
-
-    // MARK: - NSMenuDelegate — sampling only while a menu is actually open (design.md §6.2)
-
-    func menuWillOpen(_ menu: NSMenu) {
-        refreshTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            self?.tickRefresh(menu: menu)
-        }
-    }
-
-    func menuDidClose(_ menu: NSMenu) {
-        refreshTimer?.invalidate()
-        refreshTimer = nil
-    }
-
-    private func tickRefresh(menu: NSMenu) {
-        // Menu is already open with a fixed item set; live-updating text without rebuilding
-        // the whole menu keeps this cheap. We only touch title strings for active rows.
-        for item in menu.items {
-            guard let id = item.representedObject as? Int64, let snap = appState.program(id: id) else { continue }
-            item.title = ProgramMenuBuilder.titleLine(for: snap)
-        }
-    }
-
-    // MARK: - Menu construction
-
-    private func buildProgramMenu() -> NSMenu {
-        ProgramMenuBuilder.build(appState: appState, windowController: windowController)
-    }
-
-    private func buildAppMenu() -> NSMenu {
-        AppMenuBuilder.build(appState: appState, windowController: windowController)
     }
 }

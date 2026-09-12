@@ -22,7 +22,7 @@ struct PreferencesWindowView: View {
             Section {
                 Toggle("开机自动启动 Barback", isOn: $loginItemEnabled)
                     .onChange(of: loginItemEnabled) { newValue in LoginItemManager.setEnabled(newValue) }
-                LabeledContent("菜单密度") {
+                LabeledContent("面板密度") {
                     Picker("", selection: $menuDensity) {
                         Text("正常").tag(MenuDensity.normal.rawValue)
                         Text("紧凑").tag(MenuDensity.compact.rawValue)
@@ -40,7 +40,7 @@ struct PreferencesWindowView: View {
             } header: {
                 Text("通用")
             } footer: {
-                Text("紧凑密度下状态栏菜单每项只显示图标与名称，状态与指标仍在子菜单里；日志字号同时作用于日志窗口与执行历史的输出。")
+                Text("紧凑密度下状态栏面板每项只保留名称与状态徽标，PID、运行时长与资源占用收进展开详情；日志字号同时作用于日志窗口与执行历史的输出。")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

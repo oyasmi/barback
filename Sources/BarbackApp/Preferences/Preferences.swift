@@ -1,6 +1,6 @@
 import Foundation
 
-/// How much detail the status-bar menu shows (requirements.md APP-6 「菜单密度」).
+/// How much detail each row of the status-bar panel shows (requirements.md APP-6 「菜单密度」).
 enum MenuDensity: String {
     case normal
     case compact
@@ -9,6 +9,9 @@ enum MenuDensity: String {
 /// The app-wide settings behind 偏好设置. SwiftUI binds to these keys with `@AppStorage`;
 /// this type is the read side for the AppKit code — menu building and notification
 /// posting — that has no SwiftUI environment to read them from.
+///
+/// The key names still say "menu" because they are what is already on disk in user
+/// defaults; renaming them would silently reset everyone's preferences.
 enum Preferences {
     enum Key {
         static let menuDensity = "barback.menuDensity"

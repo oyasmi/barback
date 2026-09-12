@@ -66,8 +66,7 @@ final class WindowController: NSObject, NSWindowDelegate {
             NSApp.activate(ignoringOtherApps: true)
             return
         }
-        let path = logPath(for: snap)
-        let view = LogViewerView(programName: snap.program.name, path: path)
+        let view = LogViewerView(programName: snap.program.name, path: ProgramLogPath.resolve(for: snap))
         let window = makeWindow(title: "日志 · \(snap.program.name)", size: NSSize(width: 760, height: 520), content: view)
         window.delegate = self
         logWindows[programId] = window
@@ -75,15 +74,9 @@ final class WindowController: NSObject, NSWindowDelegate {
         window.makeKeyAndOrderFront(nil)
     }
 
-    private func logPath(for snap: ProgramSnapshot) -> String {
-        if let explicit = snap.program.logPath { return explicit }
-        if snap.program.kind == .oneshot, let last = snap.lastRun?.logPath { return last }
-        return (AppPaths.programsLogsDir as NSString).appendingPathComponent("\(snap.program.name).out.log")
-    }
-
     func revealLog(programId: Int64) {
         guard let snap = appState.program(id: programId) else { return }
-        NSWorkspace.shared.selectFile(logPath(for: snap), inFileViewerRootedAtPath: "")
+        NSWorkspace.shared.selectFile(ProgramLogPath.resolve(for: snap), inFileViewerRootedAtPath: "")
     }
 
     func showHistoryWindow(programId: Int64?) {
