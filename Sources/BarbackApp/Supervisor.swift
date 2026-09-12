@@ -245,6 +245,25 @@ public final class Supervisor: @unchecked Sendable {
         }
     }
 
+    /// Rewrites `priority` to match a drag-reordered sidebar. Deliberately skips
+    /// `ProgramValidator`: reordering must not be blocked by a field error in some other
+    /// program the user never touched.
+    public func reorderPrograms(orderedIds: [Int64], completion: @escaping @Sendable () -> Void) {
+        queue.async { [self] in
+            for (index, id) in orderedIds.enumerated() {
+                let newPriority = (index + 1) * 10
+                guard var program = programs[id], program.priority != newPriority else { continue }
+                program.priority = newPriority
+                program.updatedAt = Date()
+                try? store.updateProgram(program)
+                programs[id] = program
+            }
+            try? backupConfig()
+            publishSnapshot()
+            completion()
+        }
+    }
+
     public func deleteProgram(id: Int64, completion: @escaping @Sendable () -> Void) {
         queue.async { [self] in
             if serviceRuntimes[id]?.state.isActive == true {

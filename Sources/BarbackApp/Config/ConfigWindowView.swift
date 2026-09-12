@@ -1,165 +1,202 @@
 import SwiftUI
 import BarbackCore
 
-/// The sole configuration entry point (CFG-2): a searchable list on the left, a
-/// section-based form on the right (design.md §6.5).
+/// The sole configuration entry point (CFG-2). Toolbar for the primary actions, searchable
+/// program list on the left, tabbed form on the right (design.md §6.5).
 struct ConfigWindowView: View {
+    @ObservedObject var model: ConfigWindowModel
     @ObservedObject var appState: AppState
-    @State private var selection: Int64?
-    @State private var searchText = ""
-    @State private var draft: Program?
-    @State private var isDirty = false
-    @State private var validationErrors: [ProgramValidationError] = []
-
-    init(appState: AppState, initialSelection: Int64?) {
-        self.appState = appState
-        _selection = State(initialValue: initialSelection)
-    }
-
-    private var filteredPrograms: [ProgramSnapshot] {
-        let all = appState.snapshot.programs
-        guard !searchText.isEmpty else { return all }
-        return all.filter { $0.program.name.localizedCaseInsensitiveContains(searchText) }
-    }
+    let onShowLog: (Int64) -> Void
+    let onShowHistory: (Int64) -> Void
+    let onShowImport: () -> Void
 
     var body: some View {
         NavigationSplitView {
-            VStack(spacing: 0) {
-                TextField("搜索…", text: $searchText)
-                    .textFieldStyle(.roundedBorder)
-                    .padding(8)
-                List(selection: $selection) {
-                    Section("服务") {
-                        ForEach(filteredPrograms.filter { $0.program.kind == .service }) { snap in
-                            ProgramRow(snap: snap).tag(snap.id)
-                        }
-                    }
-                    Section("一次性命令") {
-                        ForEach(filteredPrograms.filter { $0.program.kind == .oneshot }) { snap in
-                            ProgramRow(snap: snap).tag(snap.id)
-                        }
-                    }
-                }
-                .listStyle(.sidebar)
-                HStack {
-                    Menu {
-                        Button("新建服务") { createNew(kind: .service) }
-                        Button("新建一次性命令") { createNew(kind: .oneshot) }
-                    } label: {
-                        Image(systemName: "plus")
-                    }.menuStyle(.borderlessButton).frame(width: 24)
-                    Button(action: deleteSelected) { Image(systemName: "minus") }.disabled(selection == nil)
-                    Button(action: duplicateSelected) { Image(systemName: "plus.square.on.square") }.disabled(selection == nil)
-                    Spacer()
-                    Button("粘贴导入…") { NotificationCenter.default.post(name: .barbackShowImport, object: nil) }
-                }
-                .padding(8)
-            }
+            ConfigSidebarView(
+                model: model,
+                appState: appState,
+                onImport: onShowImport,
+                onShowLog: onShowLog,
+                onShowHistory: onShowHistory
+            )
+            .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 340)
+            .searchable(text: $model.searchText, placement: .sidebar, prompt: "搜索名称或命令")
         } detail: {
-            if let draft {
-                ProgramFormView(
-                    program: Binding(get: { draft }, set: { self.draft = $0; isDirty = true }),
-                    errors: validationErrors,
-                    existingNames: Set(appState.snapshot.programs.map(\.program.name)).subtracting([draft.name]),
-                    isRunning: appState.program(id: draft.id)?.isActive ?? false,
-                    onSave: { save(andRestart: false) },
-                    onSaveAndRestart: { save(andRestart: true) },
-                    onRevert: { loadDraft(id: draft.id) }
-                )
-            } else {
-                Text("选择或新建一个程序").foregroundStyle(.secondary)
+            detail
+        }
+        .toolbar { toolbarContent }
+        .confirmationDialog(
+            "有未保存的更改",
+            isPresented: unsavedPrompt,
+            titleVisibility: .visible
+        ) {
+            Button("保存") { model.resolvePending(.save) }
+            Button("放弃更改", role: .destructive) { model.resolvePending(.discard) }
+            Button("取消", role: .cancel) { model.resolvePending(.cancel) }
+        } message: {
+            Text("「\(model.draft?.name ?? "")」有未保存的更改。切换后未保存的内容会丢失。")
+        }
+        .alert("删除「\(model.deleteTarget?.program.name ?? "")」？", isPresented: deletePrompt) {
+            Button("删除", role: .destructive) { model.confirmDelete() }
+            Button("取消", role: .cancel) { model.deleteTarget = nil }
+        } message: {
+            Text(deleteMessage)
+        }
+        .alert("保存失败", isPresented: saveFailurePrompt) {
+            Button("好", role: .cancel) { model.saveFailure = nil }
+        } message: {
+            Text(model.saveFailure ?? "")
+        }
+    }
+
+    // MARK: - Detail
+
+    @ViewBuilder private var detail: some View {
+        if let draft = Binding($model.draft) {
+            ProgramFormView(
+                program: draft,
+                snapshot: model.selectedSnapshot,
+                errors: model.visibleErrors,
+                isDirty: model.isDirty,
+                isNew: model.isCreatingNew,
+                existingGroups: existingGroups,
+                onSave: { model.save(restart: false) },
+                onSaveAndRestart: { model.save(restart: true) },
+                onRevert: { model.revert() },
+                onShowLog: { if let id = model.currentId, id > 0 { onShowLog(id) } },
+                onShowHistory: { if let id = model.currentId, id > 0 { onShowHistory(id) } }
+            )
+        } else if appState.snapshot.programs.isEmpty {
+            ConfigEmptyStateView(
+                onCreate: { model.attempt(.create($0)) },
+                onImport: onShowImport
+            )
+        } else {
+            placeholder
+        }
+    }
+
+    private var existingGroups: [String] {
+        Array(Set(appState.snapshot.programs.compactMap(\.program.groupName))).sorted()
+    }
+
+    private var placeholder: some View {
+        VStack(spacing: 6) {
+            Image(systemName: "sidebar.left")
+                .font(.system(size: 28))
+                .foregroundStyle(.tertiary)
+            Text("从左侧选择一个程序")
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    // MARK: - Toolbar
+
+    @ToolbarContentBuilder private var toolbarContent: some ToolbarContent {
+        ToolbarItem(placement: .navigation) {
+            Menu {
+                Button("新建服务") { model.attempt(.create(.service)) }
+                    .keyboardShortcut("n", modifiers: .command)
+                Button("新建一次性命令") { model.attempt(.create(.oneshot)) }
+                    .keyboardShortcut("n", modifiers: [.command, .shift])
+                Divider()
+                Button("从 supervisor 粘贴导入…") { onShowImport() }
+            } label: {
+                Label("新建", systemImage: "plus")
             }
+            .labelStyle(.titleAndIcon)
+            .help("新建服务或一次性命令")
         }
-        .onChange(of: selection) { newValue in
-            if let newValue { loadDraft(id: newValue) } else { draft = nil }
-        }
-        .onAppear {
-            if let selection { loadDraft(id: selection) }
-        }
-    }
 
-    private func loadDraft(id: Int64) {
-        appState.supervisor.snapshotProgram(id: id) { program in
-            DispatchQueue.main.async {
-                self.draft = program
-                self.isDirty = false
-                self.validationErrors = []
+        ToolbarItemGroup(placement: .navigation) {
+            Button {
+                if let id = model.currentId, id > 0 { model.attempt(.duplicate(id)) }
+            } label: {
+                Label("复制", systemImage: "plus.square.on.square")
             }
+            .disabled(model.selectedSnapshot == nil)
+            .keyboardShortcut("d", modifiers: .command)
+            .help("复制所选程序")
+
+            Button {
+                if let id = model.currentId, id > 0 { model.requestDelete(id: id) }
+            } label: {
+                Label("删除", systemImage: "trash")
+            }
+            .disabled(model.selectedSnapshot == nil)
+            .keyboardShortcut(.delete, modifiers: .command)
+            .help("删除所选程序")
         }
-    }
 
-    private func createNew(kind: ProgramKind) {
-        let newProgram = Program(name: "新\(kind == .service ? "服务" : "命令")", kind: kind, command: "")
-        draft = newProgram
-        selection = nil
-        isDirty = true
-    }
-
-    private func save(andRestart: Bool) {
-        guard let draft else { return }
-        appState.supervisor.validateAndSave(draft) { result in
-            DispatchQueue.main.async {
-                switch result {
-                case .success(let saved):
-                    self.draft = saved
-                    self.selection = saved.id
-                    self.isDirty = false
-                    self.validationErrors = []
-                    if andRestart, appState.program(id: saved.id)?.isActive == true {
-                        appState.supervisor.restart(id: saved.id)
+        ToolbarItem(placement: .primaryAction) {
+            Menu {
+                Picker("分组方式", selection: $model.sortMode) {
+                    ForEach(ConfigSortMode.allCases) { mode in
+                        Text(mode.title).tag(mode)
                     }
-                case .failure(.validation(let errors)):
-                    self.validationErrors = errors
-                case .failure(.other):
-                    self.validationErrors = []
                 }
+                .pickerStyle(.inline)
+            } label: {
+                Label("分组方式", systemImage: "arrow.up.arrow.down")
             }
+            .help("更改列表分组方式")
         }
     }
 
-    private func deleteSelected() {
-        guard let selection else { return }
-        appState.supervisor.deleteProgram(id: selection) {
-            DispatchQueue.main.async {
-                self.selection = nil
-                self.draft = nil
-            }
-        }
+    // MARK: - Alert plumbing
+
+    private var unsavedPrompt: Binding<Bool> {
+        Binding(
+            get: { model.pendingNavigation != nil },
+            set: { if !$0 { model.resolvePending(.cancel) } }
+        )
     }
 
-    private func duplicateSelected() {
-        guard let draft else { return }
-        var copy = draft
-        copy.id = 0
-        copy.name = draft.name + "-copy"
-        self.draft = copy
-        self.selection = nil
-        isDirty = true
+    private var deletePrompt: Binding<Bool> {
+        Binding(
+            get: { model.deleteTarget != nil },
+            set: { if !$0 { model.deleteTarget = nil } }
+        )
+    }
+
+    private var saveFailurePrompt: Binding<Bool> {
+        Binding(
+            get: { model.saveFailure != nil },
+            set: { if !$0 { model.saveFailure = nil } }
+        )
+    }
+
+    private var deleteMessage: String {
+        guard let target = model.deleteTarget else { return "" }
+        var parts = ["配置与执行历史会一并删除，此操作不可撤销。"]
+        if target.isActive { parts.insert("该程序正在运行，删除前会先停止它。", at: 0) }
+        return parts.joined(separator: "\n")
     }
 }
 
-extension Notification.Name {
-    static let barbackShowImport = Notification.Name("barback.showImport")
-}
+/// First-run state: the window used to show nothing but a grey line of text.
+struct ConfigEmptyStateView: View {
+    let onCreate: (ProgramKind) -> Void
+    let onImport: () -> Void
 
-private struct ProgramRow: View {
-    let snap: ProgramSnapshot
     var body: some View {
-        HStack {
-            Circle()
-                .fill(color)
-                .frame(width: 8, height: 8)
-            Text(snap.program.name)
-            Spacer()
+        VStack(spacing: 14) {
+            Image(systemName: "tray")
+                .font(.system(size: 40))
+                .foregroundStyle(.tertiary)
+            Text("还没有任何程序")
+                .font(.title3).bold()
+            Text("添加一个常驻服务，或一条按需执行的命令。")
+                .foregroundStyle(.secondary)
+            HStack(spacing: 10) {
+                Button("新建服务") { onCreate(.service) }
+                    .buttonStyle(.borderedProminent)
+                Button("新建一次性命令") { onCreate(.oneshot) }
+                Button("从 supervisor 粘贴导入…") { onImport() }
+            }
+            .padding(.top, 4)
         }
-    }
-
-    private var color: Color {
-        switch snap.serviceState {
-        case .running: return .green
-        case .starting, .backoff: return .orange
-        case .fatal: return .red
-        default: return .gray
-        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

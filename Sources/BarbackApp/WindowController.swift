@@ -10,7 +10,7 @@ import UserNotifications
 final class WindowController: NSObject, NSWindowDelegate {
     private let appState: AppState
     private var configWindow: NSWindow?
-    private var configSelection: Int64?
+    private var configModel: ConfigWindowModel?
     private var historyWindow: NSWindow?
     private var eventsWindow: NSWindow?
     private var preferencesWindow: NSWindow?
@@ -33,16 +33,30 @@ final class WindowController: NSObject, NSWindowDelegate {
     }
 
     func showConfigWindow(selecting id: Int64? = nil) {
-        if let id { configSelection = id }
-        if configWindow == nil {
-            let view = ConfigWindowView(appState: appState, initialSelection: configSelection)
-            let window = makeWindow(title: "配置", size: NSSize(width: 900, height: 620), content: view)
-            window.minSize = NSSize(width: 860, height: 600)
-            window.delegate = self
-            configWindow = window
+        if let window = configWindow {
+            if let id { configModel?.attempt(.select(id)) }
+            NSApp.activate(ignoringOtherApps: true)
+            window.makeKeyAndOrderFront(nil)
+            return
         }
+        let model = ConfigWindowModel(appState: appState, initialSelection: id)
+        let view = ConfigWindowView(
+            model: model,
+            appState: appState,
+            onShowLog: { [weak self] in self?.showLogWindow(programId: $0) },
+            onShowHistory: { [weak self] in self?.showHistoryWindow(programId: $0) },
+            onShowImport: { [weak self] in self?.showImportWindow() }
+        )
+        let window = makeWindow(title: "配置", size: NSSize(width: 980, height: 680), content: view)
+        window.minSize = NSSize(width: 840, height: 560)
+        window.toolbarStyle = .unified
+        window.delegate = self
+        // The close box grows a dot while a draft is unsaved, matching document windows.
+        model.onDirtyChange = { [weak window] isDirty in window?.isDocumentEdited = isDirty }
+        configWindow = window
+        configModel = model
         NSApp.activate(ignoringOtherApps: true)
-        configWindow?.makeKeyAndOrderFront(nil)
+        window.makeKeyAndOrderFront(nil)
     }
 
     func showLogWindow(programId: Int64) {
@@ -162,9 +176,37 @@ final class WindowController: NSObject, NSWindowDelegate {
 
     // MARK: - NSWindowDelegate — closing a log window stops its file watch (design.md §4)
 
+    /// Closing the config window with an unsaved draft asks first (design.md §6.5), the same
+    /// gate the in-window selection change goes through.
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        guard sender === configWindow, let model = configModel, model.isDirty else { return true }
+        let alert = NSAlert()
+        alert.messageText = "「\(model.draft?.name ?? "")」有未保存的更改"
+        alert.informativeText = "关闭窗口前要保存这些更改吗？"
+        alert.addButton(withTitle: "保存")
+        alert.addButton(withTitle: "不保存")
+        alert.addButton(withTitle: "取消")
+        switch alert.runModal() {
+        case .alertFirstButtonReturn:
+            model.save(restart: false) { [weak self] succeeded in
+                guard succeeded else { return } // validation failed: errors are now on the form
+                self?.configWindow?.close()
+            }
+            return false
+        case .alertSecondButtonReturn:
+            model.discardDraft()
+            return true
+        default:
+            return false
+        }
+    }
+
     func windowWillClose(_ notification: Notification) {
         guard let window = notification.object as? NSWindow else { return }
-        if window === configWindow { configWindow = nil }
+        if window === configWindow {
+            configWindow = nil
+            configModel = nil
+        }
         if window === historyWindow { historyWindow = nil }
         if window === eventsWindow { eventsWindow = nil }
         if window === preferencesWindow { preferencesWindow = nil }

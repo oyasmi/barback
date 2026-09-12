@@ -53,10 +53,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self, selector: #selector(handleWake), name: NSWorkspace.didWakeNotification, object: nil
         )
 
-        NotificationCenter.default.addObserver(forName: .barbackShowImport, object: nil, queue: .main) { [weak self] _ in
-            self?.windowController.showImportWindow()
-        }
-
         supervisor.bootstrap()
 
         if !hasCompletedOnboarding {
