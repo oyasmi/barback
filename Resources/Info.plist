@@ -8,6 +8,8 @@
 	<string>com.barback.app</string>
 	<key>CFBundleName</key>
 	<string>Barback</string>
+	<key>CFBundleIconFile</key>
+	<string>AppIcon</string>
 	<key>CFBundleDisplayName</key>
 	<string>Barback</string>
 	<key>CFBundlePackageType</key>
