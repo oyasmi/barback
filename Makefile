@@ -1,6 +1,6 @@
 .PHONY: all build test run sign clean
 
-# Default: build dist/Barback.app and dist/Barback.dmg (Universal 2, design.md §8.5).
+# Default: build dist/Barback.app and dist/Barback.dmg (arm64, design.md §8.5).
 all:
 	Scripts/build.sh
 	Scripts/package.sh

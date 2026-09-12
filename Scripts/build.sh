@@ -1,7 +1,7 @@
 #!/bin/bash
 # Builds the release binary and assembles Barback.app (design.md §8.5).
-# Builds both arm64 and x86_64 by default (Universal 2); override with
-# `ARCHS="arm64" Scripts/build.sh` for a single-arch build.
+# arm64-only by default; override with `ARCHS="arm64 x86_64" Scripts/build.sh`
+# for a Universal 2 build if Intel support is ever needed again.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 source Scripts/_common.sh
@@ -19,8 +19,9 @@ swift build -c release "${ARCH_FLAGS[@]}"
 BIN_PATH=""
 for candidate in \
   ".build/apple/Products/Release/BarbackApp" \
-  ".build/apple/Products/Release/BarbackApp.o" \
-  ".build/release/BarbackApp"
+  ".build/release/BarbackApp" \
+  ".build/arm64-apple-macosx/release/BarbackApp" \
+  ".build/x86_64-apple-macosx/release/BarbackApp"
 do
   if [ -f "$candidate" ]; then BIN_PATH="$candidate"; break; fi
 done
