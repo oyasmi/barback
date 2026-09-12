@@ -125,21 +125,18 @@ struct ProgramRowView: View {
     @ViewBuilder
     private var primaryButton: some View {
         if isService {
-            switch serviceState {
-            case .stopping:
-                // TERM has been sent and we are waiting it out; the only useful escalation
-                // here is SIGKILL, so that is what the row offers.
-                PillButton(title: "强制终止", systemImage: "bolt.fill", tint: StatusStyle.failure) {
-                    model.forceKill(snap)
+            // A disabled-but-inactive service showed a perfectly clickable "启动" here even
+            // though the row's own badge says 已停用 and "停用" is documented to mean "won't
+            // start on its own" — the only consistent reading is that starting it manually
+            // first requires turning it back on (design.md §6.3, ex-F06). A service disabled
+            // while still running keeps its normal stop/restart controls; disabling doesn't
+            // touch anything already active.
+            if !snap.program.enabled, !serviceState.isActive {
+                PillButton(title: "启用", systemImage: "checkmark.circle", tint: StatusStyle.running) {
+                    model.enable(snap)
                 }
-            case .running, .starting, .backoff:
-                PillButton(title: "停止", systemImage: "stop.fill", tint: StatusStyle.failure) {
-                    model.stop(snap)
-                }
-            case .stopped, .exited, .fatal:
-                PillButton(title: "启动", systemImage: "play.fill", tint: StatusStyle.running) {
-                    model.start(snap)
-                }
+            } else {
+                serviceButton
             }
         } else if snap.oneshotState == .running {
             PillButton(title: "中止", systemImage: "stop.fill", tint: StatusStyle.failure) {
@@ -148,6 +145,26 @@ struct ProgramRowView: View {
         } else {
             PillButton(title: "运行", systemImage: "play.fill", tint: StatusStyle.active) {
                 model.runOneshot(snap)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var serviceButton: some View {
+        switch serviceState {
+        case .stopping:
+            // TERM has been sent and we are waiting it out; the only useful escalation
+            // here is SIGKILL, so that is what the row offers.
+            PillButton(title: "强制终止", systemImage: "bolt.fill", tint: StatusStyle.failure) {
+                model.forceKill(snap)
+            }
+        case .running, .starting, .backoff:
+            PillButton(title: "停止", systemImage: "stop.fill", tint: StatusStyle.failure) {
+                model.stop(snap)
+            }
+        case .stopped, .exited, .fatal:
+            PillButton(title: "启动", systemImage: "play.fill", tint: StatusStyle.running) {
+                model.start(snap)
             }
         }
     }
@@ -334,7 +351,6 @@ struct ProgramRowView: View {
                 pairs.append(("超时", "\(snap.program.timeoutSeconds) 秒"))
             }
             if snap.program.confirmBeforeRun { pairs.append(("运行前", "需确认")) }
-            if snap.program.allowConcurrent { pairs.append(("并发", "允许")) }
         }
         return pairs
     }
@@ -358,9 +374,6 @@ struct ProgramRowView: View {
                 }
             } else {
                 DrawerButton(title: "在 Finder 中显示", systemImage: "folder") { model.revealLog(snap) }
-                if snap.oneshotState == .running, snap.program.allowConcurrent {
-                    DrawerButton(title: "再运行一次", systemImage: "play") { model.runOneshot(snap) }
-                }
             }
             // 强制终止 is deliberately absent here: the state machine only accepts a kill
             // while a stop is in flight, and that case is already the row's primary button.

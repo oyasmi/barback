@@ -25,15 +25,10 @@ enum AppMenuBuilder {
         menu.addItem(.separator())
 
         menu.addItem(ClosureMenuItem(title: "偏好设置…") { windowController?.showPreferencesWindow() })
-        let autostartItem = ClosureMenuItem(title: "开机自动启动") { windowController?.toggleLoginItem() }
-        autostartItem.state = LoginItemManager.isRegistered ? .on : .off
-        menu.addItem(autostartItem)
         menu.addItem(ClosureMenuItem(title: "从 supervisor 粘贴导入…") { windowController?.showImportWindow() })
         menu.addItem(.separator())
 
         menu.addItem(ClosureMenuItem(title: "导出诊断包…") { windowController?.exportDiagnostics() })
-        menu.addItem(ClosureMenuItem(title: "检查更新…") { windowController?.checkForUpdates() })
-        menu.addItem(ClosureMenuItem(title: "关于 Barback") { windowController?.showAboutPanel() })
         menu.addItem(.separator())
 
         menu.addItem(ClosureMenuItem(title: "退出 Barback（将停止全部被管进程）") { windowController?.quitApp() })

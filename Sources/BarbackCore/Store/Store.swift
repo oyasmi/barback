@@ -7,7 +7,11 @@ import Foundation
 public final class Store {
     public let dbPath: String
     public let backupsDir: String
-    private let db: SQLiteDatabase
+    private var db: SQLiteDatabase
+    /// Set when `init` had to recover from a corrupt database file, and how many programs
+    /// were restored from the latest JSON config backup — the caller (AppDelegate) surfaces
+    /// this to the user, since run/event history is lost either way (design.md §8.1).
+    public private(set) var restoredProgramCount: Int?
 
     public init(dbPath: String, backupsDir: String) throws {
         self.dbPath = dbPath
@@ -24,8 +28,10 @@ public final class Store {
 
     private func migrateIfNeeded() throws {
         let ok = db.integrityCheck()
+        var recovering = false
         if !ok {
-            try restoreFromLatestBackupOrThrow()
+            try recoverFromCorruption()
+            recovering = true
         }
         let version = db.userVersion
         if version < 1 {
@@ -33,22 +39,52 @@ public final class Store {
                 try db.exec(Schema.v1)
             }
             try db.setUserVersion(Schema.currentVersion)
+        } else if version < 2 {
+            try db.exec("ALTER TABLE program ADD COLUMN run_total INTEGER NOT NULL DEFAULT 0")
+            try db.exec("UPDATE program SET run_total = (SELECT COUNT(*) FROM run WHERE run.program_id = program.id)")
+            try db.setUserVersion(Schema.currentVersion)
         }
-        // Future migrations: `if version < 2 { ... }` etc., each preceded by a JSON backup.
+        // Future migrations: `if version < 3 { ... }` etc., each preceded by a JSON backup.
+        if recovering {
+            restoredProgramCount = (try? restoreFromLatestConfigBackup()) ?? 0
+        }
     }
 
-    private func restoreFromLatestBackupOrThrow() throws {
+    /// Quarantines the corrupt file (rather than deleting it — it may still be forensically
+    /// useful) and opens a fresh database at the same path. Closing the old handle first is
+    /// what makes this safe: the previous code deleted the file *after* `sqlite3_open` had
+    /// already returned a handle to it, so every write for the rest of the session landed in
+    /// an unlinked inode that vanished the moment the process exited (design.md §5.1).
+    private func recoverFromCorruption() throws {
+        db.close()
         let fm = FileManager.default
-        let backups = (try? fm.contentsOfDirectory(atPath: backupsDir)) ?? []
-        guard backups.sorted().last != nil else {
-            // No backup to restore from; proceed with a fresh schema on the (corrupt) file.
-            return
-        }
-        // Config JSON backups don't reconstruct SQLite bytes; corruption recovery here means
-        // "give up on this db file and start clean" while the caller is told via the thrown flag.
-        try fm.removeItem(atPath: dbPath)
+        let quarantinePath = dbPath + ".corrupt-\(Int(Date().timeIntervalSince1970))"
+        try? fm.removeItem(atPath: quarantinePath)
+        try? fm.moveItem(atPath: dbPath, toPath: quarantinePath)
         _ = try? fm.removeItem(atPath: dbPath + "-wal")
         _ = try? fm.removeItem(atPath: dbPath + "-shm")
+        db = try SQLiteDatabase(path: dbPath)
+        try db.exec("PRAGMA journal_mode=WAL")
+        try db.exec("PRAGMA synchronous=NORMAL")
+        try db.exec("PRAGMA foreign_keys=ON")
+    }
+
+    /// Re-populates the (now-empty, freshly created) program table from the newest JSON
+    /// config backup. Run/event history cannot be recovered this way — only configuration.
+    private func restoreFromLatestConfigBackup() throws -> Int {
+        let fm = FileManager.default
+        let backups = ((try? fm.contentsOfDirectory(atPath: backupsDir)) ?? [])
+            .filter { $0.hasPrefix("config-") }
+            .sorted()
+        guard let latest = backups.last else { return 0 }
+        let data = try Data(contentsOf: URL(fileURLWithPath: (backupsDir as NSString).appendingPathComponent(latest)))
+        let programs = try JSONDecoder().decode([Program].self, from: data)
+        for var program in programs {
+            program.id = 0
+            program.runTotal = 0
+            _ = try? insertProgram(program)
+        }
+        return programs.count
     }
 
     // MARK: - Program CRUD
@@ -94,13 +130,16 @@ public final class Store {
         return db.lastInsertRowID
     }
 
+    /// `run_total` is a lifetime counter Store itself maintains (`incrementRunTotal`), never
+    /// something the config form edits — excluded here so saving a draft opened before a run
+    /// just finished can't silently roll the counter back to the value it read (design.md §3.4).
     public func updateProgram(_ program: Program) throws {
         var p = program
         p.updatedAt = Date()
-        let assignments = Self.programColumnNames.dropFirst().map { "\($0) = ?" }.joined(separator: ", ")
+        let assignments = Self.updatableColumnNames.map { "\($0) = ?" }.joined(separator: ", ")
         let stmt = try db.prepare("UPDATE program SET \(assignments) WHERE id = ?")
-        Self.bindProgram(stmt, p, includeId: false)
-        stmt.bind(Int32(Self.programColumnCount), p.id)
+        Self.bindProgram(stmt, p, includeId: false, includeRunTotal: false)
+        stmt.bind(Int32(Self.updatableColumnNames.count + 1), p.id)
         try stmt.run()
     }
 
@@ -180,7 +219,16 @@ public final class Store {
         stmt.bindOptional(8, run.outcome?.rawValue)
         stmt.bindOptional(9, run.logPath)
         try stmt.run()
+        try incrementRunTotal(programId: run.programId)
         return db.lastInsertRowID
+    }
+
+    /// Bumps the program's lifetime run counter. Kept separate from `historyLimit`-bound
+    /// `run` rows so "共 N 次" stays accurate after old runs are trimmed away (design.md §3.4).
+    public func incrementRunTotal(programId: Int64) throws {
+        let stmt = try db.prepare("UPDATE program SET run_total = run_total + 1 WHERE id = ?")
+        stmt.bind(1, programId)
+        try stmt.run()
     }
 
     public func finalizeRun(id: Int64, endedAt: Date, exitCode: Int32?, termSignal: Int32?, outcome: RunOutcome) throws {
@@ -225,6 +273,37 @@ public final class Store {
         return results
     }
 
+    /// Deletes completed runs matching the given filters, returning their log paths so the
+    /// caller can remove the output files too. Runs still in flight (`ended_at IS NULL`) are
+    /// never touched, so clearing history can never orphan an active process's bookkeeping.
+    public func deleteRuns(programId: Int64?, outcome: RunOutcome?) throws -> [String] {
+        var sql = "SELECT id, log_path FROM run WHERE ended_at IS NOT NULL"
+        if programId != nil { sql += " AND program_id = ?" }
+        if outcome != nil { sql += " AND outcome = ?" }
+        let stmt = try db.prepare(sql)
+        var idx: Int32 = 1
+        if let programId {
+            stmt.bind(idx, programId); idx += 1
+        }
+        if let outcome {
+            stmt.bind(idx, outcome.rawValue); idx += 1
+        }
+        var idsToDelete: [Int64] = []
+        var paths: [String] = []
+        while try stmt.step() {
+            idsToDelete.append(stmt.columnInt64(0))
+            if let p = stmt.columnStringOptional(1) { paths.append(p) }
+        }
+        guard !idsToDelete.isEmpty else { return [] }
+        let placeholders = idsToDelete.map { _ in "?" }.joined(separator: ",")
+        let del = try db.prepare("DELETE FROM run WHERE id IN (\(placeholders))")
+        for (i, id) in idsToDelete.enumerated() {
+            del.bind(Int32(i + 1), id)
+        }
+        try del.run()
+        return paths
+    }
+
     /// Deletes runs beyond `historyLimit` for a program (FIFO), returning their log paths
     /// so the caller can remove the output files too (design.md §3.4).
     public func trimRunHistory(programId: Int64, historyLimit: Int) throws -> [String] {
@@ -249,6 +328,11 @@ public final class Store {
 
     // MARK: - Events
 
+    /// Counts inserts since the last cap check, so a busy service doesn't pay for a full
+    /// `COUNT(*)` table scan on every single event (design.md §5, event table has no index
+    /// that covers COUNT).
+    private var eventInsertsSinceCheck = 0
+
     public func insertEvent(_ event: EventRecord) throws {
         let stmt = try db.prepare("INSERT INTO event (ts, level, program_id, type, detail_json) VALUES (?,?,?,?,?)")
         stmt.bind(1, event.ts.timeIntervalSince1970)
@@ -258,6 +342,9 @@ public final class Store {
         stmt.bind(5, event.detailJSON)
         try stmt.run()
 
+        eventInsertsSinceCheck += 1
+        guard eventInsertsSinceCheck >= 256 else { return }
+        eventInsertsSinceCheck = 0
         let countStmt = try db.prepare("SELECT COUNT(*) FROM event")
         _ = try countStmt.step()
         if countStmt.columnInt(0) > 20000 {
@@ -336,12 +423,13 @@ public final class Store {
         "storm_max_restarts", "timeout_seconds", "confirm_before_run", "allow_concurrent",
         "history_limit", "stop_signal", "stop_wait_seconds", "stop_as_group", "kill_as_group",
         "log_path", "log_merge_stderr", "log_stderr_path", "log_max_bytes", "log_backups",
-        "log_rotate_policy", "created_at", "updated_at"
+        "log_rotate_policy", "run_total", "created_at", "updated_at"
     ]
     private static var programColumns: String { programColumnNames.joined(separator: ", ") }
     private static var programColumnCount: Int { programColumnNames.count }
+    private static let updatableColumnNames = programColumnNames.filter { $0 != "id" && $0 != "run_total" }
 
-    private static func bindProgram(_ stmt: SQLiteStatement, _ p: Program, includeId: Bool) {
+    private static func bindProgram(_ stmt: SQLiteStatement, _ p: Program, includeId: Bool, includeRunTotal: Bool = true) {
         var i: Int32 = 1
         if includeId { stmt.bind(i, p.id); i += 1 }
         stmt.bind(i, p.name); i += 1
@@ -377,6 +465,9 @@ public final class Store {
         stmt.bind(i, p.logMaxBytes); i += 1
         stmt.bind(i, p.logBackups); i += 1
         stmt.bind(i, p.logRotatePolicy.rawValue); i += 1
+        if includeRunTotal {
+            stmt.bind(i, p.runTotal); i += 1
+        }
         stmt.bind(i, p.createdAt.timeIntervalSince1970); i += 1
         stmt.bind(i, p.updatedAt.timeIntervalSince1970); i += 1
     }
@@ -417,8 +508,9 @@ public final class Store {
             logMaxBytes: s.columnInt64(31),
             logBackups: s.columnInt(32),
             logRotatePolicy: LogRotatePolicy(rawValue: s.columnString(33)) ?? .size,
-            createdAt: Date(timeIntervalSince1970: s.columnDouble(34)),
-            updatedAt: Date(timeIntervalSince1970: s.columnDouble(35))
+            runTotal: s.columnInt(34),
+            createdAt: Date(timeIntervalSince1970: s.columnDouble(35)),
+            updatedAt: Date(timeIntervalSince1970: s.columnDouble(36))
         )
     }
 

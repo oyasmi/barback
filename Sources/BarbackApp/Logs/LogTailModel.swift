@@ -14,6 +14,7 @@ final class LogTailModel: ObservableObject {
     private var source: DispatchSourceFileSystemObject?
     private var fd: Int32 = -1
     private var lastInode: UInt64?
+    private var pendingFSWork: DispatchWorkItem?
 
     static let maxBytes: Int64 = 2 * 1024 * 1024
     static let maxLines = 5000
@@ -28,6 +29,7 @@ final class LogTailModel: ObservableObject {
     }
 
     func stop() {
+        pendingFSWork?.cancel()
         source?.cancel()
         source = nil
         if fd >= 0 { close(fd); fd = -1 }
@@ -65,7 +67,19 @@ final class LogTailModel: ObservableObject {
         return lines.filter { $0.localizedCaseInsensitiveContains(query) }.joined(separator: "\n")
     }
 
+    /// A chatty service's file-system events can fire dozens of times a second; each one used
+    /// to trigger `displayText(matching:)` in `LogViewerView.body` immediately, which joins up
+    /// to 5000 lines into a string and diffs it against the full `NSTextView` contents — cheap
+    /// once, not at that rate (design.md §4, ex-F18). Coalescing to one pass per ~100ms caps
+    /// the rebuild rate without changing what ends up on screen.
     private func handleFSEvent() {
+        pendingFSWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.processFSEvent() }
+        pendingFSWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: work)
+    }
+
+    private func processFSEvent() {
         guard let attrs = try? FileManager.default.attributesOfItem(atPath: path),
               let inode = attrs[.systemFileNumber] as? UInt64 else {
             loadTail()

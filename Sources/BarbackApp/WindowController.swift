@@ -81,7 +81,11 @@ final class WindowController: NSObject, NSWindowDelegate {
 
     func showHistoryWindow(programId: Int64?) {
         if historyWindow == nil {
-            let view = HistoryWindowView(appState: appState, initialProgramId: programId)
+            let view = HistoryWindowView(
+                appState: appState,
+                initialProgramId: programId,
+                onRerun: { [weak self] id in self?.runOneshotRespectingConfirm(programId: id) }
+            )
             let window = makeWindow(title: "执行历史", size: NSSize(width: 820, height: 520), content: view)
             window.delegate = self
             historyWindow = window
@@ -123,10 +127,6 @@ final class WindowController: NSObject, NSWindowDelegate {
         importWindow?.makeKeyAndOrderFront(nil)
     }
 
-    func toggleLoginItem() {
-        LoginItemManager.setEnabled(!LoginItemManager.isRegistered)
-    }
-
     func confirmRun(programId: Int64) {
         guard let snap = appState.program(id: programId) else { return }
         let alert = NSAlert()
@@ -139,9 +139,20 @@ final class WindowController: NSObject, NSWindowDelegate {
         }
     }
 
+    /// The single place a one-shot gets (re)started from outside the status panel, so the
+    /// `confirmBeforeRun` gate applies no matter which window asked for it (design.md CFG-4).
+    func runOneshotRespectingConfirm(programId: Int64) {
+        guard let snap = appState.program(id: programId), snap.program.kind == .oneshot else { return }
+        if snap.program.confirmBeforeRun {
+            confirmRun(programId: programId)
+        } else {
+            appState.supervisor.runOneshot(id: programId)
+        }
+    }
+
     func exportDiagnostics() {
         let panel = NSSavePanel()
-        panel.nameFieldStringValue = "barback-diagnostics.zip"
+        panel.nameFieldStringValue = "barback-diagnostics.md"
         panel.begin { [weak self] response in
             guard response == .OK, let url = panel.url else { return }
             self?.writeDiagnostics(to: url)
@@ -150,17 +161,6 @@ final class WindowController: NSObject, NSWindowDelegate {
 
     private func writeDiagnostics(to url: URL) {
         DiagnosticsExporter.export(appState: appState, to: url)
-    }
-
-    func checkForUpdates() {
-        let alert = NSAlert()
-        alert.messageText = "已是最新版本"
-        alert.informativeText = "Barback 不会自动更新；发现新版本时可在此手动检查。"
-        alert.runModal()
-    }
-
-    func showAboutPanel() {
-        NSApp.orderFrontStandardAboutPanel(nil)
     }
 
     func quitApp() {

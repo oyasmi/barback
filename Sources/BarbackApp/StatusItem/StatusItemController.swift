@@ -16,6 +16,10 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
 
     private var popover: NSPopover?
     private var panelModel: StatusPanelModel?
+    /// So `refreshIcon` — called on every snapshot publish — can skip rebuilding an `NSImage`
+    /// (one of the pricier Foundation/AppKit objects to construct) when the icon wouldn't
+    /// actually change, which is most of the time (design.md §6.2, ex-F20).
+    private var lastIconSymbol: String?
 
     init(appState: AppState) {
         self.appState = appState
@@ -26,31 +30,31 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
 
     private func configureButton() {
         guard let button = statusItem.button else { return }
-        button.image = iconImage()
         button.sendAction(on: [.leftMouseUp, .rightMouseUp])
         button.action = #selector(handleClick(_:))
         button.target = self
+        refreshIcon()
     }
 
-    private func iconImage() -> NSImage? {
-        let snapshot = appState.snapshot
-        let symbolName: String
+    private func symbolName(for snapshot: SupervisorSnapshot) -> String {
         if snapshot.fatalCount > 0 {
-            symbolName = "exclamationmark.triangle.fill"
+            return "exclamationmark.triangle.fill"
         } else if snapshot.oneshotRunningCount > 0 {
-            symbolName = "circle.dotted"
+            return "circle.dotted"
         } else if snapshot.runningCount > 0 {
-            symbolName = "wineglass.fill"
+            return "wineglass.fill"
         } else {
-            symbolName = "wineglass"
+            return "wineglass"
         }
-        let image = NSImage(systemSymbolName: symbolName, accessibilityDescription: "Barback")
-        image?.isTemplate = true
-        return image
     }
 
     func refreshIcon() {
-        statusItem.button?.image = iconImage()
+        let symbol = symbolName(for: appState.snapshot)
+        guard symbol != lastIconSymbol else { return }
+        lastIconSymbol = symbol
+        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: "Barback")
+        image?.isTemplate = true
+        statusItem.button?.image = image
     }
 
     @objc private func handleClick(_ sender: NSStatusBarButton) {
@@ -88,6 +92,9 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         popover.contentViewController?.view.window?.makeKey()
         button.highlight(true)
         model.startTicking()
+        // Cheap liveness re-check right when someone is about to look at the panel, per
+        // design.md's own suggestion for this safety net (ex-F25).
+        appState.supervisor.reconcileNow()
     }
 
     private func closePanel() {

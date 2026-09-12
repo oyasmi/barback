@@ -130,10 +130,6 @@ struct StartupTab: View {
                     .labelsHidden()
                     .frame(maxWidth: 260)
                 }
-                FormRow(label: "正常退出码") {
-                    TextField("0,2", text: exitCodesBinding)
-                        .frame(maxWidth: 140)
-                }
                 FormRow(label: "存活判定", messages: index.messages(.number("startSeconds"))) {
                     HStack(spacing: 6) {
                         IntField(value: $program.startSeconds)
@@ -183,23 +179,16 @@ struct StartupTab: View {
                     .foregroundStyle(.secondary)
             }
 
+            ExitCodesSection(program: $program)
             StopSection(program: $program, index: index)
         }
         .formStyle(.grouped)
-    }
-
-    private var exitCodesBinding: Binding<String> {
-        Binding(
-            get: { program.exitCodes.map(String.init).joined(separator: ",") },
-            set: { program.exitCodes = $0.split(separator: ",").compactMap { Int32($0.trimmingCharacters(in: .whitespaces)) } }
-        )
     }
 
     private func resetStartup() {
         let defaults = Program(name: program.name, kind: program.kind, command: program.command)
         program.autostart = defaults.autostart
         program.autorestart = defaults.autorestart
-        program.exitCodes = defaults.exitCodes
         program.startSeconds = defaults.startSeconds
         program.startRetries = defaults.startRetries
     }
@@ -229,7 +218,6 @@ struct ExecutionTab: View {
                     }
                 }
                 Toggle("执行前确认", isOn: $program.confirmBeforeRun)
-                Toggle("允许并发执行", isOn: $program.allowConcurrent)
                 FormRow(label: "历史保留", messages: index.messages(.number("historyLimit"))) {
                     HStack(spacing: 6) {
                         IntField(value: $program.historyLimit)
@@ -240,6 +228,7 @@ struct ExecutionTab: View {
                 FormSectionHeader(title: "执行", reset: resetExecution)
             }
 
+            ExitCodesSection(program: $program)
             StopSection(program: $program, index: index)
         }
         .formStyle(.grouped)
@@ -249,7 +238,6 @@ struct ExecutionTab: View {
         let defaults = Program(name: program.name, kind: program.kind, command: program.command)
         program.timeoutSeconds = defaults.timeoutSeconds
         program.confirmBeforeRun = defaults.confirmBeforeRun
-        program.allowConcurrent = defaults.allowConcurrent
         program.historyLimit = defaults.historyLimit
     }
 }
@@ -294,6 +282,39 @@ struct StopSection: View {
         program.stopWaitSeconds = defaults.stopWaitSeconds
         program.stopAsGroup = defaults.stopAsGroup
         program.killAsGroup = defaults.killAsGroup
+    }
+}
+
+/// The "normal exit code" field used to live only on the service tab, so a one-shot's
+/// success/failure judgment — which reads this same `exitCodes` field — was permanently
+/// stuck at the default `[0]` with no way to change it (design.md §3.4, ex-F13). Shared here
+/// the same way `StopSection` is, so both tabs get it.
+struct ExitCodesSection: View {
+    @Binding var program: Program
+
+    var body: some View {
+        Section {
+            FormRow(label: "正常退出码") {
+                TextField("0,2", text: exitCodesBinding)
+                    .frame(maxWidth: 140)
+            }
+        } header: {
+            FormSectionHeader(title: "退出码", reset: resetExitCodes)
+        } footer: {
+            Text("一次退出的退出码不在此列表中时，判定为失败。").font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    private var exitCodesBinding: Binding<String> {
+        Binding(
+            get: { program.exitCodes.map(String.init).joined(separator: ",") },
+            set: { program.exitCodes = $0.split(separator: ",").compactMap { Int32($0.trimmingCharacters(in: .whitespaces)) } }
+        )
+    }
+
+    private func resetExitCodes() {
+        let defaults = Program(name: program.name, kind: program.kind, command: program.command)
+        program.exitCodes = defaults.exitCodes
     }
 }
 
@@ -354,18 +375,26 @@ struct LogTab: View {
 
     var body: some View {
         Form {
-            Section {
-                FormRow(label: "输出路径") {
-                    TextField("默认（应用日志目录）", text: optionalText($program.logPath))
-                }
-                Toggle("合并 stderr 到 stdout", isOn: $program.logMergeStderr)
-                if !program.logMergeStderr {
-                    FormRow(label: "stderr 路径") {
-                        TextField("默认（应用日志目录）", text: optionalText($program.logStderrPath))
+            // A one-shot's output always lands in `runs/<name>-<runId>.log`, one file per
+            // execution — `openRunLog` never looks at `logPath`/`logStderrPath` at all. Showing
+            // this section for one-shots let someone fill in a path that silently did nothing,
+            // while `ProgramLogPath.resolve` favored the very same unused field over the real
+            // per-run file, so the log window opened a path that was never written to
+            // (design.md §4, ex-F11).
+            if program.kind == .service {
+                Section {
+                    FormRow(label: "输出路径") {
+                        TextField("默认（应用日志目录）", text: optionalText($program.logPath))
                     }
+                    Toggle("合并 stderr 到 stdout", isOn: $program.logMergeStderr)
+                    if !program.logMergeStderr {
+                        FormRow(label: "stderr 路径") {
+                            TextField("默认（应用日志目录）", text: optionalText($program.logStderrPath))
+                        }
+                    }
+                } header: {
+                    FormSectionHeader(title: "输出")
                 }
-            } header: {
-                FormSectionHeader(title: "输出")
             }
 
             if program.kind == .service {

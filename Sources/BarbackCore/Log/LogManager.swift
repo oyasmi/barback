@@ -23,11 +23,22 @@ public enum LogManagerError: Error, LocalizedError {
 /// (design.md §4, D-6/D-7). Barback never reads the data stream — it only opens the fd
 /// and hands it to `posix_spawn`, so log throughput costs ~0 CPU in the parent.
 public enum LogManager {
+    /// Where a service's stdout/stderr land, shared between `openServiceLogs` and the
+    /// rotation call sites in `Supervisor` so both agree on the same paths without a running
+    /// process (design.md §4).
+    public static func serviceLogPaths(name: String, logsDir: String, mergeStderr: Bool, explicitOutPath: String?, explicitErrPath: String?) -> (out: String, err: String) {
+        let dir = (logsDir as NSString).appendingPathComponent("programs")
+        let outPath = explicitOutPath ?? (dir as NSString).appendingPathComponent("\(name).out.log")
+        let errPath = mergeStderr ? outPath : (explicitErrPath ?? (dir as NSString).appendingPathComponent("\(name).err.log"))
+        return (outPath, errPath)
+    }
+
     public static func openServiceLogs(name: String, logsDir: String, mergeStderr: Bool, explicitOutPath: String?, explicitErrPath: String?) throws -> LogFDs {
         let dir = (logsDir as NSString).appendingPathComponent("programs")
         try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
-        let outPath = explicitOutPath ?? (dir as NSString).appendingPathComponent("\(name).out.log")
-        let errPath = mergeStderr ? outPath : (explicitErrPath ?? (dir as NSString).appendingPathComponent("\(name).err.log"))
+        let paths = serviceLogPaths(name: name, logsDir: logsDir, mergeStderr: mergeStderr, explicitOutPath: explicitOutPath, explicitErrPath: explicitErrPath)
+        let outPath = paths.out
+        let errPath = paths.err
 
         let outFD = open(outPath, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0o644)
         guard outFD >= 0 else { throw LogManagerError.openFailed(outPath) }
@@ -71,10 +82,13 @@ public enum LogManager {
 
     /// Copy-then-truncate rotation (design.md D-7): only way to keep the child's fd valid
     /// since it holds the file open via O_APPEND on the original inode.
-    public static func rotateIfNeeded(path: String, maxBytes: Int64, backups: Int) throws -> Bool {
-        guard maxBytes > 0 else { return false }
+    /// `force` rotates regardless of size — used for the `.onRestart` policy, where "rotate"
+    /// means "every fresh process gets a clean file" rather than "this file got too big".
+    public static func rotateIfNeeded(path: String, maxBytes: Int64, backups: Int, force: Bool = false) throws -> Bool {
+        guard force || maxBytes > 0 else { return false }
         let attrs = try? FileManager.default.attributesOfItem(atPath: path)
-        guard let size = attrs?[.size] as? Int64, size >= maxBytes else { return false }
+        guard let size = attrs?[.size] as? Int64 else { return false }
+        guard force ? size > 0 : size >= maxBytes else { return false }
 
         let fm = FileManager.default
         if backups > 0 {

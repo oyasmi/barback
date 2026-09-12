@@ -89,7 +89,7 @@ struct ServiceStateMachineTests {
     @Test func stopTimeoutEscalatesToKill() {
         let runtime = ServiceRuntime(state: .stopping, pid: 42, pgid: 42)
         let (_, actions) = ServiceStateMachine.reduce(runtime: runtime, event: .stopTimerElapsed, config: program(autorestart: .never))
-        #expect(actions.contains(.sendKill(group: true)))
+        #expect(actions.contains(.sendKill(pid: 42, pgid: 42, group: true)))
     }
 
     @Test func stormProtectionForcesFatal() {
@@ -107,5 +107,66 @@ struct ServiceStateMachineTests {
     @Test func backoffDelayIsBoundedByMax() {
         let delay = ServiceStateMachine.backoffDelay(retryCount: 10, base: 1, max: 60, jitter: 0, random: { 0 })
         #expect(delay == 60)
+    }
+
+    // ex-F21: the leader-exited-during-stop group sweep must carry its own pgid, since the
+    // runtime this same reduction hands back has already cleared it.
+    @Test func stopProcessExitedCarriesPgidForGroupSweep() {
+        let runtime = ServiceRuntime(state: .stopping, pid: 42, pgid: 42)
+        var config = program(autorestart: .never)
+        config.killAsGroup = true
+        let (r, actions) = ServiceStateMachine.reduce(runtime: runtime, event: .processExited(code: nil, signal: 15, at: Date()), config: config)
+        #expect(r.pid == nil && r.pgid == nil)
+        #expect(actions.contains(.sendKill(pid: nil, pgid: 42, group: true)))
+    }
+
+    @Test func stopProcessExitedSkipsSweepWhenKillAsGroupDisabled() {
+        let runtime = ServiceRuntime(state: .stopping, pid: 42, pgid: 42)
+        var config = program(autorestart: .never)
+        config.killAsGroup = false
+        let (_, actions) = ServiceStateMachine.reduce(runtime: runtime, event: .processExited(code: nil, signal: 15, at: Date()), config: config)
+        #expect(!actions.contains { if case .sendKill = $0 { return true }; return false })
+    }
+
+    // ex-F14: SIGKILL escalation must key off killAsGroup, not stopAsGroup.
+    @Test func stopTimeoutUsesKillAsGroupNotStopAsGroup() {
+        let runtime = ServiceRuntime(state: .stopping, pid: 42, pgid: 42)
+        var config = program(autorestart: .never)
+        config.stopAsGroup = true
+        config.killAsGroup = false
+        let (_, actions) = ServiceStateMachine.reduce(runtime: runtime, event: .stopTimerElapsed, config: config)
+        #expect(actions.contains(.sendKill(pid: 42, pgid: 42, group: false)))
+    }
+
+    // ex-F24: `.always` used to spawn forever with no storm protection at all.
+    @Test func alwaysPolicyEntersFatalUnderStorm() {
+        var config = program(autorestart: .always)
+        config.stormMaxRestarts = 2
+        config.stormWindowSec = 600
+        var runtime = ServiceRuntime(state: .running, pid: 1, pgid: 1)
+        let (r1, _) = ServiceStateMachine.reduce(runtime: runtime, event: .processExited(code: 1, signal: nil, at: Date()), config: config)
+        #expect(r1.state == .starting)
+        runtime = ServiceRuntime(state: .running, restartTimestamps: r1.restartTimestamps, pid: 1, pgid: 1)
+        let (r2, actions2) = ServiceStateMachine.reduce(runtime: runtime, event: .processExited(code: 1, signal: nil, at: Date()), config: config)
+        #expect(r2.state == .fatal)
+        #expect(actions2.contains { if case .notify(.enteredFatal) = $0 { return true }; return false })
+    }
+
+    // ex-F29: entering backoff/fatal must clear pid/pgid rather than persist a dead one.
+    @Test func enteringBackoffClearsPid() {
+        let runtime = ServiceRuntime(state: .starting, pid: 7, pgid: 7)
+        let (r, _) = ServiceStateMachine.reduce(runtime: runtime, event: .spawnFailed, config: program(autorestart: .never, startRetries: 5))
+        #expect(r.state == .backoff)
+        #expect(r.pid == nil && r.pgid == nil)
+    }
+
+    // ex-F20: restartTimestamps must not accumulate entries outside the storm window forever.
+    @Test func restartTimestampsAreConfinedToStormWindow() {
+        var config = program(autorestart: .unexpected)
+        config.stormWindowSec = 1
+        config.stormMaxRestarts = 100
+        let stale = ServiceRuntime(state: .running, restartTimestamps: [Date().addingTimeInterval(-10)], pid: 1, pgid: 1)
+        let (r, _) = ServiceStateMachine.reduce(runtime: stale, event: .processExited(code: 1, signal: nil, at: Date()), config: config)
+        #expect(r.restartTimestamps.count == 1)
     }
 }

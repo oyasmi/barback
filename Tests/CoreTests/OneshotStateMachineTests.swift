@@ -55,18 +55,15 @@ struct OneshotStateMachineTests {
         }
     }
 
-    @Test func concurrentRunBlockedWithoutAllowConcurrent() {
+    // The `allowConcurrent`-gated second-spawn path used to live here (and in the reducer),
+    // but `OneshotRuntime`/`Supervisor.currentRunId` only ever track one pid at a time — a
+    // concurrent run silently corrupted the first run's bookkeeping instead of actually
+    // tracking two (ex-F12). `Supervisor.dispatchOneshotEvent` now refuses `.run` while
+    // already running, unconditionally, so the reducer itself has nothing left to special-case.
+    @Test func runWhileRunningIsANoOpForTheReducer() {
         let runtime = OneshotRuntime(state: .running, pid: 1)
-        let (r, actions) = OneshotStateMachine.reduce(runtime: runtime, event: .run, config: program(allowConcurrent: false))
-        // Supervisor is expected to guard concurrency before calling reduce; the pure
-        // reducer itself only special-cases the allowConcurrent=true path below.
+        let (r, actions) = OneshotStateMachine.reduce(runtime: runtime, event: .run, config: program())
         #expect(r.state == .running)
         #expect(actions.isEmpty)
-    }
-
-    @Test func concurrentRunAllowedSpawnsAgain() {
-        let runtime = OneshotRuntime(state: .running, pid: 1)
-        let (_, actions) = OneshotStateMachine.reduce(runtime: runtime, event: .run, config: program(allowConcurrent: true))
-        #expect(actions.contains(.spawn))
     }
 }

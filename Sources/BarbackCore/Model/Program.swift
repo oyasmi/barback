@@ -73,6 +73,11 @@ public struct Program: Codable, Sendable, Equatable, Identifiable {
     public var logBackups: Int
     public var logRotatePolicy: LogRotatePolicy
 
+    /// Lifetime execution count, maintained by `Store.incrementRunTotal` — not editable via
+    /// the config form, and deliberately excluded from `Store.updateProgram`'s column list so
+    /// saving a stale draft can never roll it back (design.md §3.4).
+    public var runTotal: Int
+
     public var createdAt: Date
     public var updatedAt: Date
 
@@ -111,6 +116,7 @@ public struct Program: Codable, Sendable, Equatable, Identifiable {
         logMaxBytes: Int64 = 10_485_760,
         logBackups: Int = 3,
         logRotatePolicy: LogRotatePolicy = .size,
+        runTotal: Int = 0,
         createdAt: Date = Date(),
         updatedAt: Date = Date()
     ) {
@@ -148,6 +154,7 @@ public struct Program: Codable, Sendable, Equatable, Identifiable {
         self.logMaxBytes = logMaxBytes
         self.logBackups = logBackups
         self.logRotatePolicy = logRotatePolicy
+        self.runTotal = runTotal
         self.createdAt = createdAt
         self.updatedAt = updatedAt
     }

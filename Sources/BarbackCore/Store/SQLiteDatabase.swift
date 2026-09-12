@@ -99,7 +99,16 @@ public final class SQLiteDatabase {
     }
 
     deinit {
-        sqlite3_close(db)
+        close()
+    }
+
+    /// Explicit close, so corruption recovery can release the handle on the (possibly bad)
+    /// file before renaming it out of the way — waiting for `deinit` would run too late,
+    /// after a replacement `SQLiteDatabase` has already opened the same path.
+    public func close() {
+        guard let handle = db else { return }
+        sqlite3_close(handle)
+        db = nil
     }
 
     public func exec(_ sql: String) throws {
@@ -151,8 +160,11 @@ public final class SQLiteDatabase {
         try exec("PRAGMA user_version = \(version)")
     }
 
+    /// `quick_check` skips the index cross-validation `integrity_check` does, which is one to
+    /// two orders of magnitude faster on a database that has grown to tens of MB of run/event
+    /// history — and this runs on every launch, before any service is started (design.md §5.1).
     public func integrityCheck() -> Bool {
-        guard let stmt = try? prepare("PRAGMA integrity_check") else { return false }
+        guard let stmt = try? prepare("PRAGMA quick_check") else { return false }
         guard (try? stmt.step()) == true else { return false }
         return stmt.columnString(0) == "ok"
     }

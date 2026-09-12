@@ -119,6 +119,15 @@ final class StatusPanelModel: ObservableObject {
     func clearFatal(_ snap: ProgramSnapshot) { appState.supervisor.clearFatal(id: snap.id) }
     func cancelOneshot(_ snap: ProgramSnapshot) { appState.supervisor.cancelOneshot(id: snap.id) }
 
+    /// Only reachable for a disabled, inactive service (see `ProgramRowView.primaryButton`) —
+    /// flips `enabled` back on without also starting it, matching what "启用" promises as
+    /// distinct from "启动" (design.md §6.3, ex-F06).
+    func enable(_ snap: ProgramSnapshot) {
+        var program = snap.program
+        program.enabled = true
+        appState.supervisor.validateAndSave(program) { _ in }
+    }
+
     func runOneshot(_ snap: ProgramSnapshot) {
         guard snap.program.confirmBeforeRun else {
             appState.supervisor.runOneshot(id: snap.id)
@@ -147,7 +156,33 @@ final class StatusPanelModel: ObservableObject {
     // MARK: - Global actions
 
     func startAll() { appState.supervisor.startAll() }
-    func stopAll() { appState.supervisor.stopAll() }
+
+    /// "全部停止" reads as "stop my services" — it silently took down any in-flight one-shot
+    /// too, which is exactly the risk the quit flow already asks about before doing the same
+    /// thing (`AppDelegate.applicationShouldTerminate`). This brings the panel action in line
+    /// with that precedent (design.md §6.3, ex-F04).
+    func stopAll() {
+        appState.supervisor.hasActiveOneshots { [weak self] hasActive in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                guard hasActive else {
+                    self.appState.supervisor.stopAll()
+                    return
+                }
+                self.close()
+                let alert = NSAlert()
+                alert.alertStyle = .warning
+                alert.messageText = "有一次性命令正在执行"
+                alert.informativeText = "全部停止将同时终止它们。"
+                alert.addButton(withTitle: "全部停止")
+                alert.addButton(withTitle: "取消")
+                NSApp.activate(ignoringOtherApps: true)
+                guard alert.runModal() == .alertFirstButtonReturn else { return }
+                self.appState.supervisor.stopAll()
+            }
+        }
+    }
+
     func restartAll() { appState.supervisor.restartAll() }
 
     var canStartAll: Bool {

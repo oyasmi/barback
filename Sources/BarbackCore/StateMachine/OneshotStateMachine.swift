@@ -61,8 +61,13 @@ public enum OneshotStateMachine {
             actions.append(.persistLive)
             actions.append(.publishSnapshot)
 
-        case (.running, .run) where config.allowConcurrent:
-            actions.append(.spawn)
+        // A concurrent-run branch used to live here, but `OneshotRuntime`/`currentRunId` only
+        // ever track one pid at a time: a second spawn while the first was still running would
+        // silently overwrite its pid, so whichever process exited first pushed the *other*
+        // one's run row to `.succeeded` and left it with `ended_at` permanently NULL
+        // (design.md §3.4, ex-F12). `Supervisor.dispatchOneshotEvent` now refuses a `.run`
+        // while already running, so this state is unreachable — removed rather than left as
+        // a second guard nothing can trigger.
 
         case (.running, .spawnSucceeded(let pid, let pgid, let startTime, _)):
             r.pid = pid
@@ -120,7 +125,9 @@ public enum OneshotStateMachine {
             actions.append(.persistLive)
 
         case (.running, .stopTimerElapsed):
-            actions.append(.sendKill(group: config.stopAsGroup || config.killAsGroup))
+            // SIGKILL escalation looks at `killAsGroup` only — `stopAsGroup` governs the stop
+            // *signal*, not the kill that follows when the process ignores it (ex-F14).
+            actions.append(.sendKill(group: config.killAsGroup))
 
         default:
             break

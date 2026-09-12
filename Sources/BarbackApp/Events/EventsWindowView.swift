@@ -76,8 +76,15 @@ struct EventsWindowView: View {
     }
 
     private func format(_ date: Date) -> String {
+        Self.timeFormatter.string(from: date)
+    }
+
+    // `DateFormatter` is one of the more expensive Foundation objects to construct — building
+    // a fresh one per table cell added up fast on an event log with hundreds of rows
+    // (design.md §6.6, ex-F20).
+    private static let timeFormatter: DateFormatter = {
         let f = DateFormatter()
         f.dateFormat = "MM-dd HH:mm:ss"
-        return f.string(from: date)
-    }
+        return f
+    }()
 }

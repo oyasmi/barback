@@ -175,7 +175,13 @@ final class ConfigWindowModel: ObservableObject {
         saveFailure = nil
         hasAttemptedSave = false
         let base = kind == .service ? "new-service" : "new-command"
-        setDraft(Program(name: uniqueName(base: base), kind: kind, command: ""), baseline: nil)
+        var draft = Program(name: uniqueName(base: base), kind: kind, command: "")
+        // A service's run history isn't user-facing (no "历史保留" field shows for it — see
+        // `LogTab`/`ExecutionTab`), it's just the FIFO cap `trimHistoryIfNeeded` trims against.
+        // A restarting service accumulates rows far faster than a manually-run one-shot, so it
+        // gets more headroom before trimming kicks in (design.md §3.4, ex-F09).
+        if kind == .service { draft.historyLimit = 200 }
+        setDraft(draft, baseline: nil)
     }
 
     private func duplicate(id: Int64) {

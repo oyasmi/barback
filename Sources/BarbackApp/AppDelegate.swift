@@ -29,6 +29,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return
         }
 
+        if let restoredCount = store.restoredProgramCount {
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = "数据库已损坏，已从最近备份恢复"
+            alert.informativeText = restoredCount > 0
+                ? "已从最近一次配置备份恢复 \(restoredCount) 个程序的配置。运行历史与事件记录已丢失，标记为自动启动的程序即将按原配置启动，建议逐一核对后再使用。"
+                : "未找到可用的配置备份，程序列表已清空。运行历史与事件记录已丢失。"
+            alert.runModal()
+        }
+
         supervisor = Supervisor(store: store)
         appState = AppState(supervisor: supervisor, store: store)
         windowController = WindowController(appState: appState)
@@ -186,8 +196,20 @@ extension AppDelegate: UNUserNotificationCenterDelegate {
 
 /// Minimal "stopping…" panel shown if shutdown takes over a second (design.md §3.6 step 3).
 @MainActor
-enum TerminationProgressWindow {
-    static func show() -> NSWindow {
+final class TerminationProgressWindow {
+    private let window: NSWindow
+    /// `window.isVisible` was the original guard for "don't show this if we're already done",
+    /// but a *closed* window also reads `isVisible == false` — so a termination that finished
+    /// in well under a second still got a one-frame flash of the panel when the delayed check
+    /// fired (design.md §3.6, ex-F28). An explicit flag distinguishes "not shown yet" from
+    /// "already closed".
+    private var finished = false
+
+    static func show() -> TerminationProgressWindow {
+        TerminationProgressWindow()
+    }
+
+    private init() {
         let label = NSTextField(labelWithString: "正在停止所有被管进程…")
         label.frame = NSRect(x: 20, y: 20, width: 260, height: 24)
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 64), styleMask: [.titled], backing: .buffered, defer: false)
@@ -195,13 +217,17 @@ enum TerminationProgressWindow {
         window.contentView?.addSubview(label)
         window.center()
         window.isReleasedWhenClosed = false
+        self.window = window
         // Only actually shown if termination takes noticeably long; ordering front now is
         // cheap and avoids a flash for the common fast-path case being visually jarring.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-            if window.isVisible == false, window.isReleasedWhenClosed == false {
-                window.makeKeyAndOrderFront(nil)
-            }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            guard let self, !self.finished else { return }
+            self.window.makeKeyAndOrderFront(nil)
         }
-        return window
+    }
+
+    func close() {
+        finished = true
+        window.close()
     }
 }

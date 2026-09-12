@@ -25,7 +25,10 @@ public enum ServiceAction: Sendable, Equatable {
     case sendSignal(name: String, group: Bool)
     case scheduleStopTimer(seconds: Double)
     case cancelStopTimer
-    case sendKill(group: Bool)
+    /// Carries the pid/pgid to kill rather than leaving the caller to re-read `ServiceRuntime`
+    /// at execution time — some transitions clear those fields in the very same reduction
+    /// that emits this action, which used to make the kill silently a no-op (ex-F21).
+    case sendKill(pid: Int32?, pgid: Int32?, group: Bool)
     case scheduleStopGrace(seconds: Double)
     case persistLive
     case publishSnapshot
@@ -99,6 +102,7 @@ public enum ServiceStateMachine {
         case (.fatal, .clearFatal):
             r.state = .stopped
             r.retryCount = 0
+            r.restartTimestamps = []
             actions.append(.persistLive)
             actions.append(.publishSnapshot)
 
@@ -143,12 +147,28 @@ public enum ServiceStateMachine {
                 actions.append(.persistLive)
                 actions.append(.publishSnapshot)
             case .always:
-                r.state = .starting
-                r.pid = nil
-                r.retryCount = 0
-                actions.append(.spawn(trigger: .autorestart))
-                actions.append(.persistLive)
-                actions.append(.publishSnapshot)
+                // `.always` used to spawn again unconditionally with no record kept anywhere —
+                // a service that starts fine and then reliably exits after a few seconds
+                // (bad config, a periodic OOM) would restart forever at `startSeconds` cadence,
+                // each cycle adding a run row, event rows, and log lines that nothing ever
+                // trims (design.md §3.3, ex-F24). Route it through the same storm window
+                // `.unexpected` already uses instead of a policy-shaped exemption from it.
+                recordRestart(&r, config: config)
+                if isStorming(r.restartTimestamps, config: config) {
+                    r.state = .fatal
+                    r.pid = nil
+                    actions.append(.logEvent(.enteredFatal, level: .error, detail: ["reason": "crash_storm"]))
+                    actions.append(.notify(.enteredFatal(name: config.name)))
+                    actions.append(.persistLive)
+                    actions.append(.publishSnapshot)
+                } else {
+                    r.state = .starting
+                    r.pid = nil
+                    r.retryCount = 0
+                    actions.append(.spawn(trigger: .autorestart))
+                    actions.append(.persistLive)
+                    actions.append(.publishSnapshot)
+                }
             case .unexpected:
                 let isExpected = code.map { config.exitCodes.contains($0) } ?? false
                 if isExpected {
@@ -157,7 +177,7 @@ public enum ServiceStateMachine {
                     actions.append(.persistLive)
                     actions.append(.publishSnapshot)
                 } else {
-                    r.restartTimestamps.append(Date())
+                    recordRestart(&r, config: config)
                     if isStorming(r.restartTimestamps, config: config) {
                         r.state = .fatal
                         r.pid = nil
@@ -202,8 +222,11 @@ public enum ServiceStateMachine {
 
         case (.stopping, .processExited(let code, let signal, _)):
             actions.append(.cancelStopTimer)
-            if config.killAsGroup {
-                actions.append(.sendKill(group: true))
+            if config.killAsGroup, let pgid = r.pgid {
+                // The leader already exited; this is purely a group sweep for anything it
+                // forked. Capturing pgid now — before it is cleared below — is what makes
+                // this sweep actually run (ex-F21: it used to read a runtime already nil'd out).
+                actions.append(.sendKill(pid: nil, pgid: pgid, group: true))
             }
             actions.append(.finalizeRun(outcome: .cancelled, code: code, signal: signal))
             r.state = .stopped
@@ -213,13 +236,16 @@ public enum ServiceStateMachine {
             actions.append(.publishSnapshot)
 
         case (.stopping, .stopTimerElapsed):
-            actions.append(.sendKill(group: config.stopAsGroup))
+            // SIGKILL escalation looks at `killAsGroup`, not `stopAsGroup` — that flag governs
+            // the stop *signal*, and conflating the two meant toggling one didn't reliably
+            // change the other's behavior (ex-F14).
+            actions.append(.sendKill(pid: r.pid, pgid: r.pgid, group: config.killAsGroup))
             actions.append(.notify(.stopTimeout(name: config.name)))
             actions.append(.logEvent(.stopTimeout, level: .warn, detail: [:]))
             actions.append(.scheduleStopGrace(seconds: 2))
 
         case (.stopping, .forceKill):
-            actions.append(.sendKill(group: config.killAsGroup))
+            actions.append(.sendKill(pid: r.pid, pgid: r.pgid, group: config.killAsGroup))
 
         default:
             // No-op for events that don't apply to the current state.
@@ -245,8 +271,22 @@ public enum ServiceStateMachine {
         return recent.count >= config.stormMaxRestarts
     }
 
+    /// Appends a restart timestamp, pruning everything already outside the storm window first
+    /// — `restartTimestamps` used to only ever grow, one entry per unexpected exit for the
+    /// life of a long-running service (design.md §3.3, ex-F20).
+    private static func recordRestart(_ r: inout ServiceRuntime, config: Program) {
+        let cutoff = Date().addingTimeInterval(-TimeInterval(config.stormWindowSec))
+        r.restartTimestamps = r.restartTimestamps.filter { $0 >= cutoff }
+        r.restartTimestamps.append(Date())
+    }
+
     private static func enterBackoffOrFatal(_ runtime: ServiceRuntime, config: Program) -> (ServiceRuntime, [ServiceAction]) {
         var r = runtime
+        // A backoff/fatal transition always follows an exit, so any pid it was holding is
+        // already dead — leaving it set persisted a dead pid into `live` (ex-F29), relying on
+        // `verifyAlive`'s 1s start-time tolerance to avoid mistaking a reused pid for it.
+        r.pid = nil
+        r.pgid = nil
         var actions: [ServiceAction] = []
         if r.retryCount + 1 < config.startRetries {
             r.retryCount += 1
