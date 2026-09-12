@@ -6,8 +6,9 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 APP_NAME="Barback"
-APP_BUNDLE=".build/apple/$APP_NAME.app"
-DMG_PATH=".build/apple/$APP_NAME.dmg"
+DIST_DIR="dist"
+APP_BUNDLE="$DIST_DIR/$APP_NAME.app"
+DMG_PATH="$DIST_DIR/$APP_NAME.dmg"
 
 : "${DEVELOPER_ID_APPLICATION:?Set DEVELOPER_ID_APPLICATION to your signing identity}"
 

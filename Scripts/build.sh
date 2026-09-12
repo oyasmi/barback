@@ -4,8 +4,8 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 APP_NAME="Barback"
-BUILD_DIR=".build/apple"
-APP_BUNDLE="$BUILD_DIR/$APP_NAME.app"
+DIST_DIR="dist"
+APP_BUNDLE="$DIST_DIR/$APP_NAME.app"
 
 echo "==> Building Universal 2 release binary"
 swift build -c release --arch arm64 --arch x86_64
@@ -23,6 +23,7 @@ if [ ! -f "$BIN_PATH" ]; then
 fi
 
 echo "==> Assembling app bundle"
+mkdir -p "$DIST_DIR"
 rm -rf "$APP_BUNDLE"
 mkdir -p "$APP_BUNDLE/Contents/MacOS" "$APP_BUNDLE/Contents/Resources"
 cp "$BIN_PATH" "$APP_BUNDLE/Contents/MacOS/$APP_NAME"

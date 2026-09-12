@@ -4,8 +4,9 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 APP_NAME="Barback"
-APP_BUNDLE=".build/apple/$APP_NAME.app"
-DMG_PATH=".build/apple/$APP_NAME.dmg"
+DIST_DIR="dist"
+APP_BUNDLE="$DIST_DIR/$APP_NAME.app"
+DMG_PATH="$DIST_DIR/$APP_NAME.dmg"
 
 if [ ! -d "$APP_BUNDLE" ]; then
   echo "Run Scripts/build.sh first" >&2

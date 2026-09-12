@@ -5,18 +5,15 @@ macOS 状态栏进程管理器 — 用 supervisor 的语义管理后台服务与
 ## 构建与运行
 
 ```bash
-swift build                     # 调试构建
-swift test                      # 运行全部测试（纯函数单测 + 进程集成测试）
-swift run BarbackApp            # 直接运行（开发用，无 .app 包，系统通知不可用）
+make                             # 默认目标：构建 dist/Barback.app 和 dist/Barback.dmg
+make build                       # 调试构建（开发用，产物在 .build/debug/BarbackApp）
+make test                        # 运行全部测试（纯函数单测 + 进程集成测试）
+make run                         # 直接运行调试构建（无 .app 包，系统通知不可用）
+DEVELOPER_ID_APPLICATION="Developer ID Application: ..." make sign   # 签名 + 公证 dist/Barback.dmg
+make clean                       # 删除 .build 与 dist
 ```
 
-## 打包发布
-
-```bash
-Scripts/build.sh                # Universal 2 release 构建 + 组装 Barback.app
-Scripts/package.sh              # 打包为 .dmg
-DEVELOPER_ID_APPLICATION="Developer ID Application: ..." Scripts/sign-notarize.sh
-```
+打包产物统一放在仓库根目录的 `dist/`（已加入 `.gitignore`，不提交）；`.build/` 只是 SwiftPM 的中间构建缓存。
 
 ## 代码结构
 
@@ -29,5 +26,4 @@ DEVELOPER_ID_APPLICATION="Developer ID Application: ..." Scripts/sign-notarize.s
 ## 已知限制（v1.0）
 
 - 未打包为 `.app` 时运行会跳过系统通知（`UNUserNotificationCenter` 需要真实 bundle identity）。
-- 图标资源为系统 SF Symbols 占位；`Resources/Assets.xcassets` 留空，替换为正式图标后 `Scripts/build.sh` 会自动打入 bundle。
 - 详见设计文档 §9 未决问题（日志轮转默认策略、一次性命令参数化输入、签名分发方式）。
