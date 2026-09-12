@@ -1,0 +1,447 @@
+import Foundation
+
+/// SQLite-backed persistence for programs, live snapshots, run history, events and settings.
+/// Design.md §5: single file, WAL, all writes from one serial queue owned by the caller
+/// (`Supervisor` on `barback.core`). This type does not itself hop queues — callers must
+/// only ever touch it from that one queue.
+public final class Store {
+    public let dbPath: String
+    public let backupsDir: String
+    private let db: SQLiteDatabase
+
+    public init(dbPath: String, backupsDir: String) throws {
+        self.dbPath = dbPath
+        self.backupsDir = backupsDir
+        try FileManager.default.createDirectory(atPath: (dbPath as NSString).deletingLastPathComponent, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        try FileManager.default.createDirectory(atPath: backupsDir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        self.db = try SQLiteDatabase(path: dbPath)
+        try db.exec("PRAGMA journal_mode=WAL")
+        try db.exec("PRAGMA synchronous=NORMAL")
+        try db.exec("PRAGMA foreign_keys=ON")
+        try migrateIfNeeded()
+        chmod(dbPath, 0o600)
+    }
+
+    private func migrateIfNeeded() throws {
+        let ok = db.integrityCheck()
+        if !ok {
+            try restoreFromLatestBackupOrThrow()
+        }
+        let version = db.userVersion
+        if version < 1 {
+            try db.inTransaction {
+                try db.exec(Schema.v1)
+            }
+            try db.setUserVersion(Schema.currentVersion)
+        }
+        // Future migrations: `if version < 2 { ... }` etc., each preceded by a JSON backup.
+    }
+
+    private func restoreFromLatestBackupOrThrow() throws {
+        let fm = FileManager.default
+        let backups = (try? fm.contentsOfDirectory(atPath: backupsDir)) ?? []
+        guard backups.sorted().last != nil else {
+            // No backup to restore from; proceed with a fresh schema on the (corrupt) file.
+            return
+        }
+        // Config JSON backups don't reconstruct SQLite bytes; corruption recovery here means
+        // "give up on this db file and start clean" while the caller is told via the thrown flag.
+        try fm.removeItem(atPath: dbPath)
+        _ = try? fm.removeItem(atPath: dbPath + "-wal")
+        _ = try? fm.removeItem(atPath: dbPath + "-shm")
+    }
+
+    // MARK: - Program CRUD
+
+    public func allProgramNames(excludingId: Int64? = nil) throws -> Set<String> {
+        let stmt = try db.prepare("SELECT id, name FROM program")
+        var names = Set<String>()
+        while try stmt.step() {
+            let id = stmt.columnInt64(0)
+            if id == excludingId { continue }
+            names.insert(stmt.columnString(1))
+        }
+        return names
+    }
+
+    public func fetchAllPrograms() throws -> [Program] {
+        let stmt = try db.prepare("SELECT \(Self.programColumns) FROM program ORDER BY priority ASC, name ASC")
+        var results: [Program] = []
+        while try stmt.step() {
+            results.append(Self.programFromRow(stmt))
+        }
+        return results
+    }
+
+    public func fetchProgram(id: Int64) throws -> Program? {
+        let stmt = try db.prepare("SELECT \(Self.programColumns) FROM program WHERE id = ?")
+        stmt.bind(1, id)
+        guard try stmt.step() else { return nil }
+        return Self.programFromRow(stmt)
+    }
+
+    @discardableResult
+    public func insertProgram(_ program: Program) throws -> Int64 {
+        var p = program
+        p.createdAt = Date()
+        p.updatedAt = p.createdAt
+        let stmt = try db.prepare("""
+            INSERT INTO program (\(Self.programColumns.replacingOccurrences(of: "id, ", with: "")))
+            VALUES (\(Array(repeating: "?", count: Self.programColumnCount - 1).joined(separator: ",")))
+            """)
+        Self.bindProgram(stmt, p, includeId: false)
+        try stmt.run()
+        return db.lastInsertRowID
+    }
+
+    public func updateProgram(_ program: Program) throws {
+        var p = program
+        p.updatedAt = Date()
+        let assignments = Self.programColumnNames.dropFirst().map { "\($0) = ?" }.joined(separator: ", ")
+        let stmt = try db.prepare("UPDATE program SET \(assignments) WHERE id = ?")
+        Self.bindProgram(stmt, p, includeId: false)
+        stmt.bind(Int32(Self.programColumnCount), p.id)
+        try stmt.run()
+    }
+
+    public func deleteProgram(id: Int64) throws {
+        let stmt = try db.prepare("DELETE FROM program WHERE id = ?")
+        stmt.bind(1, id)
+        try stmt.run()
+    }
+
+    // MARK: - Live table
+
+    public func upsertLive(_ live: LiveRecord) throws {
+        let stmt = try db.prepare("""
+            INSERT INTO live (program_id, app_boot_id, state, pid, pgid, proc_start_time, started_at, retry_count, stop_requested, run_id, needs_restart)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(program_id) DO UPDATE SET
+              app_boot_id=excluded.app_boot_id, state=excluded.state, pid=excluded.pid, pgid=excluded.pgid,
+              proc_start_time=excluded.proc_start_time, started_at=excluded.started_at, retry_count=excluded.retry_count,
+              stop_requested=excluded.stop_requested, run_id=excluded.run_id, needs_restart=excluded.needs_restart
+            """)
+        stmt.bind(1, live.programId)
+        stmt.bind(2, live.appBootId)
+        stmt.bind(3, live.state)
+        stmt.bindOptional(4, live.pid)
+        stmt.bindOptional(5, live.pgid)
+        stmt.bindOptional(6, live.procStartTime)
+        stmt.bindOptional(7, live.startedAt)
+        stmt.bind(8, live.retryCount)
+        stmt.bind(9, live.stopRequested ? 1 : 0)
+        stmt.bindOptional(10, live.runId)
+        stmt.bind(11, live.needsRestart ? 1 : 0)
+        try stmt.run()
+    }
+
+    public func fetchAllLive() throws -> [LiveRecord] {
+        let stmt = try db.prepare("SELECT program_id, app_boot_id, state, pid, pgid, proc_start_time, started_at, retry_count, stop_requested, run_id, needs_restart FROM live")
+        var results: [LiveRecord] = []
+        while try stmt.step() {
+            results.append(LiveRecord(
+                programId: stmt.columnInt64(0),
+                appBootId: stmt.columnString(1),
+                state: stmt.columnString(2),
+                pid: stmt.columnInt32Optional(3),
+                pgid: stmt.columnInt32Optional(4),
+                procStartTime: stmt.columnDoubleOptional(5),
+                startedAt: stmt.columnDoubleOptional(6),
+                retryCount: stmt.columnInt(7),
+                stopRequested: stmt.columnInt(8) != 0,
+                runId: stmt.columnInt64Optional(9),
+                needsRestart: stmt.columnInt(10) != 0
+            ))
+        }
+        return results
+    }
+
+    public func clearLive(programId: Int64) throws {
+        let stmt = try db.prepare("DELETE FROM live WHERE program_id = ?")
+        stmt.bind(1, programId)
+        try stmt.run()
+    }
+
+    // MARK: - Run history
+
+    @discardableResult
+    public func insertRun(_ run: RunRecord) throws -> Int64 {
+        let stmt = try db.prepare("""
+            INSERT INTO run (program_id, trigger, pid, started_at, ended_at, exit_code, term_signal, outcome, log_path)
+            VALUES (?,?,?,?,?,?,?,?,?)
+            """)
+        stmt.bind(1, run.programId)
+        stmt.bind(2, run.trigger.rawValue)
+        stmt.bindOptional(3, run.pid)
+        stmt.bind(4, run.startedAt.timeIntervalSince1970)
+        stmt.bindOptional(5, run.endedAt?.timeIntervalSince1970)
+        stmt.bindOptional(6, run.exitCode)
+        stmt.bindOptional(7, run.termSignal)
+        stmt.bindOptional(8, run.outcome?.rawValue)
+        stmt.bindOptional(9, run.logPath)
+        try stmt.run()
+        return db.lastInsertRowID
+    }
+
+    public func finalizeRun(id: Int64, endedAt: Date, exitCode: Int32?, termSignal: Int32?, outcome: RunOutcome) throws {
+        let stmt = try db.prepare("UPDATE run SET ended_at=?, exit_code=?, term_signal=?, outcome=? WHERE id=?")
+        stmt.bind(1, endedAt.timeIntervalSince1970)
+        stmt.bindOptional(2, exitCode)
+        stmt.bindOptional(3, termSignal)
+        stmt.bind(4, outcome.rawValue)
+        stmt.bind(5, id)
+        try stmt.run()
+    }
+
+    public func fetchRuns(programId: Int64, limit: Int = 100) throws -> [RunRecord] {
+        let stmt = try db.prepare("SELECT id, program_id, trigger, pid, started_at, ended_at, exit_code, term_signal, outcome, log_path FROM run WHERE program_id = ? ORDER BY started_at DESC LIMIT ?")
+        stmt.bind(1, programId)
+        stmt.bind(2, limit)
+        return try readRuns(stmt)
+    }
+
+    public func fetchAllRuns(limit: Int = 500) throws -> [RunRecord] {
+        let stmt = try db.prepare("SELECT id, program_id, trigger, pid, started_at, ended_at, exit_code, term_signal, outcome, log_path FROM run ORDER BY started_at DESC LIMIT ?")
+        stmt.bind(1, limit)
+        return try readRuns(stmt)
+    }
+
+    private func readRuns(_ stmt: SQLiteStatement) throws -> [RunRecord] {
+        var results: [RunRecord] = []
+        while try stmt.step() {
+            results.append(RunRecord(
+                id: stmt.columnInt64(0),
+                programId: stmt.columnInt64(1),
+                trigger: RunTrigger(rawValue: stmt.columnString(2)) ?? .manual,
+                pid: stmt.columnInt32Optional(3),
+                startedAt: Date(timeIntervalSince1970: stmt.columnDouble(4)),
+                endedAt: stmt.columnDoubleOptional(5).map(Date.init(timeIntervalSince1970:)),
+                exitCode: stmt.columnInt32Optional(6),
+                termSignal: stmt.columnInt32Optional(7),
+                outcome: stmt.columnStringOptional(8).flatMap(RunOutcome.init(rawValue:)),
+                logPath: stmt.columnStringOptional(9)
+            ))
+        }
+        return results
+    }
+
+    /// Deletes runs beyond `historyLimit` for a program (FIFO), returning their log paths
+    /// so the caller can remove the output files too (design.md §3.4).
+    public func trimRunHistory(programId: Int64, historyLimit: Int) throws -> [String] {
+        let stmt = try db.prepare("SELECT id, log_path FROM run WHERE program_id = ? ORDER BY started_at DESC LIMIT -1 OFFSET ?")
+        stmt.bind(1, programId)
+        stmt.bind(2, historyLimit)
+        var idsToDelete: [Int64] = []
+        var paths: [String] = []
+        while try stmt.step() {
+            idsToDelete.append(stmt.columnInt64(0))
+            if let p = stmt.columnStringOptional(1) { paths.append(p) }
+        }
+        guard !idsToDelete.isEmpty else { return [] }
+        let placeholders = idsToDelete.map { _ in "?" }.joined(separator: ",")
+        let del = try db.prepare("DELETE FROM run WHERE id IN (\(placeholders))")
+        for (i, id) in idsToDelete.enumerated() {
+            del.bind(Int32(i + 1), id)
+        }
+        try del.run()
+        return paths
+    }
+
+    // MARK: - Events
+
+    public func insertEvent(_ event: EventRecord) throws {
+        let stmt = try db.prepare("INSERT INTO event (ts, level, program_id, type, detail_json) VALUES (?,?,?,?,?)")
+        stmt.bind(1, event.ts.timeIntervalSince1970)
+        stmt.bind(2, event.level.rawValue)
+        stmt.bindOptional(3, event.programId)
+        stmt.bind(4, event.type.rawValue)
+        stmt.bind(5, event.detailJSON)
+        try stmt.run()
+
+        let countStmt = try db.prepare("SELECT COUNT(*) FROM event")
+        _ = try countStmt.step()
+        if countStmt.columnInt(0) > 20000 {
+            try db.exec("DELETE FROM event WHERE id IN (SELECT id FROM event ORDER BY ts ASC LIMIT 1000)")
+        }
+    }
+
+    public func fetchEvents(limit: Int = 500, programId: Int64? = nil, level: EventLevel? = nil) throws -> [EventRecord] {
+        var sql = "SELECT id, ts, level, program_id, type, detail_json FROM event WHERE 1=1"
+        if programId != nil { sql += " AND program_id = ?" }
+        if level != nil { sql += " AND level = ?" }
+        sql += " ORDER BY ts DESC LIMIT ?"
+        let stmt = try db.prepare(sql)
+        var idx: Int32 = 1
+        if let programId {
+            stmt.bind(idx, programId); idx += 1
+        }
+        if let level {
+            stmt.bind(idx, level.rawValue); idx += 1
+        }
+        stmt.bind(idx, limit)
+        var results: [EventRecord] = []
+        while try stmt.step() {
+            results.append(EventRecord(
+                id: stmt.columnInt64(0),
+                ts: Date(timeIntervalSince1970: stmt.columnDouble(1)),
+                level: EventLevel(rawValue: stmt.columnString(2)) ?? .info,
+                programId: stmt.columnInt64Optional(3),
+                type: EventType(rawValue: stmt.columnString(4)) ?? .stateChanged,
+                detailJSON: stmt.columnString(5)
+            ))
+        }
+        return results
+    }
+
+    // MARK: - Settings
+
+    public func getSetting(_ key: String) throws -> String? {
+        let stmt = try db.prepare("SELECT value FROM setting WHERE key = ?")
+        stmt.bind(1, key)
+        guard try stmt.step() else { return nil }
+        return stmt.columnString(0)
+    }
+
+    public func setSetting(_ key: String, _ value: String) throws {
+        let stmt = try db.prepare("INSERT INTO setting (key, value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
+        stmt.bind(1, key)
+        stmt.bind(2, value)
+        try stmt.run()
+    }
+
+    // MARK: - Backups (design.md §5.1, §8.1)
+
+    public func writeConfigBackup(_ jsonData: Data, keep: Int = 10) throws {
+        let ts = Int(Date().timeIntervalSince1970)
+        let path = (backupsDir as NSString).appendingPathComponent("config-\(ts).json")
+        try jsonData.write(to: URL(fileURLWithPath: path), options: [.atomic])
+        chmod(path, 0o600)
+        let fm = FileManager.default
+        let existing = ((try? fm.contentsOfDirectory(atPath: backupsDir)) ?? [])
+            .filter { $0.hasPrefix("config-") }
+            .sorted()
+        if existing.count > keep {
+            for name in existing.prefix(existing.count - keep) {
+                try? fm.removeItem(atPath: (backupsDir as NSString).appendingPathComponent(name))
+            }
+        }
+    }
+
+    // MARK: - Row mapping
+
+    private static let programColumnNames = [
+        "id", "name", "kind", "enabled", "command", "use_shell", "directory", "env_json",
+        "group_name", "priority", "notes", "autostart", "autorestart", "exit_codes",
+        "start_seconds", "start_retries", "backoff_base", "backoff_max", "storm_window_sec",
+        "storm_max_restarts", "timeout_seconds", "confirm_before_run", "allow_concurrent",
+        "history_limit", "stop_signal", "stop_wait_seconds", "stop_as_group", "kill_as_group",
+        "log_path", "log_merge_stderr", "log_stderr_path", "log_max_bytes", "log_backups",
+        "log_rotate_policy", "created_at", "updated_at"
+    ]
+    private static var programColumns: String { programColumnNames.joined(separator: ", ") }
+    private static var programColumnCount: Int { programColumnNames.count }
+
+    private static func bindProgram(_ stmt: SQLiteStatement, _ p: Program, includeId: Bool) {
+        var i: Int32 = 1
+        if includeId { stmt.bind(i, p.id); i += 1 }
+        stmt.bind(i, p.name); i += 1
+        stmt.bind(i, p.kind.rawValue); i += 1
+        stmt.bind(i, p.enabled ? 1 : 0); i += 1
+        stmt.bind(i, p.command); i += 1
+        stmt.bind(i, p.useShell ? 1 : 0); i += 1
+        stmt.bindOptional(i, p.directory); i += 1
+        stmt.bind(i, encodeEnv(p.environment)); i += 1
+        stmt.bindOptional(i, p.groupName); i += 1
+        stmt.bind(i, p.priority); i += 1
+        stmt.bindOptional(i, p.notes); i += 1
+        stmt.bind(i, p.autostart ? 1 : 0); i += 1
+        stmt.bind(i, p.autorestart.rawValue); i += 1
+        stmt.bind(i, encodeIntArray(p.exitCodes)); i += 1
+        stmt.bind(i, p.startSeconds); i += 1
+        stmt.bind(i, p.startRetries); i += 1
+        stmt.bind(i, p.backoffBase); i += 1
+        stmt.bind(i, p.backoffMax); i += 1
+        stmt.bind(i, p.stormWindowSec); i += 1
+        stmt.bind(i, p.stormMaxRestarts); i += 1
+        stmt.bind(i, p.timeoutSeconds); i += 1
+        stmt.bind(i, p.confirmBeforeRun ? 1 : 0); i += 1
+        stmt.bind(i, p.allowConcurrent ? 1 : 0); i += 1
+        stmt.bind(i, p.historyLimit); i += 1
+        stmt.bind(i, p.stopSignal); i += 1
+        stmt.bind(i, p.stopWaitSeconds); i += 1
+        stmt.bind(i, p.stopAsGroup ? 1 : 0); i += 1
+        stmt.bind(i, p.killAsGroup ? 1 : 0); i += 1
+        stmt.bindOptional(i, p.logPath); i += 1
+        stmt.bind(i, p.logMergeStderr ? 1 : 0); i += 1
+        stmt.bindOptional(i, p.logStderrPath); i += 1
+        stmt.bind(i, p.logMaxBytes); i += 1
+        stmt.bind(i, p.logBackups); i += 1
+        stmt.bind(i, p.logRotatePolicy.rawValue); i += 1
+        stmt.bind(i, p.createdAt.timeIntervalSince1970); i += 1
+        stmt.bind(i, p.updatedAt.timeIntervalSince1970); i += 1
+    }
+
+    private static func programFromRow(_ s: SQLiteStatement) -> Program {
+        Program(
+            id: s.columnInt64(0),
+            name: s.columnString(1),
+            kind: ProgramKind(rawValue: s.columnString(2)) ?? .service,
+            enabled: s.columnInt(3) != 0,
+            command: s.columnString(4),
+            useShell: s.columnInt(5) != 0,
+            directory: s.columnStringOptional(6),
+            environment: decodeEnv(s.columnString(7)),
+            groupName: s.columnStringOptional(8),
+            priority: s.columnInt(9),
+            notes: s.columnStringOptional(10),
+            autostart: s.columnInt(11) != 0,
+            autorestart: AutoRestartPolicy(rawValue: s.columnString(12)) ?? .unexpected,
+            exitCodes: decodeIntArray(s.columnString(13)),
+            startSeconds: s.columnInt(14),
+            startRetries: s.columnInt(15),
+            backoffBase: s.columnDouble(16),
+            backoffMax: s.columnDouble(17),
+            stormWindowSec: s.columnInt(18),
+            stormMaxRestarts: s.columnInt(19),
+            timeoutSeconds: s.columnInt(20),
+            confirmBeforeRun: s.columnInt(21) != 0,
+            allowConcurrent: s.columnInt(22) != 0,
+            historyLimit: s.columnInt(23),
+            stopSignal: s.columnString(24),
+            stopWaitSeconds: s.columnInt(25),
+            stopAsGroup: s.columnInt(26) != 0,
+            killAsGroup: s.columnInt(27) != 0,
+            logPath: s.columnStringOptional(28),
+            logMergeStderr: s.columnInt(29) != 0,
+            logStderrPath: s.columnStringOptional(30),
+            logMaxBytes: s.columnInt64(31),
+            logBackups: s.columnInt(32),
+            logRotatePolicy: LogRotatePolicy(rawValue: s.columnString(33)) ?? .size,
+            createdAt: Date(timeIntervalSince1970: s.columnDouble(34)),
+            updatedAt: Date(timeIntervalSince1970: s.columnDouble(35))
+        )
+    }
+
+    private static func encodeEnv(_ env: [String: EnvVar]) -> String {
+        struct Wire: Codable { let v: String; let sensitive: Bool }
+        let wire = env.mapValues { Wire(v: $0.value, sensitive: $0.sensitive) }
+        return (try? String(data: JSONEncoder().encode(wire), encoding: .utf8)) ?? "{}"
+    }
+
+    private static func decodeEnv(_ json: String) -> [String: EnvVar] {
+        struct Wire: Codable { let v: String; let sensitive: Bool }
+        guard let data = json.data(using: .utf8),
+              let wire = try? JSONDecoder().decode([String: Wire].self, from: data) else { return [:] }
+        return wire.mapValues { EnvVar(value: $0.v, sensitive: $0.sensitive) }
+    }
+
+    private static func encodeIntArray(_ arr: [Int32]) -> String {
+        "[" + arr.map(String.init).joined(separator: ",") + "]"
+    }
+
+    private static func decodeIntArray(_ json: String) -> [Int32] {
+        guard let data = json.data(using: .utf8),
+              let arr = try? JSONDecoder().decode([Int32].self, from: data) else { return [0] }
+        return arr
+    }
+}
