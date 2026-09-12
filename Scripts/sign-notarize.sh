@@ -4,15 +4,16 @@
 # and a notarytool keychain profile named "barback-notary" (`xcrun notarytool store-credentials`).
 set -euo pipefail
 cd "$(dirname "$0")/.."
-
-APP_NAME="Barback"
-DIST_DIR="dist"
-APP_BUNDLE="$DIST_DIR/$APP_NAME.app"
-DMG_PATH="$DIST_DIR/$APP_NAME.dmg"
+source Scripts/_common.sh
 
 : "${DEVELOPER_ID_APPLICATION:?Set DEVELOPER_ID_APPLICATION to your signing identity}"
 
-echo "==> Signing app bundle (Hardened Runtime)"
+if [ ! -d "$APP_BUNDLE" ]; then
+  echo "$APP_BUNDLE not found — run Scripts/build.sh first (with matching \$ARCHS)" >&2
+  exit 1
+fi
+
+echo "==> Signing app bundle (Hardened Runtime) — replaces build.sh's ad-hoc signature"
 codesign --force --deep --options runtime \
   --entitlements Resources/Barback.entitlements \
   --sign "$DEVELOPER_ID_APPLICATION" \
@@ -26,6 +27,6 @@ if [ -f "$DMG_PATH" ]; then
   echo "==> Stapling"
   xcrun stapler staple "$DMG_PATH"
 else
-  echo "No .dmg found; run Scripts/package.sh first" >&2
+  echo "$DMG_PATH not found; run Scripts/package.sh first" >&2
   exit 1
 fi
