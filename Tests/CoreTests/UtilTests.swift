@@ -87,4 +87,33 @@ struct ProgramValidatorTests {
         let errors = ProgramValidator.validate(p, existingNames: [])
         #expect(errors.contains(.emptyCommand))
     }
+
+    // ex-F33: a log path pointing at something that can never be opened as a file must be
+    // caught before save, not surface as an opaque "启动失败" once the service tries to run.
+    @Test func rejectsLogPathThatIsADirectory() {
+        var p = Program(name: "ok", kind: .service, command: "/bin/true")
+        p.logPath = NSTemporaryDirectory() // exists, and is a directory
+        let errors = ProgramValidator.validate(p, existingNames: [])
+        #expect(errors.contains { if case .invalidLogPath = $0 { return true }; return false })
+    }
+
+    @Test func acceptsLogPathWhoseParentDoesNotExistYet() {
+        // `LogManager.openServiceLogs` creates the parent lazily — validation must not
+        // require the user to have created it by hand first.
+        var p = Program(name: "ok", kind: .service, command: "/bin/true")
+        p.logPath = "/tmp/barback-test-\(UUID().uuidString)/does/not/exist/yet.log"
+        let errors = ProgramValidator.validate(p, existingNames: [])
+        #expect(!errors.contains { if case .invalidLogPath = $0 { return true }; return false })
+    }
+
+    // ex-F40: a storm window/threshold of 0 makes protection either fire on the very first
+    // exit or never fire at all — both are footguns a plain `IntField` can reach.
+    @Test func rejectsZeroStormWindowAndThreshold() {
+        var p = Program(name: "ok", kind: .service, command: "/bin/true")
+        p.stormWindowSec = 0
+        p.stormMaxRestarts = 0
+        let errors = ProgramValidator.validate(p, existingNames: [])
+        #expect(errors.contains(.invalidNumber("stormWindowSec")))
+        #expect(errors.contains(.invalidNumber("stormMaxRestarts")))
+    }
 }

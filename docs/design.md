@@ -13,7 +13,7 @@
 所有取舍服从以下四条，冲突时按顺序仲裁：
 
 1. **简单优先**——单进程、单数据库、无守护进程、无 IPC、无外部配置文件。能少一个活动部件就少一个。
-2. **常态零开销**——无事件、无界面打开时 CPU 为零。进程退出靠 kqueue 事件、日志不经过主程序、菜单关闭即停止采样；全系统唯一的周期性任务是每 60 s 一次的日志尺寸检查。
+2. **常态零开销**——无事件、无界面打开时 CPU 为零。进程退出靠 kqueue 事件、日志不经过主程序、菜单关闭即停止采样；全系统仅有的周期性任务是两个 300 s（leeway 30 s）定时器——日志尺寸检查、以及 §3.2/§3.7 提到的存活兜底校对——都足够宽松，内核可以自由合并唤醒。
 3. **语义可预期**——与 supervisor 同名的字段必须同义。
 4. **故障不扩散**——单个被管进程的任何异常不得波及 Barback 或其他被管进程。
 
@@ -131,7 +131,7 @@ start(program)  ← autostart / 用户操作 / 自动重启 / 一次性触发
  STOPPED ──► STARTING ──────────────────► RUNNING
    ▲  ▲         │ 启动失败                    │ 进程退出
    │  │         ▼                            ▼
-   │  │   retries < startRetries ?      autorestart 判定
+   │  │   retryCount < startRetries ?    autorestart 判定
    │  │    ├─是─► BACKOFF ──到期──► STARTING   ├─重启─► STARTING
    │  │    └─否─► FATAL ──[手动]──► STARTING   └─否──► EXITED
    │  │  [stop] 可从任意活动态进入
@@ -143,8 +143,8 @@ start(program)  ← autostart / 用户操作 / 自动重启 / 一次性触发
 | --- | --- | --- | --- | --- |
 | STOPPED/EXITED/FATAL | `start` | — | STARTING | spawn；`retryCount` 清零 |
 | STARTING | 存活满 `startSeconds` | — | RUNNING | 清零 `retryCount` |
-| STARTING | 进程退出 | `retryCount+1 < startRetries` | BACKOFF | 排定退避定时器 |
-| STARTING | 进程退出 | 重试耗尽 | FATAL | 通知 |
+| STARTING | 进程退出 | `retryCount < startRetries` | BACKOFF | 排定退避定时器；`retryCount += 1` |
+| STARTING | 进程退出 | 重试耗尽（第 `startRetries+1` 次尝试仍失败） | FATAL | 通知 |
 | BACKOFF | 退避到期 | — | STARTING | spawn |
 | BACKOFF | `stop` | — | STOPPED | 取消定时器 |
 | RUNNING | 进程退出 | `never` | EXITED | — |
@@ -160,6 +160,9 @@ start(program)  ← autostart / 用户操作 / 自动重启 / 一次性触发
 **`autostart` 语义**：Barback 每次启动时无条件拉起所有 `autostart=1` 的服务，**不记忆上次是否被手动停止**（`live` 表的状态只用于崩溃接管，不作为下次启动的依据）。"手动停止不自动重启"只在同一次会话内成立——它由 `stop_requested` 标志阻断本次退出触发的 autorestart，与 autostart 无关。
 
 **退避**：`delay = min(base × 2^(n-1), max)`，默认 base=1s、max=60s，±20% 抖动避免多服务同步重启。
+
+**`startRetries` 语义**：与 supervisor 的 `startretries` 同义——初次尝试之外还允许的重试次数，即总共 `startRetries + 1` 次尝试后仍失败才进 FATAL（design.md §1 约束 3「同名字段必须同义」）。
+
 **崩溃风暴保护**（独立于 `startRetries`）：滑动窗口内（默认 10 分钟）重启超阈值（默认 10 次）→ 强制 FATAL。这覆盖"每次都活过 `startSeconds` 但很快就崩"的情形，supervisor 对此无保护。
 
 ### 3.4 一次性命令生命周期
@@ -219,11 +222,11 @@ applicationShouldTerminate:
 7. 事件日志记 `recoveredFromCrash`，菜单顶部提示一次"上次异常退出，已恢复 N 项"
 ```
 
-`live` 表在每次状态迁移后写入（50 ms 内合并为一次），崩溃时最多丢失最近 50 ms 的状态。
+`live` 表在每次状态迁移后同步写入（当前未做合并批量写入——每次迁移一次 `UPSERT`），崩溃时最多丢失最近一次尚未落盘的状态变化。
 
 ### 3.8 睡眠 / 唤醒
 
-订阅 `NSWorkspace.didWakeNotification`，唤醒后延迟 3 秒对所有活动 PID 做一次 §3.7 的双因子校验，修正睡眠期间的状态漂移。所有定时器在唤醒后按单调时钟重算到期时间。
+订阅 `NSWorkspace.didWakeNotification`，唤醒后延迟 3 秒对所有活动 PID 做一次 §3.7 的双因子校验，修正睡眠期间的状态漂移。所有 `DispatchSourceTimer` 基于 mach 单调时钟调度（`.now() + N`），系统睡眠期间该时钟本身暂停，故定时器天然按"清醒时长"到期，无需显式重算——`backoffEndDates`（面板倒计时用的墙钟时间戳）是当前唯一的例外，一次长睡眠后可能短暂显示与实际到期时间不符的倒计时，下一次快照发布即会更正。
 
 ---
 
@@ -233,10 +236,10 @@ applicationShouldTerminate:
 
 **轮转**（仅服务；一次性命令按运行记录 FIFO 清理）：
 
-- 触发：宽松定时器每 60 s（leeway 30 s）`stat` 各日志文件；另在每次启停时顺带检查。这是全系统唯一的周期性任务。
-- 动作：`<name>.log` → 复制为 `.1`（旧的依次后移，超 `backups` 的删除）→ 对原文件 `ftruncate(0)`（子进程因 `O_APPEND` 从 0 继续写）→ 写入轮转标记行 → 记事件。
+- 触发：宽松定时器每 300 s（leeway 30 s）`stat` 各日志文件；另在每次启停时顺带检查。实际的复制/截断在一个后台 utility 队列上执行，不占用 `barback.core`——单个服务的超大日志文件不应阻塞其他被管进程的监管（design.md §1 约束 4）。
+- 动作：`<name>.log` → 复制为 `.1`（旧的依次后移，超 `backups` 的删除）→ 对原文件 `ftruncate(0)`（子进程因 `O_APPEND` 从 0 继续写）→ 写入轮转标记行 → 记 `logRotated` 事件。
 - **取舍**：复制与截断之间写入的极少量数据可能丢失。提供 `rotatePolicy = onRestart` 严格模式：仅在服务重启时 `rename` 轮转，此时无写入者，零丢失。
-- 写失败（ENOSPC）：记 error 事件 + 通知 + 菜单标注，**不停止业务进程**。
+- 写失败（ENOSPC 等）：子进程的 fd 直连日志文件，Barback 并不在那条数据路径上，因此无法实时感知单次 `write` 失败；下一次周期性轮转检查（`stat`/复制/截断的过程）若因磁盘写满而出错，会记一条 `logWriteFailed` error 事件，**不停止业务进程**。
 
 **读取（按需）**：日志窗口打开时由 UI 层直接读文件——`seek` 到 `max(0, size − 2 MB)` 对齐行边界后加载；跟随模式用 `DispatchSource.makeFileSystemObjectSource(.write|.extend|.rename|.delete)` 增量读取，检测到 inode 变化或文件缩小则重开。行数组设 5000 行上限。窗口关闭即注销监听、归零开销。渲染用 `NSTextView`（`NSViewRepresentable` 包装）而非 SwiftUI 列表，保证大文本性能。
 

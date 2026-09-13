@@ -29,6 +29,22 @@ struct ProcessHostTests {
         #expect(!ProcessHost.verifyAlive(pid: spawned.pid, expectedStartTime: spawned.startTime - 100))
     }
 
+    // ex-F35: a zombie still answers `kill(pid, 0)` and still reports its old start time, so
+    // without checking `pbi_status` this used to read as "alive" forever — the very thing
+    // `reconcileLiveness`'s 300s safety net exists to catch after a missed NOTE_EXIT.
+    @Test func verifyAliveDetectsZombie() async throws {
+        let devNull = open("/dev/null", O_WRONLY)
+        defer { close(devNull) }
+        let spawned = try ProcessHost.spawn(command: "/bin/sh -c 'exit 0'", useShell: false, directory: nil, environment: [:], outFD: devNull, errFD: devNull)
+        // Deliberately not registering an ExitWatcher (which would reap it via WNOHANG) —
+        // give it time to exit and sit as a zombie, unreaped, so verifyAlive sees it in that
+        // exact state.
+        try await Task.sleep(nanoseconds: 200_000_000)
+        #expect(!ProcessHost.verifyAlive(pid: spawned.pid, expectedStartTime: spawned.startTime))
+        var status: Int32 = 0
+        _ = waitpid(spawned.pid, &status, 0) // reap it so the test doesn't leave one behind
+    }
+
     @Test func stopAsGroupKillsChildProcesses() async throws {
         let devNull = open("/dev/null", O_WRONLY)
         defer { close(devNull) }

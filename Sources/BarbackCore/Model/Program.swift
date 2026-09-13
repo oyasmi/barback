@@ -182,6 +182,7 @@ public enum ProgramValidationError: Error, LocalizedError, Sendable, Equatable {
     case emptyCommand
     case executableNotFound(String)
     case directoryNotFound(String)
+    case invalidLogPath(String)
     case invalidNumber(String)
 
     public var errorDescription: String? {
@@ -191,6 +192,7 @@ public enum ProgramValidationError: Error, LocalizedError, Sendable, Equatable {
         case .emptyCommand: return "命令不能为空"
         case .executableNotFound(let p): return "找不到可执行文件：\(p)"
         case .directoryNotFound(let p): return "工作目录不存在：\(p)"
+        case .invalidLogPath(let p): return "日志路径无效：\(p)"
         case .invalidNumber(let field): return "数值字段非法：\(field)"
         }
     }
@@ -205,8 +207,12 @@ public enum ProgramValidator {
         return regex.firstMatch(in: name, range: range) != nil
     }
 
-    /// Full validation. `existingNames` should exclude the program's own current name when editing.
-    public static func validate(_ program: Program, existingNames: Set<String>) -> [ProgramValidationError] {
+    /// Full validation. `existingNames` should exclude the program's own current name when
+    /// editing. `pathEnv` should be the same `PATH` the program will actually be spawned
+    /// with (`Supervisor.mergedEnvironment`'s value, not this process's own environment) —
+    /// otherwise "找不到可执行文件" can disagree with what `posix_spawn` itself finds,
+    /// in either direction (ex-F41).
+    public static func validate(_ program: Program, existingNames: Set<String>, pathEnv: String? = nil) -> [ProgramValidationError] {
         var errors: [ProgramValidationError] = []
         if !validateName(program.name) {
             errors.append(.invalidName)
@@ -218,7 +224,7 @@ public enum ProgramValidator {
             errors.append(.emptyCommand)
         } else if !program.useShell {
             if let tokens = try? ShellLexer.tokenize(program.command), let first = tokens.first {
-                let resolved = PathUtil.resolveExecutable(first, directory: program.directory)
+                let resolved = PathUtil.resolveExecutable(first, directory: program.directory, pathEnv: pathEnv)
                 if resolved == nil {
                     errors.append(.executableNotFound(first))
                 }
@@ -231,13 +237,49 @@ public enum ProgramValidator {
                 errors.append(.directoryNotFound(dir))
             }
         }
+        if let logPath = program.logPath, let error = validateLogPath(logPath) {
+            errors.append(error)
+        }
+        if !program.logMergeStderr, let logStderrPath = program.logStderrPath, let error = validateLogPath(logStderrPath) {
+            errors.append(error)
+        }
         if program.startSeconds < 0 { errors.append(.invalidNumber("startSeconds")) }
         if program.startRetries < 0 { errors.append(.invalidNumber("startRetries")) }
         if program.backoffBase <= 0 { errors.append(.invalidNumber("backoffBase")) }
         if program.backoffMax < program.backoffBase { errors.append(.invalidNumber("backoffMax")) }
+        // A `stormMaxRestarts` of 0 makes `isStorming` true (`count >= 0`) on the very first
+        // unexpected exit — one FATAL and no more retries, no matter how generous
+        // `startRetries` is. A `stormWindowSec` of 0 has the opposite effect: every restart
+        // timestamp falls outside a zero-width window, so storm protection never fires at all
+        // (ex-F40, both reachable by simply clearing an `IntField`).
+        if program.stormWindowSec < 1 { errors.append(.invalidNumber("stormWindowSec")) }
+        if program.stormMaxRestarts < 1 { errors.append(.invalidNumber("stormMaxRestarts")) }
         if program.stopWaitSeconds < 0 { errors.append(.invalidNumber("stopWaitSeconds")) }
         if program.timeoutSeconds < 0 { errors.append(.invalidNumber("timeoutSeconds")) }
         if program.historyLimit < 1 { errors.append(.invalidNumber("historyLimit")) }
+        if program.logMaxBytes < 0 { errors.append(.invalidNumber("logMaxBytes")) }
+        if program.logBackups < 0 { errors.append(.invalidNumber("logBackups")) }
         return errors
+    }
+
+    /// Rejects only what can never be opened as a log file — a path that already exists as a
+    /// directory, or whose parent exists but isn't one. A parent that doesn't exist *yet* is
+    /// fine: `LogManager.openServiceLogs` creates it lazily, the same way it always has for
+    /// the default (non-explicit) log path (ex-F33).
+    private static func validateLogPath(_ raw: String) -> ProgramValidationError? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return .invalidLogPath(raw) }
+        let expanded = PathUtil.expandTilde(trimmed)
+        guard expanded.hasPrefix("/") else { return .invalidLogPath(raw) }
+        let fm = FileManager.default
+        var isDir: ObjCBool = false
+        if fm.fileExists(atPath: expanded, isDirectory: &isDir), isDir.boolValue {
+            return .invalidLogPath(raw)
+        }
+        let parent = (expanded as NSString).deletingLastPathComponent
+        if !parent.isEmpty, fm.fileExists(atPath: parent, isDirectory: &isDir), !isDir.boolValue {
+            return .invalidLogPath(raw)
+        }
+        return nil
     }
 }

@@ -171,7 +171,7 @@ struct ProgramFormBody: View {
         if program.kind == .service {
             Section { RestartPolicyGroup(program: $program, index: index, isExpanded: expandedBinding("restart")) }
             Section { StopGroup(program: $program, index: index, isExpanded: expandedBinding("stop")) }
-            Section { LogGroup(program: $program, isExpanded: expandedBinding("log")) }
+            Section { LogGroup(program: $program, index: index, isExpanded: expandedBinding("log")) }
             Section { OtherGroup(program: $program, isExpanded: expandedBinding("other")) }
         } else {
             Section { ExecutionAdvancedGroup(program: $program, index: index, isExpanded: expandedBinding("execution")) }
@@ -213,7 +213,8 @@ struct RestartPolicyGroup: View {
     @Binding var isExpanded: Bool
 
     private static let errorFields: [FormField] = [
-        .number("startSeconds"), .number("startRetries"), .number("backoffBase"), .number("backoffMax")
+        .number("startSeconds"), .number("startRetries"), .number("backoffBase"), .number("backoffMax"),
+        .number("stormWindowSec"), .number("stormMaxRestarts")
     ]
 
     private var defaults: Program { Program.defaults(name: program.name, kind: program.kind, command: program.command) }
@@ -276,7 +277,8 @@ struct RestartPolicyGroup: View {
             }
             FormRow(
                 label: "重启风暴",
-                changed: program.stormWindowSec != defaults.stormWindowSec || program.stormMaxRestarts != defaults.stormMaxRestarts
+                changed: program.stormWindowSec != defaults.stormWindowSec || program.stormMaxRestarts != defaults.stormMaxRestarts,
+                messages: index.messages(.number("stormWindowSec")) + index.messages(.number("stormMaxRestarts"))
             ) {
                 HStack(spacing: 6) {
                     IntField(value: $program.stormWindowSec)
@@ -436,7 +438,10 @@ struct StopGroup: View {
 
 struct LogGroup: View {
     @Binding var program: Program
+    let index: FieldErrorIndex
     @Binding var isExpanded: Bool
+
+    private static let errorFields: [FormField] = [.logPath, .number("logMaxBytes"), .number("logBackups")]
 
     private var defaults: Program { Program.defaults(name: program.name, kind: program.kind, command: program.command) }
 
@@ -472,17 +477,26 @@ struct LogGroup: View {
             title: "日志",
             summary: summary,
             changedCount: changedCount,
+            hasError: index.hasError(in: Self.errorFields),
             isExpanded: $isExpanded,
             onResetAll: reset
         ) {
-            FormRow(label: "输出路径", changed: program.logPath != defaults.logPath) {
+            FormRow(
+                label: "输出路径",
+                changed: program.logPath != defaults.logPath,
+                messages: index.messages(.logPath)
+            ) {
                 TextField("默认（应用日志目录）", text: optionalText($program.logPath))
             }
             FormRow(label: "stderr", changed: program.logMergeStderr != defaults.logMergeStderr) {
                 Toggle("合并到 stdout", isOn: $program.logMergeStderr)
             }
             if !program.logMergeStderr {
-                FormRow(label: "stderr 路径", changed: program.logStderrPath != defaults.logStderrPath) {
+                FormRow(
+                    label: "stderr 路径",
+                    changed: program.logStderrPath != defaults.logStderrPath,
+                    messages: index.messages(.logPath)
+                ) {
                     TextField("默认（应用日志目录）", text: optionalText($program.logStderrPath))
                 }
             }
@@ -496,12 +510,20 @@ struct LogGroup: View {
                 .frame(maxWidth: 160)
             }
             if program.logRotatePolicy == .size {
-                FormRow(label: "单文件上限", changed: program.logMaxBytes != defaults.logMaxBytes) {
+                FormRow(
+                    label: "单文件上限",
+                    changed: program.logMaxBytes != defaults.logMaxBytes,
+                    messages: index.messages(.number("logMaxBytes"))
+                ) {
                     ByteSizeField(bytes: $program.logMaxBytes)
                 }
             }
             if program.logRotatePolicy != .never {
-                FormRow(label: "保留份数", changed: program.logBackups != defaults.logBackups) {
+                FormRow(
+                    label: "保留份数",
+                    changed: program.logBackups != defaults.logBackups,
+                    messages: index.messages(.number("logBackups"))
+                ) {
                     IntField(value: $program.logBackups)
                 }
             }

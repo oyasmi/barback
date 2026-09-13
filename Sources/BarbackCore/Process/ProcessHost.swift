@@ -68,6 +68,12 @@ public enum ProcessHost {
         var flags: Int16 = Int16(POSIX_SPAWN_SETSID)
         flags |= Int16(POSIX_SPAWN_SETSIGDEF)
         flags |= Int16(POSIX_SPAWN_SETSIGMASK)
+        // Without this, the child inherits every fd this process happens to have open at
+        // spawn time that isn't individually marked O_CLOEXEC — the SQLite handle, kqueue
+        // sources, a log window's O_EVTONLY watch — handing a managed process a live
+        // descriptor onto Barback's own database (ex-F44, design.md §1 fault isolation).
+        // 0/1/2 stay open regardless, since the file actions above explicitly target them.
+        flags |= Int16(POSIX_SPAWN_CLOEXEC_DEFAULT)
         posix_spawnattr_setflags(attrPtr, flags)
 
         var defaultSignals = sigset_t()
@@ -143,6 +149,11 @@ public enum ProcessHost {
         var info = proc_bsdinfo()
         let size = proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, Int32(MemoryLayout<proc_bsdinfo>.size))
         guard size > 0 else { return false }
+        // A zombie still answers `kill(pid, 0)` and still reports its old start time, so
+        // without this check a child whose NOTE_EXIT was somehow missed (the rare race
+        // `reconcileLiveness`'s 300s safety net exists to catch) reads as "alive" forever —
+        // the backstop backstops nothing (ex-F35, design.md §3.2/§3.7).
+        guard info.pbi_status != UInt32(SZOMB) else { return false }
         let actual = Double(info.pbi_start_tvsec) + Double(info.pbi_start_tvusec) / 1_000_000.0
         return abs(actual - expectedStartTime) <= tolerance
     }

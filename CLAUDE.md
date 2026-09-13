@@ -90,8 +90,10 @@ wakeups — part of the "zero overhead at idle" constraint (design.md §1).
 
 From design.md §1, in priority order when trade-offs conflict:
 1. Simplicity — single process, single DB, no daemon, no IPC, no external config file.
-2. Zero overhead at idle — no polling; the only periodic task in the whole app is a 60s log-size
-   check. New periodic timers/polling loops need strong justification.
+2. Zero overhead at idle — no polling; the only periodic tasks in the whole app are two 300s
+   (30s leeway) timers — the log-size check and the liveness reconcile safety net — both
+   loose enough for the kernel to coalesce freely. New periodic timers/polling loops need
+   strong justification.
 3. Predictable semantics — any field shared with `supervisor` must mean the same thing.
 4. Fault isolation — a managed process's failure must never affect Barback or other managed
    processes.

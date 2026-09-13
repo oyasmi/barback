@@ -7,6 +7,7 @@ enum FormField: Hashable {
     case name
     case command
     case directory
+    case logPath
     case number(String)
 }
 
@@ -21,6 +22,7 @@ struct FieldErrorIndex {
             case .invalidName, .duplicateName: field = .name
             case .emptyCommand, .executableNotFound: field = .command
             case .directoryNotFound: field = .directory
+            case .invalidLogPath: field = .logPath
             case .invalidNumber(let name): field = .number(name)
             }
             byField[field, default: []].append(error.errorDescription ?? "")

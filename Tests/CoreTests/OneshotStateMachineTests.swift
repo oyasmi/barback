@@ -66,4 +66,33 @@ struct OneshotStateMachineTests {
         #expect(r.state == .running)
         #expect(actions.isEmpty)
     }
+
+    // ex-F32: the completion notification's duration must come from the reducer itself
+    // (procStartTime → exit time), never re-derived by the caller after `.finalizeRun` has
+    // already cleared its own run-tracking — that ordering used to make every notification
+    // read "0.0s" regardless of how long the run actually took.
+    @Test func exitNotifiesWithDurationFromProcStartTime() {
+        let startedAt: Double = 1_000
+        let runtime = OneshotRuntime(state: .running, pid: 1, procStartTime: startedAt)
+        let exitAt = Date(timeIntervalSince1970: startedAt + 2.5)
+        let (_, actions) = OneshotStateMachine.reduce(runtime: runtime, event: .processExited(code: 0, signal: nil, at: exitAt), config: program())
+        var foundDuration: TimeInterval?
+        for action in actions {
+            if case .notify(_, let duration) = action { foundDuration = duration }
+        }
+        #expect(foundDuration != nil)
+        #expect(abs((foundDuration ?? -1) - 2.5) < 0.001)
+    }
+
+    // ex-F34: a one-shot's spawn failure must leave a trace in the event log too, not just
+    // a state transition, with the caller's reason attached.
+    @Test func spawnFailedLogsReason() {
+        let runtime = OneshotRuntime(state: .running)
+        let (r, actions) = OneshotStateMachine.reduce(runtime: runtime, event: .spawnFailed(reason: "posix_spawn failed"), config: program())
+        #expect(r.state == .failed)
+        #expect(actions.contains {
+            if case .logEvent(.spawnFailed, _, let detail) = $0 { return detail["reason"] == "posix_spawn failed" }
+            return false
+        })
+    }
 }

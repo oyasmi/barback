@@ -13,6 +13,7 @@ public enum EventType: String, Codable, Sendable {
     case stateChanged
     case processSpawned
     case processExited
+    case spawnFailed
     case restartScheduled
     case enteredFatal
     case stopTimeout

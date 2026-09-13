@@ -57,7 +57,11 @@ public final class SQLiteStatement {
         let rc = sqlite3_step(handle)
         if rc == SQLITE_ROW { return true }
         if rc == SQLITE_DONE { return false }
-        throw SQLiteError.stepFailed("step failed: \(rc)")
+        // `sqlite3_errmsg` reads off the connection, not the statement, but `handle`'s
+        // connection is exactly the one this statement ran against — a bare result code was
+        // all diagnostics export or `logSelf` ever had to go on otherwise (ex-F47).
+        let message = sqlite3_errmsg(sqlite3_db_handle(handle)).map { String(cString: $0) } ?? "unknown error"
+        throw SQLiteError.stepFailed("step failed (\(rc)): \(message)")
     }
 
     public func run() throws {
@@ -105,9 +109,16 @@ public final class SQLiteDatabase {
     /// Explicit close, so corruption recovery can release the handle on the (possibly bad)
     /// file before renaming it out of the way — waiting for `deinit` would run too late,
     /// after a replacement `SQLiteDatabase` has already opened the same path.
+    ///
+    /// `sqlite3_close` (not `_v2`) fails with SQLITE_BUSY and leaves the handle open if any
+    /// prepared statement on it hasn't been finalized yet — silently, since the return value
+    /// was never checked — which is exactly the situation `recoverFromCorruption` cannot
+    /// afford: it assumes this call always actually closes the file before renaming it out of
+    /// the way. `_v2` instead marks the handle a zombie and finishes closing once its last
+    /// statement finalizes, so the rename that follows is safe either way (ex-F47).
     public func close() {
         guard let handle = db else { return }
-        sqlite3_close(handle)
+        sqlite3_close_v2(handle)
         db = nil
     }
 
@@ -125,7 +136,8 @@ public final class SQLiteDatabase {
         var handle: OpaquePointer?
         let rc = sqlite3_prepare_v2(db, sql, -1, &handle, nil)
         guard rc == SQLITE_OK else {
-            throw SQLiteError.prepareFailed("prepare failed (\(rc)): \(sql)")
+            let message = sqlite3_errmsg(db).map { String(cString: $0) } ?? "unknown error"
+            throw SQLiteError.prepareFailed("prepare failed (\(rc)): \(message) — sql: \(sql)")
         }
         return SQLiteStatement(handle)
     }

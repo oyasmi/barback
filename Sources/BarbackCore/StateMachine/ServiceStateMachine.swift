@@ -5,7 +5,10 @@ public enum ServiceEvent: Sendable, Equatable {
     case start(trigger: RunTrigger)
     case stop
     case spawnSucceeded(pid: Int32, pgid: Int32, procStartTime: Double, at: Date)
-    case spawnFailed
+    /// `reason` is the caller's description of why `posix_spawn`/log-open/etc. failed
+    /// (ex-F34) — the reducer has no I/O of its own to learn this, so it travels with the
+    /// event exactly like `processExited`'s code/signal do.
+    case spawnFailed(reason: String)
     case startSecondsElapsed
     case processExited(code: Int32?, signal: Int32?, at: Date)
     case backoffElapsed
@@ -81,7 +84,13 @@ public enum ServiceStateMachine {
     public static func reduce(
         runtime: ServiceRuntime,
         event: ServiceEvent,
-        config: Program
+        config: Program,
+        // Defaulted so every existing call site (including every test) keeps compiling
+        // unchanged; callers that care about a single consistent instant across an entire
+        // reduction (ex-F36 — `isStorming`/`recordRestart` used to call `Date()` directly,
+        // making the crash-storm window untestable and technically non-deterministic) can
+        // pass the event's own timestamp instead.
+        now: Date = Date()
     ) -> (ServiceRuntime, [ServiceAction]) {
         var r = runtime
         var actions: [ServiceAction] = []
@@ -122,9 +131,14 @@ public enum ServiceStateMachine {
             }
             actions.append(.persistLive)
 
-        case (.starting, .spawnFailed):
+        case (.starting, .spawnFailed(let reason)):
             r.pid = nil
-            (r, actions) = enterBackoffOrFatal(r, config: config)
+            // The run row `spawnService` already inserted before the spawn attempt used to
+            // never get finalized on this path — `ended_at` stayed NULL forever, which even
+            // "清空历史" can't clean up since it skips in-flight-looking rows (ex-F30).
+            actions.append(.logEvent(.spawnFailed, level: .error, detail: ["reason": reason]))
+            actions.append(.finalizeRun(outcome: .failed, code: nil, signal: nil))
+            (r, actions) = appendActions(enterBackoffOrFatal(r, config: config, now: now), to: actions)
 
         case (.starting, .startSecondsElapsed):
             r.state = .running
@@ -134,12 +148,18 @@ public enum ServiceStateMachine {
 
         case (.starting, .processExited(let code, let signal, _)):
             actions.append(.cancelStartTimer)
+            actions.append(.logEvent(.processExited, level: .warn, detail: exitDetail(code: code, signal: signal)))
             actions.append(.finalizeRun(outcome: .failed, code: code, signal: signal))
-            (r, actions) = appendActions(enterBackoffOrFatal(r, config: config), to: actions)
+            (r, actions) = appendActions(enterBackoffOrFatal(r, config: config, now: now), to: actions)
 
         // --- running: exit disposition depends on autorestart policy ---
         case (.running, .processExited(let code, let signal, _)):
-            actions.append(.finalizeRun(outcome: exitedOutcome(code: code, exitCodes: config.exitCodes), code: code, signal: signal))
+            let outcome = exitedOutcome(code: code, exitCodes: config.exitCodes)
+            // ex-F34: a service's exit used to leave zero trace in the event log — no code,
+            // no signal, not even the fact that it happened — so a flapping service with
+            // autorestart=.unexpected showed only a string of processSpawned rows.
+            actions.append(.logEvent(.processExited, level: outcome == .succeeded ? .info : .warn, detail: exitDetail(code: code, signal: signal)))
+            actions.append(.finalizeRun(outcome: outcome, code: code, signal: signal))
             switch config.autorestart {
             case .never:
                 r.state = .exited
@@ -153,8 +173,8 @@ public enum ServiceStateMachine {
                 // each cycle adding a run row, event rows, and log lines that nothing ever
                 // trims (design.md §3.3, ex-F24). Route it through the same storm window
                 // `.unexpected` already uses instead of a policy-shaped exemption from it.
-                recordRestart(&r, config: config)
-                if isStorming(r.restartTimestamps, config: config) {
+                recordRestart(&r, config: config, now: now)
+                if isStorming(r.restartTimestamps, config: config, now: now) {
                     r.state = .fatal
                     r.pid = nil
                     actions.append(.logEvent(.enteredFatal, level: .error, detail: ["reason": "crash_storm"]))
@@ -177,8 +197,8 @@ public enum ServiceStateMachine {
                     actions.append(.persistLive)
                     actions.append(.publishSnapshot)
                 } else {
-                    recordRestart(&r, config: config)
-                    if isStorming(r.restartTimestamps, config: config) {
+                    recordRestart(&r, config: config, now: now)
+                    if isStorming(r.restartTimestamps, config: config, now: now) {
                         r.state = .fatal
                         r.pid = nil
                         actions.append(.logEvent(.enteredFatal, level: .error, detail: ["reason": "crash_storm"]))
@@ -228,6 +248,7 @@ public enum ServiceStateMachine {
                 // this sweep actually run (ex-F21: it used to read a runtime already nil'd out).
                 actions.append(.sendKill(pid: nil, pgid: pgid, group: true))
             }
+            actions.append(.logEvent(.processExited, level: .info, detail: exitDetail(code: code, signal: signal)))
             actions.append(.finalizeRun(outcome: .cancelled, code: code, signal: signal))
             r.state = .stopped
             r.pid = nil
@@ -264,9 +285,9 @@ public enum ServiceStateMachine {
         return .failed
     }
 
-    private static func isStorming(_ timestamps: [Date], config: Program) -> Bool {
+    private static func isStorming(_ timestamps: [Date], config: Program, now: Date) -> Bool {
         let window = TimeInterval(config.stormWindowSec)
-        let cutoff = Date().addingTimeInterval(-window)
+        let cutoff = now.addingTimeInterval(-window)
         let recent = timestamps.filter { $0 >= cutoff }
         return recent.count >= config.stormMaxRestarts
     }
@@ -274,13 +295,20 @@ public enum ServiceStateMachine {
     /// Appends a restart timestamp, pruning everything already outside the storm window first
     /// — `restartTimestamps` used to only ever grow, one entry per unexpected exit for the
     /// life of a long-running service (design.md §3.3, ex-F20).
-    private static func recordRestart(_ r: inout ServiceRuntime, config: Program) {
-        let cutoff = Date().addingTimeInterval(-TimeInterval(config.stormWindowSec))
+    private static func recordRestart(_ r: inout ServiceRuntime, config: Program, now: Date) {
+        let cutoff = now.addingTimeInterval(-TimeInterval(config.stormWindowSec))
         r.restartTimestamps = r.restartTimestamps.filter { $0 >= cutoff }
-        r.restartTimestamps.append(Date())
+        r.restartTimestamps.append(now)
     }
 
-    private static func enterBackoffOrFatal(_ runtime: ServiceRuntime, config: Program) -> (ServiceRuntime, [ServiceAction]) {
+    private static func exitDetail(code: Int32?, signal: Int32?) -> [String: String] {
+        var detail: [String: String] = [:]
+        if let code { detail["code"] = String(code) }
+        if let signal { detail["signal"] = String(signal) }
+        return detail
+    }
+
+    private static func enterBackoffOrFatal(_ runtime: ServiceRuntime, config: Program, now: Date) -> (ServiceRuntime, [ServiceAction]) {
         var r = runtime
         // A backoff/fatal transition always follows an exit, so any pid it was holding is
         // already dead — leaving it set persisted a dead pid into `live` (ex-F29), relying on
@@ -288,7 +316,12 @@ public enum ServiceStateMachine {
         r.pid = nil
         r.pgid = nil
         var actions: [ServiceAction] = []
-        if r.retryCount + 1 < config.startRetries {
+        // `startRetries` mirrors supervisor's `startretries`: N *retries* after the initial
+        // attempt, i.e. N+1 total spawn attempts before FATAL. The old `retryCount + 1 <
+        // startRetries` guard made FATAL land one attempt early — a startRetries=3 program
+        // only ever got 3 total attempts instead of 4, silently disagreeing with an imported
+        // supervisor config that says the same number (design.md §1 constraint 3, ex-F37).
+        if r.retryCount < config.startRetries {
             r.retryCount += 1
             r.state = .backoff
             let delay = backoffDelay(retryCount: r.retryCount, base: config.backoffBase, max: config.backoffMax)

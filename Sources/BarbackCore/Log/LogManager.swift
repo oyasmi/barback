@@ -26,19 +26,29 @@ public enum LogManager {
     /// Where a service's stdout/stderr land, shared between `openServiceLogs` and the
     /// rotation call sites in `Supervisor` so both agree on the same paths without a running
     /// process (design.md §4).
+    /// Explicit paths are expanded here — and only here plus `ProgramLogPath.resolve`, the
+    /// two other places a `logPath`/`logStderrPath` string turns into an actual filesystem
+    /// path — so a form value like `~/logs/app.log` means the same thing everywhere instead
+    /// of `open()` seeing a literal `~` and failing (ex-F33).
     public static func serviceLogPaths(name: String, logsDir: String, mergeStderr: Bool, explicitOutPath: String?, explicitErrPath: String?) -> (out: String, err: String) {
         let dir = (logsDir as NSString).appendingPathComponent("programs")
-        let outPath = explicitOutPath ?? (dir as NSString).appendingPathComponent("\(name).out.log")
-        let errPath = mergeStderr ? outPath : (explicitErrPath ?? (dir as NSString).appendingPathComponent("\(name).err.log"))
+        let outPath = explicitOutPath.map(PathUtil.expandTilde) ?? (dir as NSString).appendingPathComponent("\(name).out.log")
+        let errPath = mergeStderr ? outPath : (explicitErrPath.map(PathUtil.expandTilde) ?? (dir as NSString).appendingPathComponent("\(name).err.log"))
         return (outPath, errPath)
     }
 
     public static func openServiceLogs(name: String, logsDir: String, mergeStderr: Bool, explicitOutPath: String?, explicitErrPath: String?) throws -> LogFDs {
-        let dir = (logsDir as NSString).appendingPathComponent("programs")
-        try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
         let paths = serviceLogPaths(name: name, logsDir: logsDir, mergeStderr: mergeStderr, explicitOutPath: explicitOutPath, explicitErrPath: explicitErrPath)
         let outPath = paths.out
         let errPath = paths.err
+        // Creates the parent of whatever path is actually in play — the default
+        // `programs/` dir when no explicit path was given, or an explicit path's own parent
+        // otherwise, which used to only ever exist if the user had created it by hand first
+        // (ex-F33).
+        try FileManager.default.createDirectory(atPath: (outPath as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+        if errPath != outPath {
+            try FileManager.default.createDirectory(atPath: (errPath as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
+        }
 
         let outFD = open(outPath, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0o644)
         guard outFD >= 0 else { throw LogManagerError.openFailed(outPath) }

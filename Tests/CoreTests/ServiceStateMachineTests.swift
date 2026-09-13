@@ -60,18 +60,28 @@ struct ServiceStateMachineTests {
         }
     }
 
+    // ex-F37: startRetries=N means N *retries* after the initial attempt (matching
+    // supervisor's startretries semantics), i.e. N+1 total spawn attempts before FATAL — the
+    // old `retryCount + 1 < startRetries` guard made FATAL land one attempt early.
     @Test func startFailureRetriesThenFatal() {
         var runtime = ServiceRuntime(state: .starting)
         let config = program(autorestart: .never, startRetries: 2)
-        let (r1, a1) = ServiceStateMachine.reduce(runtime: runtime, event: .spawnFailed, config: config)
+
+        let (r1, a1) = ServiceStateMachine.reduce(runtime: runtime, event: .spawnFailed(reason: "boom"), config: config)
         #expect(r1.state == .backoff)
         #expect(a1.contains { if case .scheduleBackoffTimer = $0 { return true }; return false })
         runtime = r1
+
         let (r2, _) = ServiceStateMachine.reduce(runtime: runtime, event: .backoffElapsed, config: config)
         #expect(r2.state == .starting)
-        let (r3, a3) = ServiceStateMachine.reduce(runtime: r2, event: .spawnFailed, config: config)
-        #expect(r3.state == .fatal)
-        #expect(a3.contains { if case .notify(.enteredFatal) = $0 { return true }; return false })
+        let (r3, _) = ServiceStateMachine.reduce(runtime: r2, event: .spawnFailed(reason: "boom"), config: config)
+        #expect(r3.state == .backoff) // 2nd retry still allowed (startRetries=2)
+        runtime = r3
+
+        let (r4, _) = ServiceStateMachine.reduce(runtime: runtime, event: .backoffElapsed, config: config)
+        let (r5, a5) = ServiceStateMachine.reduce(runtime: r4, event: .spawnFailed(reason: "boom"), config: config)
+        #expect(r5.state == .fatal) // 3rd attempt exhausts the 2 retries
+        #expect(a5.contains { if case .notify(.enteredFatal) = $0 { return true }; return false })
     }
 
     @Test func clearFatalReturnsToStopped() {
@@ -155,7 +165,7 @@ struct ServiceStateMachineTests {
     // ex-F29: entering backoff/fatal must clear pid/pgid rather than persist a dead one.
     @Test func enteringBackoffClearsPid() {
         let runtime = ServiceRuntime(state: .starting, pid: 7, pgid: 7)
-        let (r, _) = ServiceStateMachine.reduce(runtime: runtime, event: .spawnFailed, config: program(autorestart: .never, startRetries: 5))
+        let (r, _) = ServiceStateMachine.reduce(runtime: runtime, event: .spawnFailed(reason: "boom"), config: program(autorestart: .never, startRetries: 5))
         #expect(r.state == .backoff)
         #expect(r.pid == nil && r.pgid == nil)
     }
@@ -168,5 +178,45 @@ struct ServiceStateMachineTests {
         let stale = ServiceRuntime(state: .running, restartTimestamps: [Date().addingTimeInterval(-10)], pid: 1, pgid: 1)
         let (r, _) = ServiceStateMachine.reduce(runtime: stale, event: .processExited(code: 1, signal: nil, at: Date()), config: config)
         #expect(r.restartTimestamps.count == 1)
+    }
+
+    // ex-F30: a failed spawn must finalize its run row — `enterBackoffOrFatal`'s action list
+    // used to have no `.finalizeRun` at all, so `ended_at` stayed NULL forever.
+    @Test func spawnFailedFinalizesTheRun() {
+        let runtime = ServiceRuntime(state: .starting)
+        let (_, actions) = ServiceStateMachine.reduce(runtime: runtime, event: .spawnFailed(reason: "no such file"), config: program(autorestart: .never))
+        #expect(actions.contains(.finalizeRun(outcome: .failed, code: nil, signal: nil)))
+        #expect(actions.contains {
+            if case .logEvent(.spawnFailed, _, let detail) = $0 { return detail["reason"] == "no such file" }
+            return false
+        })
+    }
+
+    // ex-F34: an exit must always leave a trace in the event log, code/signal included —
+    // this used to be silent for every exit from RUNNING.
+    @Test func runningExitLogsProcessExitedWithDetail() {
+        let runtime = ServiceRuntime(state: .running, pid: 1, pgid: 1)
+        let (_, actions) = ServiceStateMachine.reduce(runtime: runtime, event: .processExited(code: 9, signal: nil, at: Date()), config: program(autorestart: .never))
+        #expect(actions.contains {
+            if case .logEvent(.processExited, _, let detail) = $0 { return detail["code"] == "9" }
+            return false
+        })
+    }
+
+    // ex-F36: the crash-storm window is keyed off an explicit `now` rather than a `Date()`
+    // called deep inside the reducer, so the storm boundary is exactly reproducible.
+    @Test func stormWindowRespectsInjectedNow() {
+        var config = program(autorestart: .unexpected)
+        config.stormWindowSec = 60
+        config.stormMaxRestarts = 2
+        let anchor = Date(timeIntervalSince1970: 1_000_000)
+
+        let justInside = ServiceRuntime(state: .running, restartTimestamps: [anchor.addingTimeInterval(-59)], pid: 1, pgid: 1)
+        let (r1, _) = ServiceStateMachine.reduce(runtime: justInside, event: .processExited(code: 1, signal: nil, at: anchor), config: config, now: anchor)
+        #expect(r1.state == .fatal) // both restarts fall inside the 60s window
+
+        let justOutside = ServiceRuntime(state: .running, restartTimestamps: [anchor.addingTimeInterval(-61)], pid: 1, pgid: 1)
+        let (r2, _) = ServiceStateMachine.reduce(runtime: justOutside, event: .processExited(code: 1, signal: nil, at: anchor), config: config, now: anchor)
+        #expect(r2.state == .starting) // the stale timestamp fell outside the window and was pruned
     }
 }

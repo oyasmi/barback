@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  build-and-test:
+    # Darwin-only project (AppKit, posix_spawn/proc_pidinfo, ServiceManagement) — needs a
+    # real macOS runner, not a Swift toolchain container (design.md targets macOS 13+
+    # Apple Silicon; GitHub's macos-14 runners are arm64).
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: swift build
+        run: swift build
+
+      - name: swift test
+        # CoreTests is pure unit tests; ProcessTests/IntegrationTests spawn real processes
+        # (Fixtures/testchild, /bin/sh) — none of them touch the network or need signing, so
+        # the default runner image is enough.
+        run: swift test

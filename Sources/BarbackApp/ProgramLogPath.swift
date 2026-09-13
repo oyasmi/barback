@@ -14,7 +14,10 @@ enum ProgramLogPath {
             if let last = snap.lastRun?.logPath { return last }
             return (AppPaths.runsLogsDir as NSString).appendingPathComponent("\(snap.program.name).log")
         }
-        if let explicit = snap.program.logPath { return explicit }
+        // Expanded the same way `LogManager.serviceLogPaths` expands it before ever opening
+        // the file — otherwise a `~`-prefixed path opens fine for the running process but the
+        // log window/Finder reveal for it looks for a literal `~` directory (ex-F33).
+        if let explicit = snap.program.logPath { return PathUtil.expandTilde(explicit) }
         return (AppPaths.programsLogsDir as NSString).appendingPathComponent("\(snap.program.name).out.log")
     }
 }

@@ -120,27 +120,82 @@ public final class Supervisor: @unchecked Sendable {
 
     private func adoptSurvivingProcess(program: Program, live: LiveRecord) {
         guard let pid = live.pid else { return }
+        // `currentRunId` used to only ever get set by `spawnService`/`spawnOneshot` in this
+        // same process — an adopted survivor's run row (created by the crashed instance)
+        // never got a slot here, so it never got finalized when the process later actually
+        // exited: `ended_at` stayed NULL forever, invisible even to "清空历史" (ex-F31).
+        if let runId = live.runId {
+            currentRunId[program.id] = runId
+        }
         isOwnChild[program.id] = false
         exitWatcher.register(pid: pid, isOwnChild: false) { [weak self] status in
             self?.handleProcessExited(programId: program.id, status: status)
         }
         switch program.kind {
         case .service:
-            var runtime = ServiceRuntime(state: .running, pid: live.pid, pgid: live.pgid, procStartTime: live.procStartTime, startedAt: live.startedAt.map(Date.init(timeIntervalSince1970:)))
+            // design.md §3.7 step 3 only promises RUNNING for a survivor that *was* running;
+            // one caught mid-STOPPING had a stop already in flight when Barback crashed, and
+            // resuming it as RUNNING silently abandoned that request (ex-F42).
+            let wasStopping = live.state == ServiceState.stopping.rawValue
+            var runtime = ServiceRuntime(
+                state: wasStopping ? .stopping : .running,
+                pid: live.pid, pgid: live.pgid, procStartTime: live.procStartTime,
+                startedAt: live.startedAt.map(Date.init(timeIntervalSince1970:))
+            )
             runtime.retryCount = live.retryCount
+            runtime.stopRequested = live.stopRequested
             serviceRuntimes[program.id] = runtime
+            if wasStopping {
+                // The original stop timer died with the crashed process; re-send the signal
+                // and restart the wait from scratch rather than leaving it stuck in STOPPING
+                // with nothing left to ever escalate it to KILL.
+                ProcessHost.signal(pid: pid, pgid: live.pgid, name: program.stopSignal, group: program.stopAsGroup)
+                scheduleTimer(\.stopTimers, id: program.id, seconds: Double(program.stopWaitSeconds)) { [weak self] in
+                    self?.dispatchServiceEvent(programId: program.id, event: .stopTimerElapsed)
+                }
+            }
         case .oneshot:
-            oneshotRuntimes[program.id] = OneshotRuntime(state: .running, pid: live.pid, pgid: live.pgid, procStartTime: live.procStartTime)
+            var runtime = OneshotRuntime(state: .running, pid: live.pid, pgid: live.pgid, procStartTime: live.procStartTime)
+            runtime.stopRequested = live.stopRequested
+            oneshotRuntimes[program.id] = runtime
+            // design.md §3.7 step 3: a recovered one-shot must resume its timeout, not run
+            // forever unwatched — `procStartTime` is the OS's own record of when it actually
+            // started, so the remaining budget survives a crash exactly like a normal run's
+            // would (ex-F42).
+            if program.timeoutSeconds > 0, let procStartTime = live.procStartTime {
+                let elapsed = Date().timeIntervalSince1970 - procStartTime
+                let remaining = max(0, Double(program.timeoutSeconds) - elapsed)
+                scheduleTimer(\.timeoutTimers, id: program.id, seconds: remaining) { [weak self] in
+                    self?.dispatchOneshotEvent(programId: program.id, event: .timeoutElapsed)
+                }
+            }
         }
         persistLive(programId: program.id)
     }
 
     private func handleUnknownOutcome(program: Program, live: LiveRecord) {
         try? store.clearLive(programId: program.id)
+        if let runId = live.runId {
+            // Neither the process nor the previous Barback instance survived to record how
+            // this run actually ended — that is exactly what `RunOutcome.unknown` is for
+            // (design.md §3.7 step 4/5), rather than leaving `ended_at` NULL forever the way
+            // this path used to (ex-F31).
+            try? store.finalizeRun(id: runId, endedAt: Date(), exitCode: nil, termSignal: nil, outcome: .unknown)
+        }
         switch program.kind {
         case .service:
-            serviceRuntimes[program.id] = ServiceRuntime(state: .stopped)
-            // autorestart semantics decide whether autostart below relaunches it.
+            // A pending stop request is honored as a clean stop regardless of autorestart —
+            // the user (or shutdown) already said "don't keep this running". Otherwise route
+            // through the ordinary unexpected-exit path so autorestart/backoff/storm
+            // protection apply exactly as if Barback had been watching when it died, instead
+            // of leaving an autorestart=.always service sitting STOPPED until someone notices
+            // (design.md §3.7 step 5, ex-F42).
+            if program.autorestart != .never, !live.stopRequested {
+                serviceRuntimes[program.id] = ServiceRuntime(state: .running, retryCount: live.retryCount)
+                dispatchServiceEvent(programId: program.id, event: .processExited(code: nil, signal: nil, at: Date()))
+            } else {
+                serviceRuntimes[program.id] = ServiceRuntime(state: .stopped)
+            }
         case .oneshot:
             oneshotRuntimes[program.id] = OneshotRuntime(state: .failed)
         }
@@ -230,7 +285,10 @@ public final class Supervisor: @unchecked Sendable {
         queue.async { [self] in
             var existing = Set(programs.values.map(\.name))
             if program.id != 0 { existing.remove(programs[program.id]?.name ?? "") }
-            let errors = ProgramValidator.validate(program, existingNames: existing)
+            // The same PATH `spawnService`/`spawnOneshot` will actually use, not this
+            // process's own — otherwise "找不到可执行文件" can disagree with what
+            // `posix_spawn` finds in either direction (ex-F41).
+            let errors = ProgramValidator.validate(program, existingNames: existing, pathEnv: mergedEnvironment(for: program)["PATH"])
             guard errors.isEmpty else {
                 completion(.failure(.validation(errors)))
                 return
@@ -306,6 +364,15 @@ public final class Supervisor: @unchecked Sendable {
     }
 
     private func finishDelete(id: Int64, completion: (() -> Void)?) {
+        // Defensive: in the ordinary stop-then-delete path the exit source has already
+        // self-unregistered by the time `finishDelete` runs (`ExitWatcher.handleExit`
+        // unregisters before invoking its callback), but the stop-grace force-clear path can
+        // reach here while the real (already-SIGKILLed) process's NOTE_EXIT is still pending
+        // — dropping the program from `programs` shouldn't leave a kqueue source outliving it
+        // even though `handleProcessExited`'s own guard makes that harmless today (ex-F45).
+        if let pid = serviceRuntimes[id]?.pid ?? oneshotRuntimes[id]?.pid {
+            exitWatcher.unregister(pid: pid)
+        }
         try? store.deleteProgram(id: id)
         programs.removeValue(forKey: id)
         serviceRuntimes.removeValue(forKey: id)
@@ -434,6 +501,15 @@ public final class Supervisor: @unchecked Sendable {
                     self.serviceRuntimes[programId] = r
                     self.persistLive(programId: programId)
                     self.publishSnapshot()
+                    // This settles the runtime to STOPPED exactly like a normal
+                    // `.publishSnapshot` action would (see `perform(_:programId:program:)`
+                    // above) — it just does so from a handler that bypasses the reducer, so
+                    // it has to repeat that action's other two follow-ups too. Missing
+                    // `checkRestartAfterStop` here left "重启" on a SIGTERM-ignoring program
+                    // permanently stuck: stopped, killed, and never restarted, with a
+                    // `pendingRestartAfterStop` entry that would then wrongly fire on some
+                    // *later* unrelated stop (ex-F39).
+                    self.checkRestartAfterStop(programId: programId)
                     self.runPendingTerminationIfIdle()
                     self.checkPendingDeletion(programId: programId)
                 }
@@ -473,6 +549,12 @@ public final class Supervisor: @unchecked Sendable {
     private func spawnService(program: Program, trigger: RunTrigger) {
         // Whatever we are about to launch uses the saved config, so the drift is gone.
         needsRestartIds.remove(program.id)
+        // Closed on every exit from this scope, success or failure alike — `logFDs` used to
+        // be a `let` local only reachable from the success path, so a `ProcessHost.spawn`
+        // throw after the logs were already opened leaked both fds every single time the
+        // service failed to start (ex-F30).
+        var logFDs: LogFDs?
+        defer { if let logFDs { LogManager.closeFDs(logFDs) } }
         do {
             if program.logRotatePolicy == .onRestart {
                 let paths = LogManager.serviceLogPaths(
@@ -484,14 +566,15 @@ public final class Supervisor: @unchecked Sendable {
                     _ = try? LogManager.rotateIfNeeded(path: paths.err, maxBytes: program.logMaxBytes, backups: program.logBackups, force: true)
                 }
             }
-            let logFDs = try LogManager.openServiceLogs(
+            let fds = try LogManager.openServiceLogs(
                 name: program.name,
                 logsDir: AppPaths.logsDir,
                 mergeStderr: program.logMergeStderr,
                 explicitOutPath: program.logPath,
                 explicitErrPath: program.logStderrPath
             )
-            let runId = try store.insertRun(RunRecord(programId: program.id, trigger: trigger, logPath: logFDs.outPath))
+            logFDs = fds
+            let runId = try store.insertRun(RunRecord(programId: program.id, trigger: trigger, logPath: fds.outPath))
             currentRunId[program.id] = runId
             if var p = programs[program.id] { p.runTotal += 1; programs[program.id] = p }
             let env = mergedEnvironment(for: program)
@@ -500,20 +583,31 @@ public final class Supervisor: @unchecked Sendable {
                 useShell: program.useShell,
                 directory: program.directory,
                 environment: env,
-                outFD: logFDs.outFD,
-                errFD: logFDs.errFD
+                outFD: fds.outFD,
+                errFD: fds.errFD
             )
-            LogManager.closeFDs(logFDs) // parent's copies are no longer needed once dup2'd into the child
             isOwnChild[program.id] = true
             exitWatcher.register(pid: spawned.pid, isOwnChild: true) { [weak self] status in
                 self?.handleProcessExited(programId: program.id, status: status)
             }
             dispatchServiceEvent(programId: program.id, event: .spawnSucceeded(pid: spawned.pid, pgid: spawned.pgid, procStartTime: spawned.startTime, at: Date()))
         } catch {
-            currentRunId.removeValue(forKey: program.id)
-            logSelf("启动失败 \(program.name): \(error)")
-            dispatchServiceEvent(programId: program.id, event: .spawnFailed)
+            // `currentRunId` is deliberately left alone here — `.spawnFailed` finalizes the
+            // run through the reducer's own `.finalizeRun` action now, and clearing it early
+            // (as this used to) made that action's `perform(.finalizeRun)` lookup always miss,
+            // leaving the run row's `ended_at` NULL forever (ex-F30).
+            let reason = describe(error)
+            logSelf("启动失败 \(program.name): \(reason)")
+            dispatchServiceEvent(programId: program.id, event: .spawnFailed(reason: reason))
         }
+    }
+
+    /// Prefers `LocalizedError.errorDescription` (the Chinese messages `ProcessHostError`/
+    /// `LogManagerError`/`SQLiteError` all define) over `"\(error)"`'s raw enum-case dump, so
+    /// the reason that ends up in the event log and `logSelf` is something a user can read
+    /// rather than e.g. `posixSpawnFailed(2)`.
+    private func describe(_ error: Error) -> String {
+        (error as? LocalizedError)?.errorDescription ?? "\(error)"
     }
 
     private func handleProcessExited(programId: Int64, status: ExitStatus) {
@@ -617,13 +711,15 @@ public final class Supervisor: @unchecked Sendable {
             trimHistoryIfNeeded(program: program)
             runPendingTerminationIfIdle()
             checkPendingDeletion(programId: programId)
-        case .notify(let outcome):
-            if let runId = currentRunId[programId], let run = try? store.fetchRuns(programId: programId, limit: 1).first {
-                onOneshotNotify?(program, outcome, run.duration ?? 0)
-                _ = runId
-            } else {
-                onOneshotNotify?(program, outcome, 0)
-            }
+        case .notify(let outcome, let duration):
+            // `duration` now travels with the action, computed by the reducer itself from
+            // `procStartTime` — no more reading it back from `Store` after `.finalizeRun` (see
+            // below) has already cleared `currentRunId`, which used to make this lookup miss
+            // every single time and every completion notification read "0.0s" (ex-F32).
+            onOneshotNotify?(program, outcome, duration)
+        case .logEvent(let type, let level, let detail):
+            let json = (try? JSONSerialization.data(withJSONObject: detail)).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+            try? store.insertEvent(EventRecord(level: level, programId: programId, type: type, detailJSON: json))
         case .finalizeRun(let outcome, let code, let signal):
             if let runId = currentRunId[programId] {
                 try? store.finalizeRun(id: runId, endedAt: Date(), exitCode: code, termSignal: signal, outcome: outcome)
@@ -634,9 +730,13 @@ public final class Supervisor: @unchecked Sendable {
 
     private func spawnOneshot(program: Program) {
         needsRestartIds.remove(program.id)
+        // Same fd-leak/early-clear hazards as `spawnService` — see the comments there (ex-F30).
+        var logFDs: LogFDs?
+        defer { if let logFDs { LogManager.closeFDs(logFDs) } }
         do {
             let runId = try store.insertRun(RunRecord(programId: program.id, trigger: .manual))
-            let logFDs = try LogManager.openRunLog(name: program.name, runId: runId, logsDir: AppPaths.logsDir)
+            let fds = try LogManager.openRunLog(name: program.name, runId: runId, logsDir: AppPaths.logsDir)
+            logFDs = fds
             currentRunId[program.id] = runId
             if var p = programs[program.id] { p.runTotal += 1; programs[program.id] = p }
             let env = mergedEnvironment(for: program)
@@ -645,18 +745,16 @@ public final class Supervisor: @unchecked Sendable {
                 useShell: program.useShell,
                 directory: program.directory,
                 environment: env,
-                outFD: logFDs.outFD,
-                errFD: logFDs.errFD
+                outFD: fds.outFD,
+                errFD: fds.errFD
             )
-            LogManager.closeFDs(logFDs)
             isOwnChild[program.id] = true
             exitWatcher.register(pid: spawned.pid, isOwnChild: true) { [weak self] status in
                 self?.handleProcessExited(programId: program.id, status: status)
             }
             dispatchOneshotEvent(programId: program.id, event: .spawnSucceeded(pid: spawned.pid, pgid: spawned.pgid, procStartTime: spawned.startTime, at: Date()))
         } catch {
-            currentRunId.removeValue(forKey: program.id)
-            dispatchOneshotEvent(programId: program.id, event: .spawnFailed)
+            dispatchOneshotEvent(programId: program.id, event: .spawnFailed(reason: describe(error)))
         }
     }
 
@@ -762,8 +860,11 @@ public final class Supervisor: @unchecked Sendable {
         }
     }
 
+    /// design.md §3.8: a 3s delay before the post-wake double-check, so volumes/network have
+    /// a moment to actually come back before `verifyAlive`'s `proc_pidinfo` call runs against
+    /// a system that only just resumed.
     public func reconcileAfterWake() {
-        queue.async { [self] in
+        queue.asyncAfter(deadline: .now() + 3) { [self] in
             reconcileLiveness()
             try? store.insertEvent(EventRecord(level: .info, type: .wakeReconcile))
         }
@@ -797,16 +898,65 @@ public final class Supervisor: @unchecked Sendable {
         logRotationTimer = timer
     }
 
+    private struct RotationCandidate {
+        let programId: Int64
+        let out: String
+        let err: String
+        let maxBytes: Int64
+        let backups: Int
+    }
+
+    /// The paths/limits to check are read here, on the core queue, since they come out of
+    /// `programs`/`serviceRuntimes` — but the actual rotation (`copyItem` of a log file that
+    /// can legitimately be `logMaxBytes` large) runs off it. It used to run inline on this
+    /// same serial queue that every process-exit event, start/stop command, and UI snapshot
+    /// publish also goes through, so a slow copy for one flapping service's oversized log
+    /// blocked supervision of every *other* managed process behind it — exactly the
+    /// fault-isolation constraint design.md §1 rules out (ex-F43).
     private func checkLogRotationForActiveServices() {
+        var candidates: [RotationCandidate] = []
         for (id, runtime) in serviceRuntimes where runtime.state.isActive {
             guard let program = programs[id], program.logRotatePolicy == .size else { continue }
             let paths = LogManager.serviceLogPaths(
                 name: program.name, logsDir: AppPaths.logsDir, mergeStderr: program.logMergeStderr,
                 explicitOutPath: program.logPath, explicitErrPath: program.logStderrPath
             )
-            _ = try? LogManager.rotateIfNeeded(path: paths.out, maxBytes: program.logMaxBytes, backups: program.logBackups)
-            if paths.err != paths.out {
-                _ = try? LogManager.rotateIfNeeded(path: paths.err, maxBytes: program.logMaxBytes, backups: program.logBackups)
+            candidates.append(RotationCandidate(programId: id, out: paths.out, err: paths.err, maxBytes: program.logMaxBytes, backups: program.logBackups))
+        }
+        guard !candidates.isEmpty else { return }
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            for candidate in candidates {
+                var rotated = false
+                var failure: Error?
+                do {
+                    rotated = try LogManager.rotateIfNeeded(path: candidate.out, maxBytes: candidate.maxBytes, backups: candidate.backups)
+                } catch {
+                    failure = error
+                }
+                if candidate.err != candidate.out {
+                    do {
+                        rotated = try LogManager.rotateIfNeeded(path: candidate.err, maxBytes: candidate.maxBytes, backups: candidate.backups) || rotated
+                    } catch {
+                        failure = failure ?? error
+                    }
+                }
+                guard rotated || failure != nil else { continue }
+                self?.queue.async {
+                    guard let self else { return }
+                    if rotated {
+                        try? self.store.insertEvent(EventRecord(level: .info, programId: candidate.programId, type: .logRotated))
+                    }
+                    if let failure {
+                        // design.md §4 promises "写失败不停止业务进程" for a full ENOSPC — the
+                        // child's own writes go straight to its fd with Barback never in that
+                        // path, so this periodic rotation check (which does touch the file) is
+                        // the earliest point anything here can actually notice the disk is out
+                        // of room, rather than staying silent the way a bare `try?` did before
+                        // (ex-F43, `logWriteFailed` previously defined but never used).
+                        let json = (try? JSONSerialization.data(withJSONObject: ["error": self.describe(failure)])).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+                        try? self.store.insertEvent(EventRecord(level: .error, programId: candidate.programId, type: .logWriteFailed, detailJSON: json))
+                    }
+                }
             }
         }
     }
@@ -858,7 +1008,10 @@ public final class Supervisor: @unchecked Sendable {
 
     private func forceKillEverythingForTermination() {
         for (id, runtime) in serviceRuntimes where runtime.state.isActive {
-            if let pid = runtime.pid { ProcessHost.sendKill(pid: pid, pgid: runtime.pgid, asGroup: true) }
+            if let pid = runtime.pid {
+                ProcessHost.sendKill(pid: pid, pgid: runtime.pgid, asGroup: true)
+                exitWatcher.unregister(pid: pid) // ex-F45 — see finishDelete
+            }
             var r = runtime
             r.state = .stopped
             r.pid = nil
@@ -867,7 +1020,10 @@ public final class Supervisor: @unchecked Sendable {
             persistLive(programId: id)
         }
         for (id, runtime) in oneshotRuntimes where runtime.state.isActive {
-            if let pid = runtime.pid { ProcessHost.sendKill(pid: pid, pgid: runtime.pgid, asGroup: true) }
+            if let pid = runtime.pid {
+                ProcessHost.sendKill(pid: pid, pgid: runtime.pgid, asGroup: true)
+                exitWatcher.unregister(pid: pid)
+            }
             var r = runtime
             r.state = .cancelled
             r.pid = nil

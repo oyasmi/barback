@@ -1,8 +1,12 @@
 import Foundation
 
 /// Schema DDL, mirroring design.md §5.2 verbatim. `PRAGMA user_version` drives migrations.
+///
+/// `Store.migrateIfNeeded` runs each `if db.userVersion < N { ...; setUserVersion(N) }` step
+/// independently rather than against a single `currentVersion` target (ex-F38) — there is
+/// deliberately no constant here to keep in sync; the highest literal `N` used there *is*
+/// the current version.
 enum Schema {
-    static let currentVersion: Int32 = 2
 
     static let v1 = """
     CREATE TABLE IF NOT EXISTS program (

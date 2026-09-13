@@ -19,11 +19,20 @@ public final class Store {
         try FileManager.default.createDirectory(atPath: (dbPath as NSString).deletingLastPathComponent, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         try FileManager.default.createDirectory(atPath: backupsDir, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         self.db = try SQLiteDatabase(path: dbPath)
+        try Self.applyPragmas(db)
+        try migrateIfNeeded()
+        chmod(dbPath, 0o600)
+    }
+
+    /// The single writer on `barback.core` never contends with itself, but WAL still allows
+    /// concurrent readers (a diagnostics export, a future second connection) to briefly hold
+    /// the file locked against a writer — without a busy timeout that collision surfaces as an
+    /// immediate SQLITE_BUSY error instead of a short, harmless wait (ex-F47).
+    private static func applyPragmas(_ db: SQLiteDatabase) throws {
         try db.exec("PRAGMA journal_mode=WAL")
         try db.exec("PRAGMA synchronous=NORMAL")
         try db.exec("PRAGMA foreign_keys=ON")
-        try migrateIfNeeded()
-        chmod(dbPath, 0o600)
+        try db.exec("PRAGMA busy_timeout=5000")
     }
 
     private func migrateIfNeeded() throws {
@@ -33,18 +42,26 @@ public final class Store {
             try recoverFromCorruption()
             recovering = true
         }
-        let version = db.userVersion
-        if version < 1 {
+        // Each step is an independent `if`, not an `else if` chain — the old chain ran at
+        // most one migration per launch and then stamped `Schema.currentVersion` regardless
+        // of which step actually ran. A v1 database opened once `currentVersion` reached 3
+        // would take the `version < 2` branch, get stamped straight to 3, and the v2→v3
+        // migration would never run at all while the database claimed to already be current
+        // (ex-F38). Falling through every step in order is what makes catching up from any
+        // past version safe.
+        if db.userVersion < 1 {
             try db.inTransaction {
                 try db.exec(Schema.v1)
             }
-            try db.setUserVersion(Schema.currentVersion)
-        } else if version < 2 {
+            try db.setUserVersion(1)
+        }
+        if db.userVersion < 2 {
             try db.exec("ALTER TABLE program ADD COLUMN run_total INTEGER NOT NULL DEFAULT 0")
             try db.exec("UPDATE program SET run_total = (SELECT COUNT(*) FROM run WHERE run.program_id = program.id)")
-            try db.setUserVersion(Schema.currentVersion)
+            try db.setUserVersion(2)
         }
-        // Future migrations: `if version < 3 { ... }` etc., each preceded by a JSON backup.
+        // Future migrations: `if db.userVersion < 3 { ...; try db.setUserVersion(3) }`, each
+        // preceded by a JSON backup.
         if recovering {
             restoredProgramCount = (try? restoreFromLatestConfigBackup()) ?? 0
         }
@@ -64,9 +81,7 @@ public final class Store {
         _ = try? fm.removeItem(atPath: dbPath + "-wal")
         _ = try? fm.removeItem(atPath: dbPath + "-shm")
         db = try SQLiteDatabase(path: dbPath)
-        try db.exec("PRAGMA journal_mode=WAL")
-        try db.exec("PRAGMA synchronous=NORMAL")
-        try db.exec("PRAGMA foreign_keys=ON")
+        try Self.applyPragmas(db)
     }
 
     /// Re-populates the (now-empty, freshly created) program table from the newest JSON
@@ -276,53 +291,59 @@ public final class Store {
     /// Deletes completed runs matching the given filters, returning their log paths so the
     /// caller can remove the output files too. Runs still in flight (`ended_at IS NULL`) are
     /// never touched, so clearing history can never orphan an active process's bookkeeping.
+    ///
+    /// Filters the same `WHERE` directly in both the SELECT (to collect log paths) and the
+    /// DELETE, rather than collecting ids and deleting `WHERE id IN (?,?,...)` — a program
+    /// with enough history could build a placeholder list past SQLite's ~32766-variable limit,
+    /// at which point `prepare` failed, the `try?` at the call site swallowed it, and "清空
+    /// 历史" silently did nothing (ex-F46).
     public func deleteRuns(programId: Int64?, outcome: RunOutcome?) throws -> [String] {
-        var sql = "SELECT id, log_path FROM run WHERE ended_at IS NOT NULL"
-        if programId != nil { sql += " AND program_id = ?" }
-        if outcome != nil { sql += " AND outcome = ?" }
-        let stmt = try db.prepare(sql)
-        var idx: Int32 = 1
-        if let programId {
-            stmt.bind(idx, programId); idx += 1
-        }
-        if let outcome {
-            stmt.bind(idx, outcome.rawValue); idx += 1
-        }
-        var idsToDelete: [Int64] = []
+        var predicate = "ended_at IS NOT NULL"
+        if programId != nil { predicate += " AND program_id = ?" }
+        if outcome != nil { predicate += " AND outcome = ?" }
+
+        let selectStmt = try db.prepare("SELECT log_path FROM run WHERE \(predicate)")
+        Self.bindRunFilter(selectStmt, programId: programId, outcome: outcome)
         var paths: [String] = []
-        while try stmt.step() {
-            idsToDelete.append(stmt.columnInt64(0))
-            if let p = stmt.columnStringOptional(1) { paths.append(p) }
+        while try selectStmt.step() {
+            if let p = selectStmt.columnStringOptional(0) { paths.append(p) }
         }
-        guard !idsToDelete.isEmpty else { return [] }
-        let placeholders = idsToDelete.map { _ in "?" }.joined(separator: ",")
-        let del = try db.prepare("DELETE FROM run WHERE id IN (\(placeholders))")
-        for (i, id) in idsToDelete.enumerated() {
-            del.bind(Int32(i + 1), id)
-        }
-        try del.run()
+
+        let deleteStmt = try db.prepare("DELETE FROM run WHERE \(predicate)")
+        Self.bindRunFilter(deleteStmt, programId: programId, outcome: outcome)
+        try deleteStmt.run()
         return paths
+    }
+
+    private static func bindRunFilter(_ stmt: SQLiteStatement, programId: Int64?, outcome: RunOutcome?) {
+        var idx: Int32 = 1
+        if let programId { stmt.bind(idx, programId); idx += 1 }
+        if let outcome { stmt.bind(idx, outcome.rawValue); idx += 1 }
     }
 
     /// Deletes runs beyond `historyLimit` for a program (FIFO), returning their log paths
     /// so the caller can remove the output files too (design.md §3.4).
+    ///
+    /// Expressed as one `NOT IN (subquery)` predicate reused for both the SELECT and the
+    /// DELETE, so the parameter count stays fixed regardless of how many rows are being
+    /// trimmed — the same unbounded-`IN`-list hazard as `deleteRuns` above (ex-F46).
     public func trimRunHistory(programId: Int64, historyLimit: Int) throws -> [String] {
-        let stmt = try db.prepare("SELECT id, log_path FROM run WHERE program_id = ? ORDER BY started_at DESC LIMIT -1 OFFSET ?")
-        stmt.bind(1, programId)
-        stmt.bind(2, historyLimit)
-        var idsToDelete: [Int64] = []
+        let keepSubquery = "SELECT id FROM run WHERE program_id = ? ORDER BY started_at DESC LIMIT ?"
+        let selectStmt = try db.prepare("SELECT log_path FROM run WHERE program_id = ? AND id NOT IN (\(keepSubquery))")
+        selectStmt.bind(1, programId)
+        selectStmt.bind(2, programId)
+        selectStmt.bind(3, historyLimit)
         var paths: [String] = []
-        while try stmt.step() {
-            idsToDelete.append(stmt.columnInt64(0))
-            if let p = stmt.columnStringOptional(1) { paths.append(p) }
+        while try selectStmt.step() {
+            if let p = selectStmt.columnStringOptional(0) { paths.append(p) }
         }
-        guard !idsToDelete.isEmpty else { return [] }
-        let placeholders = idsToDelete.map { _ in "?" }.joined(separator: ",")
-        let del = try db.prepare("DELETE FROM run WHERE id IN (\(placeholders))")
-        for (i, id) in idsToDelete.enumerated() {
-            del.bind(Int32(i + 1), id)
-        }
-        try del.run()
+        guard !paths.isEmpty else { return [] }
+
+        let deleteStmt = try db.prepare("DELETE FROM run WHERE program_id = ? AND id NOT IN (\(keepSubquery))")
+        deleteStmt.bind(1, programId)
+        deleteStmt.bind(2, programId)
+        deleteStmt.bind(3, historyLimit)
+        try deleteStmt.run()
         return paths
     }
 

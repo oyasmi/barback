@@ -4,7 +4,9 @@ public enum OneshotEvent: Sendable, Equatable {
     case run
     case cancel
     case spawnSucceeded(pid: Int32, pgid: Int32, procStartTime: Double, at: Date)
-    case spawnFailed
+    /// `reason` mirrors `ServiceEvent.spawnFailed` — the caller's description of why the
+    /// spawn attempt itself failed, threaded through so the reducer can log it (ex-F34).
+    case spawnFailed(reason: String)
     case processExited(code: Int32?, signal: Int32?, at: Date)
     case timeoutElapsed
     case stopTimerElapsed
@@ -20,7 +22,13 @@ public enum OneshotAction: Sendable, Equatable {
     case sendKill(group: Bool)
     case persistLive
     case publishSnapshot
-    case notify(outcome: OneshotState)
+    /// `duration` is computed here from `procStartTime` and the exit event's own timestamp —
+    /// never re-derived by the caller after the fact. It used to be read back from `Store`
+    /// inside `Supervisor.perform`, by which point `.finalizeRun` (dispatched just before
+    /// `.notify` in every branch below) had already cleared `currentRunId`, so the lookup
+    /// always missed and every completion notification read "0.0s" (ex-F32).
+    case notify(outcome: OneshotState, duration: TimeInterval)
+    case logEvent(EventType, level: EventLevel, detail: [String: String])
     case finalizeRun(outcome: RunOutcome, code: Int32?, signal: Int32?)
 }
 
@@ -78,14 +86,15 @@ public enum OneshotStateMachine {
             }
             actions.append(.persistLive)
 
-        case (.running, .spawnFailed):
+        case (.running, .spawnFailed(let reason)):
             r.state = .failed
+            actions.append(.logEvent(.spawnFailed, level: .error, detail: ["reason": reason]))
             actions.append(.finalizeRun(outcome: .failed, code: nil, signal: nil))
-            actions.append(.notify(outcome: .failed))
+            actions.append(.notify(outcome: .failed, duration: 0))
             actions.append(.persistLive)
             actions.append(.publishSnapshot)
 
-        case (.running, .processExited(let code, let signal, _)):
+        case (.running, .processExited(let code, let signal, let at)):
             actions.append(.cancelTimeoutTimer)
             actions.append(.cancelStopTimer)
             let outcome: OneshotState
@@ -103,11 +112,17 @@ public enum OneshotStateMachine {
                 outcome = .failed
                 runOutcome = .failed
             }
+            // `r.procStartTime` is the OS-reported spawn instant (from `proc_pidinfo`, set in
+            // `.spawnSucceeded` and never cleared before this branch runs), so duration needs
+            // no Store round-trip and survives a crash-recovery adoption just as well as a
+            // normal run (ex-F32).
+            let duration = r.procStartTime.map { max(0, at.timeIntervalSince1970 - $0) } ?? 0
             r.state = outcome
             r.pid = nil
             r.pgid = nil
+            actions.append(.logEvent(.processExited, level: outcome == .succeeded ? .info : .warn, detail: exitDetail(code: code, signal: signal)))
             actions.append(.finalizeRun(outcome: runOutcome, code: code, signal: signal))
-            actions.append(.notify(outcome: outcome))
+            actions.append(.notify(outcome: outcome, duration: duration))
             actions.append(.persistLive)
             actions.append(.publishSnapshot)
 
@@ -134,5 +149,12 @@ public enum OneshotStateMachine {
         }
 
         return (r, actions)
+    }
+
+    private static func exitDetail(code: Int32?, signal: Int32?) -> [String: String] {
+        var detail: [String: String] = [:]
+        if let code { detail["code"] = String(code) }
+        if let signal { detail["signal"] = String(signal) }
+        return detail
     }
 }
