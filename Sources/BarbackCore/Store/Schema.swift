@@ -43,7 +43,6 @@ enum Schema {
       log_max_bytes INTEGER NOT NULL DEFAULT 10485760,
       log_backups INTEGER NOT NULL DEFAULT 3,
       log_rotate_policy TEXT NOT NULL DEFAULT 'size',
-      run_total INTEGER NOT NULL DEFAULT 0,
       created_at REAL NOT NULL, updated_at REAL NOT NULL
     );
 

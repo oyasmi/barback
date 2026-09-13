@@ -149,7 +149,7 @@ public final class Supervisor: @unchecked Sendable {
                 // The original stop timer died with the crashed process; re-send the signal
                 // and restart the wait from scratch rather than leaving it stuck in STOPPING
                 // with nothing left to ever escalate it to KILL.
-                ProcessHost.signal(pid: pid, pgid: live.pgid, name: program.stopSignal, group: program.stopAsGroup)
+                ProcessHost.signal(pid: pid, pgid: live.pgid, name: program.stopSignal, asGroup: program.stopAsGroup)
                 scheduleTimer(\.stopTimers, id: program.id, seconds: Double(program.stopWaitSeconds)) { [weak self] in
                     self?.dispatchServiceEvent(programId: program.id, event: .stopTimerElapsed)
                 }

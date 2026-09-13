@@ -334,10 +334,12 @@ public final class Store {
         selectStmt.bind(2, programId)
         selectStmt.bind(3, historyLimit)
         var paths: [String] = []
+        var hasRowsToTrim = false
         while try selectStmt.step() {
+            hasRowsToTrim = true
             if let p = selectStmt.columnStringOptional(0) { paths.append(p) }
         }
-        guard !paths.isEmpty else { return [] }
+        guard hasRowsToTrim else { return [] }
 
         let deleteStmt = try db.prepare("DELETE FROM run WHERE program_id = ? AND id NOT IN (\(keepSubquery))")
         deleteStmt.bind(1, programId)
