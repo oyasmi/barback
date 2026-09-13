@@ -9,7 +9,9 @@ import BarbackCore
 /// 常态零开销).
 @MainActor
 final class StatusPanelModel: ObservableObject {
-    /// Advances every second while the panel is open; uptimes and countdowns read from it.
+    /// Snapshot of "now" taken once when the panel opens; uptimes and countdowns read from
+    /// it rather than a live clock, so the display doesn't tick visibly while someone is
+    /// looking at it (each open still shows a fresh, correct value).
     @Published private(set) var now = Date()
     @Published private(set) var samples: [Int32: ProcSample] = [:]
     @Published var searchText = ""
@@ -21,7 +23,6 @@ final class StatusPanelModel: ObservableObject {
     weak var windowController: WindowController?
     var onRequestClose: (() -> Void)?
 
-    private var ticker: Timer?
     private var toastTask: Task<Void, Never>?
     private var cancellables: Set<AnyCancellable> = []
     /// When the snapshot we are showing was produced. `backoffRemaining` is frozen at
@@ -40,21 +41,17 @@ final class StatusPanelModel: ObservableObject {
             .store(in: &cancellables)
     }
 
-    // MARK: - Live sampling
+    // MARK: - Sampling
 
+    /// One-shot refresh of uptime/CPU/RSS for whatever is showing right now. Called once
+    /// when the panel opens rather than on a repeating timer — nobody needs second-by-second
+    /// precision on these figures, and skipping the timer means zero sampling while the
+    /// panel just sits open.
     func startTicking() {
-        guard ticker == nil else { return }
         tick()
-        let timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            self?.tick()
-        }
-        timer.tolerance = 0.2
-        ticker = timer
     }
 
     func stopTicking() {
-        ticker?.invalidate()
-        ticker = nil
         toastTask?.cancel()
         for pid in samples.keys { ProcSampler.clearHistory(pid: pid) }
         samples.removeAll()

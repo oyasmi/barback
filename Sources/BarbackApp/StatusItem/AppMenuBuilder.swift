@@ -7,7 +7,7 @@ import BarbackCore
 enum AppMenuBuilder {
     static func build(appState: AppState, windowController: WindowController?) -> NSMenu {
         let menu = NSMenu()
-        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.2.0"
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "0.3.0"
         let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1"
         let uptime = formatUptime(ProcessInfo.processInfo.systemUptime - AppLaunchClock.launchUptime)
         let header = NSMenuItem(title: "Barback \(version) (\(build)) · 已运行 \(uptime)", action: nil, keyEquivalent: "")

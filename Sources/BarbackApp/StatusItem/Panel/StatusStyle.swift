@@ -121,6 +121,20 @@ enum StatusStyle {
         return "\(seconds) 秒"
     }
 
+    /// Same as `uptime`, but rounded to whole minutes — for the still-running readout, which
+    /// is only refreshed once per panel open and so should never show a stale-looking seconds
+    /// digit.
+    static func uptimeMinutes(_ interval: TimeInterval) -> String {
+        let total = max(0, Int(interval))
+        let days = total / 86_400
+        let hours = (total % 86_400) / 3600
+        let minutes = (total % 3600) / 60
+        if days > 0 { return hours > 0 ? "\(days) 天 \(hours) 小时" : "\(days) 天" }
+        if hours > 0 { return minutes > 0 ? "\(hours) 小时 \(minutes) 分" : "\(hours) 小时" }
+        if minutes > 0 { return "\(minutes) 分钟" }
+        return "不到 1 分钟"
+    }
+
     /// Run durations, which are usually seconds rather than days.
     static func runDuration(_ interval: TimeInterval) -> String {
         if interval < 1 { return String(format: "%.0f 毫秒", interval * 1000) }
