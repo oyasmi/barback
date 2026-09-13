@@ -26,7 +26,7 @@ Barback is a menu-bar-resident process manager. Hand it the local services, tunn
 
 **One-shot commands** (triggered by hand, run to completion)
 
-- Timeout kill, confirmation prompt for dangerous commands, optional concurrent runs
+- Timeout kill, confirmation prompt for dangerous commands
 - Every run keeps its output and a record (time / duration / exit code / outcome), trimmed to a per-command limit
 
 **Everything else**

@@ -56,7 +56,6 @@ public struct Program: Codable, Sendable, Equatable, Identifiable {
     // oneshot-only
     public var timeoutSeconds: Int
     public var confirmBeforeRun: Bool
-    public var allowConcurrent: Bool
     public var historyLimit: Int
 
     // stop (shared)
@@ -104,7 +103,6 @@ public struct Program: Codable, Sendable, Equatable, Identifiable {
         stormMaxRestarts: Int = 10,
         timeoutSeconds: Int = 0,
         confirmBeforeRun: Bool = false,
-        allowConcurrent: Bool = false,
         historyLimit: Int = 50,
         stopSignal: String = "TERM",
         stopWaitSeconds: Int = 10,
@@ -142,7 +140,6 @@ public struct Program: Codable, Sendable, Equatable, Identifiable {
         self.stormMaxRestarts = stormMaxRestarts
         self.timeoutSeconds = timeoutSeconds
         self.confirmBeforeRun = confirmBeforeRun
-        self.allowConcurrent = allowConcurrent
         self.historyLimit = historyLimit
         self.stopSignal = stopSignal
         self.stopWaitSeconds = stopWaitSeconds
@@ -157,6 +154,24 @@ public struct Program: Codable, Sendable, Equatable, Identifiable {
         self.runTotal = runTotal
         self.createdAt = createdAt
         self.updatedAt = updatedAt
+    }
+
+    /// The fields that only take effect for an *already-running* instance after a restart —
+    /// the rest (autostart/autorestart/priority/group/notes/rotation params, per CFG-5) apply
+    /// immediately. The config window and the status panel both need this same distinction
+    /// (one to warn before save, one to warn after), so it lives here as the single source of
+    /// truth rather than as two separately-maintained field lists.
+    public static func runtimeFieldsDiffer(_ a: Program, _ b: Program) -> Bool {
+        a.command != b.command || a.useShell != b.useShell || a.directory != b.directory ||
+        a.environment != b.environment || a.logPath != b.logPath || a.logStderrPath != b.logStderrPath ||
+        a.stopSignal != b.stopSignal || a.stopWaitSeconds != b.stopWaitSeconds || a.timeoutSeconds != b.timeoutSeconds
+    }
+
+    /// The built-in defaults for every field that isn't identity (name/kind/command) —
+    /// what an advanced field reads as "unset". Used to grey out untouched fields, badge
+    /// changed ones, and drive per-section "恢复默认值".
+    public static func defaults(name: String, kind: ProgramKind, command: String) -> Program {
+        Program(name: name, kind: kind, command: command)
     }
 }
 

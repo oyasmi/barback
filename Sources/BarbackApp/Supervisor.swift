@@ -337,9 +337,7 @@ public final class Supervisor: @unchecked Sendable {
     }
 
     private func runtimeFieldsChanged(_ a: Program, _ b: Program) -> Bool {
-        a.command != b.command || a.useShell != b.useShell || a.directory != b.directory ||
-        a.environment != b.environment || a.logPath != b.logPath || a.logStderrPath != b.logStderrPath ||
-        a.stopSignal != b.stopSignal || a.stopWaitSeconds != b.stopWaitSeconds || a.timeoutSeconds != b.timeoutSeconds
+        Program.runtimeFieldsDiffer(a, b)
     }
 
     private func backupConfig() throws {

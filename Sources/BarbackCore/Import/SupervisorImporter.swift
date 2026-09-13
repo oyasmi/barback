@@ -115,12 +115,19 @@ public enum SupervisorImporter {
             autostart: false, // design.md §7: always forced off on import
             autorestart: autorestart,
             exitCodes: exitCodes.isEmpty ? [0] : exitCodes,
-            startSeconds: kv["startsecs"].flatMap(Int.init) ?? 5,
+            // supervisor defaults startsecs to 1s, not Barback's own default of 5s — imported
+            // programs must keep supervisor's meaning when the key is absent (design.md §1
+            // constraint #3, "同名字段必须同义"); Barback's own "new service" path still uses 5.
+            startSeconds: kv["startsecs"].flatMap(Int.init) ?? 1,
             startRetries: kv["startretries"].flatMap(Int.init) ?? 3,
             stopSignal: kv["stopsignal"] ?? "TERM",
             stopWaitSeconds: kv["stopwaitsecs"].flatMap(Int.init) ?? 10,
-            stopAsGroup: (kv["stopasgroup"]?.lowercased() == "true"),
-            killAsGroup: (kv["killasgroup"]?.lowercased() == "true"),
+            // supervisor defaults both to false; Barback defaults new programs to true (signal
+            // the whole process group — the safer choice for a desktop tool stopping a command
+            // that may have spawned children). Imported programs keep that Barback default when
+            // the key is absent, but respect an explicit `true`/`false` from the INI either way.
+            stopAsGroup: kv["stopasgroup"].map { $0.lowercased() == "true" } ?? true,
+            killAsGroup: kv["killasgroup"].map { $0.lowercased() == "true" } ?? true,
             logPath: logPath,
             logMergeStderr: mergeStderr,
             logStderrPath: logStderrPath,

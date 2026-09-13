@@ -416,11 +416,17 @@ public final class Store {
 
     // MARK: - Row mapping
 
+    // Deliberately omits `allow_concurrent`: `Program.allowConcurrent` was removed (the
+    // reducer has refused concurrent oneshot runs unconditionally since ex-F12, so the field
+    // had nothing left to gate — see OneshotStateMachineTests). The column itself stays in
+    // the schema with its `DEFAULT 0` rather than via a migration — omitting it from every
+    // INSERT/UPDATE here just leaves it permanently at that default, which is simpler and
+    // safer than an `ALTER TABLE ... DROP COLUMN` migration for one dead field.
     private static let programColumnNames = [
         "id", "name", "kind", "enabled", "command", "use_shell", "directory", "env_json",
         "group_name", "priority", "notes", "autostart", "autorestart", "exit_codes",
         "start_seconds", "start_retries", "backoff_base", "backoff_max", "storm_window_sec",
-        "storm_max_restarts", "timeout_seconds", "confirm_before_run", "allow_concurrent",
+        "storm_max_restarts", "timeout_seconds", "confirm_before_run",
         "history_limit", "stop_signal", "stop_wait_seconds", "stop_as_group", "kill_as_group",
         "log_path", "log_merge_stderr", "log_stderr_path", "log_max_bytes", "log_backups",
         "log_rotate_policy", "run_total", "created_at", "updated_at"
@@ -453,7 +459,6 @@ public final class Store {
         stmt.bind(i, p.stormMaxRestarts); i += 1
         stmt.bind(i, p.timeoutSeconds); i += 1
         stmt.bind(i, p.confirmBeforeRun ? 1 : 0); i += 1
-        stmt.bind(i, p.allowConcurrent ? 1 : 0); i += 1
         stmt.bind(i, p.historyLimit); i += 1
         stmt.bind(i, p.stopSignal); i += 1
         stmt.bind(i, p.stopWaitSeconds); i += 1
@@ -496,21 +501,20 @@ public final class Store {
             stormMaxRestarts: s.columnInt(19),
             timeoutSeconds: s.columnInt(20),
             confirmBeforeRun: s.columnInt(21) != 0,
-            allowConcurrent: s.columnInt(22) != 0,
-            historyLimit: s.columnInt(23),
-            stopSignal: s.columnString(24),
-            stopWaitSeconds: s.columnInt(25),
-            stopAsGroup: s.columnInt(26) != 0,
-            killAsGroup: s.columnInt(27) != 0,
-            logPath: s.columnStringOptional(28),
-            logMergeStderr: s.columnInt(29) != 0,
-            logStderrPath: s.columnStringOptional(30),
-            logMaxBytes: s.columnInt64(31),
-            logBackups: s.columnInt(32),
-            logRotatePolicy: LogRotatePolicy(rawValue: s.columnString(33)) ?? .size,
-            runTotal: s.columnInt(34),
-            createdAt: Date(timeIntervalSince1970: s.columnDouble(35)),
-            updatedAt: Date(timeIntervalSince1970: s.columnDouble(36))
+            historyLimit: s.columnInt(22),
+            stopSignal: s.columnString(23),
+            stopWaitSeconds: s.columnInt(24),
+            stopAsGroup: s.columnInt(25) != 0,
+            killAsGroup: s.columnInt(26) != 0,
+            logPath: s.columnStringOptional(27),
+            logMergeStderr: s.columnInt(28) != 0,
+            logStderrPath: s.columnStringOptional(29),
+            logMaxBytes: s.columnInt64(30),
+            logBackups: s.columnInt(31),
+            logRotatePolicy: LogRotatePolicy(rawValue: s.columnString(32)) ?? .size,
+            runTotal: s.columnInt(33),
+            createdAt: Date(timeIntervalSince1970: s.columnDouble(34)),
+            updatedAt: Date(timeIntervalSince1970: s.columnDouble(35))
         )
     }
 
