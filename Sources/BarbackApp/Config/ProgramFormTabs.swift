@@ -15,9 +15,14 @@ struct GeneralTab: View {
         Form {
             Section {
                 FormRow(label: "命令", messages: index.messages(.command)) {
-                    TextField("/usr/local/bin/foo --flag", text: $program.command, axis: .vertical)
+                    TextField("", text: $program.command, axis: .vertical)
                         .font(.system(.body, design: .monospaced))
                         .lineLimit(2...6)
+                    if program.command.isEmpty {
+                        Text("例如：/usr/local/bin/foo --flag")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                     Toggle("通过 /bin/sh 执行", isOn: $program.useShell)
                     if let hint {
                         Label(hint.text, systemImage: hint.symbol)
