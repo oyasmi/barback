@@ -1,5 +1,9 @@
 # Barback
 
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+![Platform](https://img.shields.io/badge/platform-macOS%2013%2B%20(Apple%20Silicon)-lightgrey)
+![Swift](https://img.shields.io/badge/Swift-6-orange)
+
 > Manage background services and everyday commands on macOS with supervisor's semantics — all from the menu bar.
 
 [中文](README.md) · English
@@ -70,7 +74,7 @@ Left-click is the most-used surface in the app, so every routine action sits dir
 Requires **macOS 13+ on Apple Silicon** (`ARCHS="arm64 x86_64" Scripts/build.sh` produces a Universal 2 build) and the Xcode command line tools (Swift 6).
 
 ```bash
-git clone <repo> barback && cd barback
+git clone https://github.com/oyasmi/barback.git && cd barback
 make                             # builds dist/Barback.app and dist/Barback.dmg
 cp -R dist/Barback.app /Applications/
 ```

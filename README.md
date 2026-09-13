@@ -1,5 +1,9 @@
 # Barback
 
+[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+![Platform](https://img.shields.io/badge/platform-macOS%2013%2B%20(Apple%20Silicon)-lightgrey)
+![Swift](https://img.shields.io/badge/Swift-6-orange)
+
 > 用 supervisor 的语义管理 macOS 上的后台服务与常用命令，全部操作入口在状态栏。
 
 中文 · [English](README.en.md)
@@ -68,7 +72,7 @@ Barback 是一个常驻状态栏的进程管理器：把你长年跑在 Mac 上�
 要求 **macOS 13+ · Apple Silicon**（`ARCHS="arm64 x86_64" Scripts/build.sh` 可构建 Universal 2）、Xcode 命令行工具（Swift 6）。
 
 ```bash
-git clone <repo> barback && cd barback
+git clone https://github.com/oyasmi/barback.git && cd barback
 make                             # 构建 dist/Barback.app 与 dist/Barback.dmg
 cp -R dist/Barback.app /Applications/
 ```
