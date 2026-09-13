@@ -1,10 +1,12 @@
 import SwiftUI
 import BarbackCore
 
-/// The detail pane: a fixed identity header, a segmented tab bar, and a sticky commit bar.
-/// Splitting the form into three tabs — 常规 / 生命周期 / 日志 — keeps every page to roughly
-/// one screen instead of the two-to-three-screen scroll the single stacked form produced
-/// (design.md §6.5, CFG-3).
+/// The detail pane: a fixed identity header (with an inline restart-needed advisory when it
+/// applies), one continuous form (`ProgramFormBody`, design.md §6.5), and a sticky commit bar.
+/// The form used to be split into three tabs (常规 / 生命周期 / 日志) to keep each page to
+/// roughly one screen — with fields grouped by tier instead (a handful of always-visible ones,
+/// the rest folded into `AdvancedGroup`s), the base page is short enough on its own that the
+/// tab bar became pure chrome and was removed (CFG-3).
 struct ProgramFormView: View {
     @Binding var program: Program
     let snapshot: ProgramSnapshot?
@@ -15,27 +17,24 @@ struct ProgramFormView: View {
     let onSave: () -> Void
     let onSaveAndRestart: () -> Void
     let onRevert: () -> Void
+    let onRestartNow: () -> Void
     let onShowLog: () -> Void
     let onShowHistory: () -> Void
 
-    @State private var tab: FormTab = .general
-
     private var index: FieldErrorIndex { FieldErrorIndex(errors) }
-    private var tabs: [FormTab] { FormTab.tabs(for: program.kind) }
     private var isRunning: Bool { snapshot?.isActive ?? false }
 
     var body: some View {
         VStack(spacing: 0) {
             header
+            if let text = restartAdvisoryText {
+                restartAdvisory(text: text)
+            }
             Divider()
-            tabBar
-            Divider()
-            content
+            ProgramFormBody(program: $program, index: index, existingGroups: existingGroups)
             Divider()
             footer
         }
-        .onChange(of: program.id) { _ in tab = .general }
-        .onAppear { if !tabs.contains(tab) { tab = .general } }
     }
 
     // MARK: - Header
@@ -48,6 +47,10 @@ struct ProgramFormView: View {
                         .font(.title2).bold()
                         .lineLimit(1)
                     KindBadge(kind: program.kind)
+                    Toggle("启用", isOn: $program.enabled)
+                        .toggleStyle(.switch)
+                        .labelsHidden()
+                        .help(program.enabled ? "点击停用" : "点击启用")
                     if !program.enabled {
                         Text("已停用")
                             .font(.caption)
@@ -90,31 +93,39 @@ struct ProgramFormView: View {
         return parts.isEmpty ? "未运行" : parts.joined(separator: " · ")
     }
 
-    // MARK: - Tabs
+    // MARK: - Restart advisory (CFG-5 / WIN-4: "需重启生效")
 
-    private var tabBar: some View {
-        Picker("", selection: $tab) {
-            ForEach(tabs) { item in
-                Text(index.hasError(in: item) ? "\(item.title) ⚠︎" : item.title).tag(item)
-            }
+    /// Two distinct moments this can apply to, both worth a heads-up in the config window
+    /// itself rather than only after the fact in the status panel:
+    /// - still editing, unsaved, and a field that only takes effect on restart (command/
+    ///   directory/environment/log paths/stop signal/timeout — `Program.runtimeFieldsDiffer`)
+    ///   already differs from what's live;
+    /// - already saved, and `Supervisor` marked this program `needsRestart` because such a
+    ///   field changed while it was running (design.md CFG-5).
+    private var restartAdvisoryText: String? {
+        guard program.kind == .service, isRunning, let snapshot else { return nil }
+        if isDirty, Program.runtimeFieldsDiffer(snapshot.program, program) {
+            return "运行时字段已修改，保存后需要重启才能生效"
         }
-        .pickerStyle(.segmented)
-        .labelsHidden()
-        .padding(.horizontal, 20)
-        .padding(.vertical, 8)
+        if !isDirty, snapshot.needsRestart {
+            return "配置已变更，重启后生效"
+        }
+        return nil
     }
 
-    @ViewBuilder private var content: some View {
-        switch tab {
-        case .general:
-            GeneralTab(program: $program, index: index, existingGroups: existingGroups)
-        case .startup:
-            StartupTab(program: $program, index: index)
-        case .execution:
-            ExecutionTab(program: $program, index: index)
-        case .log:
-            LogTab(program: $program)
+    private func restartAdvisory(text: String) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.circle.fill")
+            Text(text).font(.callout).lineLimit(1)
+            Spacer(minLength: 8)
+            Button("立即重启", action: onRestartNow)
+                .buttonStyle(.plain)
+                .font(.callout.weight(.semibold))
         }
+        .foregroundStyle(StatusStyle.transitioning)
+        .padding(.horizontal, 20)
+        .padding(.vertical, 7)
+        .background(StatusStyle.transitioning.opacity(0.1))
     }
 
     // MARK: - Footer
@@ -182,20 +193,7 @@ private struct StatusPill: View {
         .background(color.opacity(0.12), in: Capsule())
     }
 
-    private var color: Color {
-        if let state = snap.serviceState {
-            switch state {
-            case .running: return .green
-            case .starting, .backoff, .stopping: return .orange
-            case .fatal: return .red
-            case .stopped, .exited: return .secondary
-            }
-        }
-        switch snap.oneshotState {
-        case .running: return .accentColor
-        case .failed, .timeout: return .red
-        case .succeeded: return .green
-        default: return .secondary
-        }
-    }
+    /// Delegates to `StatusStyle`, the single place that maps state → colour/label/symbol, so
+    /// this pill can never quietly drift from what the status panel shows for the same state.
+    private var color: Color { StatusStyle.presentation(for: snap).color }
 }

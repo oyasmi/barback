@@ -10,45 +10,6 @@ enum FormField: Hashable {
     case number(String)
 }
 
-/// The tabs of the detail pane. Which ones are shown depends on `ProgramKind`.
-enum FormTab: String, CaseIterable, Identifiable {
-    case general
-    case startup
-    case execution
-    case log
-
-    var id: String { rawValue }
-
-    var title: String {
-        switch self {
-        case .general: return "常规"
-        case .startup: return "启动与停止"
-        case .execution: return "执行与停止"
-        case .log: return "日志"
-        }
-    }
-
-    static func tabs(for kind: ProgramKind) -> [FormTab] {
-        switch kind {
-        case .service: return [.general, .startup, .log]
-        case .oneshot: return [.general, .execution, .log]
-        }
-    }
-
-    /// Numeric fields owned by this tab, used to badge tabs that contain an error.
-    var fields: [FormField] {
-        switch self {
-        case .general: return [.name, .command, .directory]
-        case .startup:
-            return [.number("startSeconds"), .number("startRetries"), .number("backoffBase"),
-                    .number("backoffMax"), .number("stopWaitSeconds")]
-        case .execution:
-            return [.number("timeoutSeconds"), .number("historyLimit"), .number("stopWaitSeconds")]
-        case .log: return []
-        }
-    }
-}
-
 /// Groups validation errors by the field they belong to.
 struct FieldErrorIndex {
     private var byField: [FormField: [String]] = [:]
@@ -68,8 +29,10 @@ struct FieldErrorIndex {
 
     func messages(_ field: FormField) -> [String] { byField[field] ?? [] }
 
-    func hasError(in tab: FormTab) -> Bool {
-        tab.fields.contains { byField[$0] != nil }
+    /// Whether any of the given fields carries an error — used to force an `AdvancedGroup`
+    /// open even while collapsed, so a validation error can never hide inside a folded section.
+    func hasError(in fields: [FormField]) -> Bool {
+        fields.contains { byField[$0] != nil }
     }
 
     var isEmpty: Bool { byField.isEmpty }
@@ -125,13 +88,21 @@ enum CommandHint {
 
 /// One labelled row plus any validation messages for it. `LabeledContent` keeps the label
 /// column aligned with the plain `Form` rows around it.
+///
+/// `required` marks a field that must not be left empty (shown only while it actually is
+/// empty, so it never lingers as noise once filled in). `changed` marks a field inside an
+/// `AdvancedGroup` whose value differs from `Program`'s built-in default — a small dot ahead
+/// of the label, so a folded-open section shows at a glance which of its rows were actually
+/// touched versus left at the suggested value.
 struct FormRow<Content: View>: View {
     let label: String
+    var required: Bool = false
+    var changed: Bool = false
     var messages: [String] = []
     @ViewBuilder let content: Content
 
     var body: some View {
-        LabeledContent(label) {
+        LabeledContent {
             VStack(alignment: .leading, spacing: 4) {
                 content
                 ForEach(messages, id: \.self) { message in
@@ -140,26 +111,92 @@ struct FormRow<Content: View>: View {
                         .foregroundStyle(.red)
                 }
             }
+        } label: {
+            HStack(spacing: 5) {
+                if changed {
+                    Circle().fill(Color.accentColor).frame(width: 5, height: 5)
+                }
+                Text(label)
+                if required {
+                    Text("必填")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(Color.secondary.opacity(0.15), in: Capsule())
+                }
+            }
         }
     }
 }
 
-/// A section header carrying a "reset this section" affordance, replacing the window-wide
-/// "恢复默认" button that was never implemented.
-struct FormSectionHeader: View {
+/// A collapsible "advanced" block: collapsed by default, its label carrying a one-line
+/// summary of the section's *current effective* settings so the page stays scannable without
+/// expanding anything — reading "默认 · 5 秒存活，最多重试 3 次" tells you as much as opening
+/// the section would. Only the delta from `Program`'s defaults is worth flagging, so a
+/// changed-count badge appears once anything inside differs from that baseline, and a
+/// validation error inside forces the section open regardless of its stored collapse state
+/// (an error can never end up hidden behind a fold).
+///
+/// The "恢复默认值" action lives inside the expanded content, not the (tappable-to-toggle)
+/// label row, so tapping it can never also fire the disclosure toggle.
+struct AdvancedGroup<Content: View>: View {
     let title: String
-    var reset: (() -> Void)?
+    let summary: String
+    let changedCount: Int
+    var hasError: Bool = false
+    @Binding var isExpanded: Bool
+    var onResetAll: (() -> Void)?
+    @ViewBuilder let content: Content
 
     var body: some View {
-        HStack {
-            Text(title)
-            Spacer()
-            if let reset {
-                Button("恢复默认值", action: reset)
-                    .buttonStyle(.link)
-                    .font(.caption)
+        DisclosureGroup(isExpanded: expandedBinding) {
+            VStack(alignment: .leading, spacing: 12) {
+                content
+                if changedCount > 0, let onResetAll {
+                    HStack {
+                        Spacer()
+                        Button("恢复本节默认值", action: onResetAll)
+                            .buttonStyle(.link)
+                            .font(.caption)
+                    }
+                }
             }
+            .padding(.top, 8)
+        } label: {
+            HStack(spacing: 8) {
+                if hasError {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.red)
+                        .imageScale(.small)
+                }
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(title)
+                    Text(summary)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 8)
+                if changedCount > 0 {
+                    Text("已改动 \(changedCount) 项")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.secondary.opacity(0.12), in: Capsule())
+                }
+            }
+            .padding(.vertical, 3)
         }
+    }
+
+    /// A validation error keeps the section open no matter what the user last chose; once
+    /// fixed, collapsing again goes back to reflecting `isExpanded` normally.
+    private var expandedBinding: Binding<Bool> {
+        Binding(
+            get: { isExpanded || hasError },
+            set: { isExpanded = $0 }
+        )
     }
 }
 
@@ -184,4 +221,13 @@ struct DecimalField: View {
             .frame(width: width)
             .multilineTextAlignment(.trailing)
     }
+}
+
+/// Bridges an optional string field to a `TextField`, treating empty input as "unset" so
+/// the stored value stays `nil` rather than becoming an empty string.
+func optionalText(_ binding: Binding<String?>) -> Binding<String> {
+    Binding(
+        get: { binding.wrappedValue ?? "" },
+        set: { binding.wrappedValue = $0.isEmpty ? nil : $0 }
+    )
 }

@@ -3,8 +3,8 @@ import Testing
 @testable import BarbackCore
 
 struct OneshotStateMachineTests {
-    func program(timeoutSeconds: Int = 0, allowConcurrent: Bool = false) -> Program {
-        Program(name: "job", kind: .oneshot, command: "/bin/true", exitCodes: [0], timeoutSeconds: timeoutSeconds, allowConcurrent: allowConcurrent)
+    func program(timeoutSeconds: Int = 0) -> Program {
+        Program(name: "job", kind: .oneshot, command: "/bin/true", exitCodes: [0], timeoutSeconds: timeoutSeconds)
     }
 
     @Test func runTransitionsToRunningAndSpawns() {

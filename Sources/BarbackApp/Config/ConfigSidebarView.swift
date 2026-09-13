@@ -232,20 +232,11 @@ private struct ProgramRow: View {
         return snap.statusText
     }
 
+    /// Delegates to `StatusStyle`, the single place that maps state → colour, rather than
+    /// re-deriving the same switch here — a second copy that only needed to stay accurate is
+    /// exactly the kind of thing that quietly drifts (see also `ProgramFormView.StatusPill`).
     private var dotColor: Color {
         guard snap.program.enabled else { return .secondary.opacity(0.4) }
-        if let state = snap.serviceState {
-            switch state {
-            case .running: return .green
-            case .starting, .backoff, .stopping: return .orange
-            case .fatal: return .red
-            case .stopped, .exited: return .secondary.opacity(0.5)
-            }
-        }
-        switch snap.oneshotState {
-        case .running: return .accentColor
-        case .failed, .timeout: return .red
-        default: return .secondary.opacity(0.5)
-        }
+        return StatusStyle.presentation(for: snap).color
     }
 }

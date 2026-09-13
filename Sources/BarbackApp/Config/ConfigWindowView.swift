@@ -63,6 +63,7 @@ struct ConfigWindowView: View {
                 onSave: { model.save(restart: false) },
                 onSaveAndRestart: { model.save(restart: true) },
                 onRevert: { model.revert() },
+                onRestartNow: { if let id = model.currentId, id > 0 { appState.supervisor.restart(id: id) } },
                 onShowLog: { if let id = model.currentId, id > 0 { onShowLog(id) } },
                 onShowHistory: { if let id = model.currentId, id > 0 { onShowHistory(id) } }
             )
