@@ -4,7 +4,7 @@
 ![Platform](https://img.shields.io/badge/platform-macOS%2013%2B%20(Apple%20Silicon)-lightgrey)
 ![Swift](https://img.shields.io/badge/Swift-6-orange)
 
-> 用 supervisor 的语义管理 macOS 上的后台服务与常用命令，全部操作入口在状态栏。
+> 常驻状态栏的 App，帮你看住 Mac 上跑着的后台程序：挂了自动重启，状态一眼看清，重启和看日志两次点击搞定。
 
 中文 · [English](README.en.md)
 

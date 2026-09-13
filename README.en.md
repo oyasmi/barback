@@ -4,7 +4,7 @@
 ![Platform](https://img.shields.io/badge/platform-macOS%2013%2B%20(Apple%20Silicon)-lightgrey)
 ![Swift](https://img.shields.io/badge/Swift-6-orange)
 
-> Manage background services and everyday commands on macOS with supervisor's semantics — all from the menu bar.
+> A menu-bar app that watches the background programs running on your Mac — restarts them when they crash, shows their status at a glance, and puts restart and logs two clicks away.
 
 [中文](README.md) · English
 
