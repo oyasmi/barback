@@ -12,4 +12,11 @@ DIST_DIR="dist"
 ARCHS="${ARCHS:-arm64}"
 
 APP_BUNDLE="$DIST_DIR/$APP_NAME.app"
-DMG_PATH="$DIST_DIR/$APP_NAME.dmg"
+
+# The .dmg filename (unlike the .app bundle name above) is safe to tag with
+# arch/version since it's just a downloaded artifact, not something macOS
+# surfaces as a persistent label — and doing so avoids clobbering older
+# builds when comparing downloads.
+APP_VERSION=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" Resources/Info.plist)
+DMG_ARCH_TAG="${ARCHS// /-}"
+DMG_PATH="$DIST_DIR/$APP_NAME-$APP_VERSION-$DMG_ARCH_TAG.dmg"

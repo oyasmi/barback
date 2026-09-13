@@ -1,6 +1,6 @@
 .PHONY: all build test run sign clean
 
-# Default: build dist/Barback.app and dist/Barback.dmg (arm64, design.md §8.5).
+# Default: build dist/Barback.app and dist/Barback-<version>-<arch>.dmg (arm64, design.md §8.5).
 all:
 	Scripts/build.sh
 	Scripts/package.sh
@@ -18,7 +18,7 @@ test:
 run:
 	swift run BarbackApp
 
-# Sign (Developer ID + Hardened Runtime) and notarize dist/Barback.dmg.
+# Sign (Developer ID + Hardened Runtime) and notarize the dist/*.dmg.
 # Requires DEVELOPER_ID_APPLICATION to be set in the environment.
 sign: all
 	Scripts/sign-notarize.sh
