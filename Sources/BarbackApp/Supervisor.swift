@@ -32,7 +32,7 @@ public final class Supervisor: @unchecked Sendable {
     /// process no longer matches what is on disk (design.md §5 「运行时字段」). Cleared the
     /// moment a fresh process is spawned with the new config.
     private var needsRestartIds: Set<Int64> = []
-    private var pendingTerminationHandlers: [() -> Void] = []
+    private var pendingTerminationHandlers: [@MainActor @Sendable () -> Void] = []
     private var terminationTimeoutTimer: DispatchSourceTimer?
     private var recoveredCount = 0
     /// Programs mid-delete: the row stays in `programs` (so in-flight events still resolve
@@ -42,7 +42,7 @@ public final class Supervisor: @unchecked Sendable {
     private var logRotationTimer: DispatchSourceTimer?
     private var livenessTimer: DispatchSourceTimer?
 
-    public var onSnapshot: (@Sendable (SupervisorSnapshot) -> Void)?
+    public var onSnapshot: (@MainActor @Sendable (SupervisorSnapshot) -> Void)?
     public var onNotify: (@Sendable (NotificationKind) -> Void)?
     public var onOneshotNotify: (@Sendable (Program, OneshotState, TimeInterval) -> Void)?
 
@@ -237,7 +237,7 @@ public final class Supervisor: @unchecked Sendable {
             }
         }
     }
-    public func stopAll(completion: (() -> Void)? = nil) {
+    public func stopAll(completion: (@Sendable () -> Void)? = nil) {
         queue.async { [self] in
             for program in programs.values.filter({ $0.kind == .service }).sorted(by: { $0.priority > $1.priority }) {
                 if serviceRuntimes[program.id]?.state.isActive == true {
@@ -835,7 +835,7 @@ public final class Supervisor: @unchecked Sendable {
         }.sorted { $0.program.priority < $1.program.priority }
         let snapshot = SupervisorSnapshot(programs: snapshotPrograms, recoveredCount: recoveredCount)
         let callback = onSnapshot
-        DispatchQueue.main.async { callback?(snapshot) }
+        DispatchQueue.main.async { MainActor.assumeIsolated { callback?(snapshot) } }
     }
 
     // MARK: - Sleep/wake reconciliation (design.md §3.8)
@@ -924,8 +924,9 @@ public final class Supervisor: @unchecked Sendable {
             candidates.append(RotationCandidate(programId: id, out: paths.out, err: paths.err, maxBytes: program.logMaxBytes, backups: program.logBackups))
         }
         guard !candidates.isEmpty else { return }
+        let candidatesToRotate = candidates
         DispatchQueue.global(qos: .utility).async { [weak self] in
-            for candidate in candidates {
+            for candidate in candidatesToRotate {
                 var rotated = false
                 var failure: Error?
                 do {
@@ -941,19 +942,21 @@ public final class Supervisor: @unchecked Sendable {
                     }
                 }
                 guard rotated || failure != nil else { continue }
-                self?.queue.async {
-                    guard let self else { return }
-                    if rotated {
+                let didRotate = rotated
+                let rotationFailure = failure
+                guard let self else { return }
+                self.queue.async {
+                    if didRotate {
                         try? self.store.insertEvent(EventRecord(level: .info, programId: candidate.programId, type: .logRotated))
                     }
-                    if let failure {
+                    if let rotationFailure {
                         // design.md §4 promises "写失败不停止业务进程" for a full ENOSPC — the
                         // child's own writes go straight to its fd with Barback never in that
                         // path, so this periodic rotation check (which does touch the file) is
                         // the earliest point anything here can actually notice the disk is out
                         // of room, rather than staying silent the way a bare `try?` did before
                         // (ex-F43, `logWriteFailed` previously defined but never used).
-                        let json = (try? JSONSerialization.data(withJSONObject: ["error": self.describe(failure)])).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+                        let json = (try? JSONSerialization.data(withJSONObject: ["error": self.describe(rotationFailure)])).flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
                         try? self.store.insertEvent(EventRecord(level: .error, programId: candidate.programId, type: .logWriteFailed, detailJSON: json))
                     }
                 }
@@ -963,7 +966,7 @@ public final class Supervisor: @unchecked Sendable {
 
     // MARK: - Termination (design.md §3.6)
 
-    public func stopAllForTermination(completion: @escaping @Sendable () -> Void) {
+    public func stopAllForTermination(completion: @escaping @MainActor @Sendable () -> Void) {
         queue.async { [self] in
             pendingTerminationHandlers.append(completion)
             var anyActive = false
@@ -1041,7 +1044,7 @@ public final class Supervisor: @unchecked Sendable {
         terminationTimeoutTimer = nil
         let handlers = pendingTerminationHandlers
         pendingTerminationHandlers.removeAll()
-        for h in handlers { DispatchQueue.main.async(execute: h) }
+        for h in handlers { DispatchQueue.main.async { MainActor.assumeIsolated { h() } } }
     }
 
     public func hasActiveOneshots(completion: @escaping @Sendable (Bool) -> Void) {
