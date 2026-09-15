@@ -194,7 +194,7 @@ struct ProgramRowView: View {
         case .running, .starting, .stopping:
             if let pid = snap.pid { parts.append("PID \(pid)") }
             if let startedAt = snap.startedAt {
-                parts.append("已运行 \(StatusStyle.uptimeMinutes(model.now.timeIntervalSince(startedAt)))")
+                parts.append("up \(StatusStyle.uptimeShort(model.now.timeIntervalSince(startedAt)))")
             }
             if let sample = model.sample(for: snap) {
                 parts.append("CPU \(StatusStyle.cpu(sample.cpuPercent))")
@@ -235,7 +235,7 @@ struct ProgramRowView: View {
         if snap.oneshotState == .running {
             if let pid = snap.pid { parts.append("PID \(pid)") }
             if let run = snap.lastRun {
-                parts.append("已执行 \(StatusStyle.uptimeMinutes(model.now.timeIntervalSince(run.startedAt)))")
+                parts.append("run \(StatusStyle.uptimeShort(model.now.timeIntervalSince(run.startedAt)))")
             }
             if let sample = model.sample(for: snap) {
                 parts.append("CPU \(StatusStyle.cpu(sample.cpuPercent))")

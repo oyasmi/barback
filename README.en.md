@@ -47,7 +47,7 @@ Left-click is the most-used surface in the app, so every routine action sits dir
 ├────────────────────────────────────────────────────────────┤
 │ Services 4                                                 │
 │ ▎● nslocal        running          [■ Stop ] [↻] [📄] [⌄] │
-│    PID 4821 · up 2d 3h · CPU 0.3% · 48.0 MB                │
+│    PID 4821 · up 2d3h · CPU 0.3% · 48.0 MB                 │
 │ ▎◑ api-server     retry 2/3        [■ Stop ] [↻] [📄] [⌄] │
 │    retrying in 12s · last exit today 22:26 · code 1        │
 │    ▁▁▁▁▁▁▁▁▃▃▃▃▃▃▃▃▃▃▃▃                                   │

@@ -121,18 +121,20 @@ enum StatusStyle {
         return "\(seconds) 秒"
     }
 
-    /// Same as `uptime`, but rounded to whole minutes — for the still-running readout, which
-    /// is only refreshed once per panel open and so should never show a stale-looking seconds
-    /// digit.
-    static func uptimeMinutes(_ interval: TimeInterval) -> String {
+    /// Elapsed time for a still-running program, in the compact `2min` / `1h3min` shape the
+    /// detail line prefixes with `up ` / `run `. Deliberately English and unspaced: it sits
+    /// between `PID 1234` and `CPU 3.2%`, where a "已运行 1 小时 3 分" reads as an intrusion.
+    /// Rounded to whole minutes — the figure is only refreshed when the panel opens, so a
+    /// live-looking seconds digit would be stale the moment it is drawn.
+    static func uptimeShort(_ interval: TimeInterval) -> String {
         let total = max(0, Int(interval))
         let days = total / 86_400
         let hours = (total % 86_400) / 3600
         let minutes = (total % 3600) / 60
-        if days > 0 { return hours > 0 ? "\(days) 天 \(hours) 小时" : "\(days) 天" }
-        if hours > 0 { return minutes > 0 ? "\(hours) 小时 \(minutes) 分" : "\(hours) 小时" }
-        if minutes > 0 { return "\(minutes) 分钟" }
-        return "不到 1 分钟"
+        if days > 0 { return hours > 0 ? "\(days)d\(hours)h" : "\(days)d" }
+        if hours > 0 { return minutes > 0 ? "\(hours)h\(minutes)min" : "\(hours)h" }
+        if minutes > 0 { return "\(minutes)min" }
+        return "<1min"
     }
 
     /// Run durations, which are usually seconds rather than days.
