@@ -32,6 +32,12 @@ final class WindowController: NSObject, NSWindowDelegate {
         return window
     }
 
+    func showAboutWindow() {
+        NSApp.activate(ignoringOtherApps: true)
+        // AppKit reads the icon, version, build and copyright from the app bundle.
+        NSApp.orderFrontStandardAboutPanel(nil)
+    }
+
     func showConfigWindow(selecting id: Int64? = nil) {
         if let window = configWindow {
             if let id { configModel?.attempt(.select(id)) }
@@ -172,6 +178,7 @@ final class WindowController: NSObject, NSWindowDelegate {
     /// Closing the config window with an unsaved draft asks first (design.md §6.5), the same
     /// gate the in-window selection change goes through.
     func windowShouldClose(_ sender: NSWindow) -> Bool {
+        if sender === configWindow, configModel?.isSaving == true { return false }
         guard sender === configWindow, let model = configModel, model.isDirty else { return true }
         let alert = NSAlert()
         alert.messageText = "「\(model.draft?.name ?? "")」有未保存的更改"

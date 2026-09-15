@@ -1,14 +1,15 @@
 import SwiftUI
 import BarbackCore
 
-/// The detail pane: a fixed identity header (with an inline restart-needed advisory when it
-/// applies), one continuous form (`ProgramFormBody`, design.md §6.5), and a sticky commit bar.
-/// The form used to be split into three tabs (常规 / 生命周期 / 日志) to keep each page to
-/// roughly one screen — with fields grouped by tier instead (a handful of always-visible ones,
-/// the rest folded into `AdvancedGroup`s), the base page is short enough on its own that the
-/// tab bar became pure chrome and was removed (CFG-3).
+/// Stable identity, a task-oriented editor, and one commit bar for save/restart actions.
 struct ProgramFormView: View {
     @Binding var program: Program
+    @Binding var environmentText: String
+    @Binding var expandedSections: [Int64: Set<String>]
+    @Binding var scrollAnchors: [Int64: String]
+    let environmentErrors: [String]
+    let validationRequest: Int
+    let isSaving: Bool
     let snapshot: ProgramSnapshot?
     let errors: [ProgramValidationError]
     let isDirty: Bool
@@ -20,9 +21,14 @@ struct ProgramFormView: View {
     let onRestartNow: () -> Void
     let onShowLog: () -> Void
     let onShowHistory: () -> Void
+    let onDuplicate: () -> Void
+    let onDelete: () -> Void
 
-    private var index: FieldErrorIndex { FieldErrorIndex(errors) }
-    private var isRunning: Bool { snapshot?.isActive ?? false }
+    private var index: FieldErrorIndex { FieldErrorIndex(errors, environmentErrors: environmentErrors, program: program) }
+    private var needsRestart: Bool {
+        guard program.kind == .service, let snapshot, snapshot.isActive else { return false }
+        return snapshot.needsRestart || (isDirty && Program.runtimeFieldsDiffer(snapshot.program, program))
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -31,50 +37,62 @@ struct ProgramFormView: View {
                 restartAdvisory(text: text)
             }
             Divider()
-            ProgramFormBody(program: $program, index: index, existingGroups: existingGroups)
+            ProgramFormBody(
+                program: $program,
+                environmentText: $environmentText,
+                expandedSections: $expandedSections,
+                scrollAnchors: $scrollAnchors,
+                index: index,
+                validationRequest: validationRequest,
+                existingGroups: existingGroups
+            )
             Divider()
             footer
         }
+        .frame(minWidth: 540)
+        .disabled(isSaving)
     }
 
     // MARK: - Header
 
     private var header: some View {
-        HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 8) {
-                    Text(program.name.isEmpty ? "未命名" : program.name)
-                        .font(.title2).bold()
-                        .lineLimit(1)
-                    KindBadge(kind: program.kind)
-                    Toggle("启用", isOn: $program.enabled)
-                        .toggleStyle(.switch)
-                        .labelsHidden()
-                        .help(program.enabled ? "点击停用" : "点击启用")
-                    if !program.enabled {
-                        Text("已停用")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 12) {
+                Text(program.name.isEmpty ? "未命名" : program.name)
+                    .font(.title2.weight(.semibold))
+                    .lineLimit(1)
+                    .help(program.name)
+                Spacer(minLength: 8)
+                if !isNew {
+                    Button("日志", action: onShowLog)
+                    if program.kind == .oneshot { Button("历史", action: onShowHistory) }
+                    Menu {
+                        Button("复制程序", action: onDuplicate)
+                            .keyboardShortcut("d", modifiers: .command)
+                        Button("删除程序…", role: .destructive, action: onDelete)
+                            .keyboardShortcut(.delete, modifiers: .command)
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
                     }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                    .help("程序操作")
+                    .accessibilityLabel("程序操作")
                 }
-                Text(subtitle)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
             }
-            Spacer(minLength: 8)
-            if let snapshot {
-                StatusPill(snap: snapshot)
+            HStack(spacing: 8) {
+                Text(program.kind == .service ? "服务" : "一次性命令")
+                if let snapshot { StatusPill(snap: snapshot) }
+                Text(subtitle).lineLimit(1).help(subtitle)
             }
-            Button("日志", action: onShowLog)
-                .disabled(isNew)
-            if program.kind == .oneshot {
-                Button("历史", action: onShowHistory)
-                    .disabled(isNew)
-            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
         }
         .controlSize(.small)
-        .padding(.horizontal, 20)
-        .padding(.vertical, 12)
+        .padding(.horizontal, 24)
+        .padding(.vertical, 16)
+        .frame(maxWidth: 820)
+        .frame(maxWidth: .infinity)
     }
 
     private var subtitle: String {
@@ -90,69 +108,69 @@ struct ProgramFormView: View {
             parts.append("上次退出码 \(code)")
         }
         if let group = program.groupName, !group.isEmpty { parts.append("分组 \(group)") }
-        return parts.isEmpty ? "未运行" : parts.joined(separator: " · ")
+        return parts.joined(separator: " · ")
     }
 
-    // MARK: - Restart advisory (CFG-5 / WIN-4: "需重启生效")
+    // MARK: - Save / apply feedback
 
-    /// Two distinct moments this can apply to, both worth a heads-up in the config window
-    /// itself rather than only after the fact in the status panel:
-    /// - still editing, unsaved, and a field that only takes effect on restart (command/
-    ///   directory/environment/log paths/stop signal/timeout — `Program.runtimeFieldsDiffer`)
-    ///   already differs from what's live;
-    /// - already saved, and `Supervisor` marked this program `needsRestart` because such a
-    ///   field changed while it was running (design.md CFG-5).
     private var restartAdvisoryText: String? {
-        guard program.kind == .service, isRunning, let snapshot else { return nil }
-        if isDirty, Program.runtimeFieldsDiffer(snapshot.program, program) {
-            return "运行时字段已修改，保存后需要重启才能生效"
-        }
-        if !isDirty, snapshot.needsRestart {
-            return "配置已变更，重启后生效"
-        }
-        return nil
+        guard needsRestart else { return nil }
+        return isDirty ? "这些更改需要重启后生效。可先保存，或保存并重启。" : "配置已保存，重启后生效。"
     }
 
     private func restartAdvisory(text: String) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: "exclamationmark.circle.fill")
-            Text(text).font(.callout).lineLimit(1)
-            Spacer(minLength: 8)
-            Button("立即重启", action: onRestartNow)
-                .buttonStyle(.plain)
-                .font(.callout.weight(.semibold))
-        }
-        .foregroundStyle(StatusStyle.transitioning)
-        .padding(.horizontal, 20)
-        .padding(.vertical, 7)
-        .background(StatusStyle.transitioning.opacity(0.1))
+        Label(text, systemImage: "info.circle")
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 10)
+            .frame(maxWidth: 820)
+            .frame(maxWidth: .infinity)
+            .background(Color.accentColor.opacity(0.06))
     }
 
-    // MARK: - Footer
-
     private var footer: some View {
-        HStack(spacing: 10) {
-            if isDirty {
-                Circle().fill(Color.accentColor).frame(width: 7, height: 7)
-                Text(isNew ? "尚未保存" : "有未保存的更改")
+        HStack(spacing: 8) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(commitStatus)
                     .font(.callout)
                     .foregroundStyle(.secondary)
+                if index.count > 0 {
+                    Label("有 \(index.count) 项需要修正", systemImage: "exclamationmark.circle.fill")
+                        .font(.caption).foregroundStyle(.red)
+                }
             }
-            Spacer()
-            Button("撤销", action: onRevert)
-                .disabled(!isDirty)
-                .keyboardShortcut(.cancelAction)
-            if isRunning {
-                Button("保存并重启", action: onSaveAndRestart)
+            Spacer(minLength: 8)
+            if isDirty {
+                Button("放弃更改", action: onRevert)
+                    .keyboardShortcut(.cancelAction)
+            }
+            if needsRestart {
+                if isDirty {
+                    Button("保存并重启", action: onSaveAndRestart)
+                } else {
+                    Button("立即重启", action: onRestartNow)
+                }
             }
             Button("保存", action: onSave)
                 .buttonStyle(.borderedProminent)
                 .keyboardShortcut("s", modifiers: .command)
                 .disabled(!isDirty)
         }
-        .padding(.horizontal, 20)
+        .controlSize(.small)
+        .padding(.horizontal, 24)
         .padding(.vertical, 12)
+        .frame(maxWidth: 820)
+        .frame(maxWidth: .infinity)
         .background(.bar)
+    }
+
+    private var commitStatus: String {
+        if isSaving { return "正在保存…" }
+        if isNew { return "尚未保存" }
+        if isDirty { return "有未保存的更改" }
+        return needsRestart ? "已保存 · 待重启" : "已保存"
     }
 
     static func uptime(since date: Date) -> String {
@@ -167,26 +185,13 @@ struct ProgramFormView: View {
     }
 }
 
-private struct KindBadge: View {
-    let kind: ProgramKind
-
-    var body: some View {
-        Text(kind == .service ? "服务" : "一次性命令")
-            .font(.caption2)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(Color.secondary.opacity(0.15), in: Capsule())
-            .foregroundStyle(.secondary)
-    }
-}
-
 private struct StatusPill: View {
     let snap: ProgramSnapshot
 
     var body: some View {
         HStack(spacing: 5) {
             Circle().fill(color).frame(width: 7, height: 7)
-            Text(snap.statusText).font(.callout)
+            Text(snap.statusText).font(.caption)
         }
         .padding(.horizontal, 9)
         .padding(.vertical, 4)

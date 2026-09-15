@@ -1,8 +1,7 @@
 import SwiftUI
 import BarbackCore
 
-/// The sole configuration entry point (CFG-2). Toolbar for the primary actions, searchable
-/// program list on the left, tabbed form on the right (design.md §6.5).
+/// Program collection controls on the left, draft editing and commit actions on the right.
 struct ConfigWindowView: View {
     @ObservedObject var model: ConfigWindowModel
     @ObservedObject var appState: AppState
@@ -19,12 +18,11 @@ struct ConfigWindowView: View {
                 onShowLog: onShowLog,
                 onShowHistory: onShowHistory
             )
-            .navigationSplitViewColumnWidth(min: 200, ideal: 240, max: 340)
-            .searchable(text: $model.searchText, placement: .sidebar, prompt: "搜索名称或命令")
+            .navigationSplitViewColumnWidth(min: 200, ideal: 224, max: 280)
         } detail: {
             detail
         }
-        .toolbar { toolbarContent }
+        .disabled(model.isSaving)
         .confirmationDialog(
             "有未保存的更改",
             isPresented: unsavedPrompt,
@@ -55,6 +53,12 @@ struct ConfigWindowView: View {
         if model.draft != nil {
             ProgramFormView(
                 program: model.draftBinding,
+                environmentText: $model.environmentText,
+                expandedSections: $model.expandedSections,
+                scrollAnchors: $model.scrollAnchors,
+                environmentErrors: model.environmentErrors,
+                validationRequest: model.validationRequest,
+                isSaving: model.isSaving,
                 snapshot: model.selectedSnapshot,
                 errors: model.visibleErrors,
                 isDirty: model.isDirty,
@@ -65,7 +69,9 @@ struct ConfigWindowView: View {
                 onRevert: { model.revert() },
                 onRestartNow: { if let id = model.currentId, id > 0 { appState.supervisor.restart(id: id) } },
                 onShowLog: { if let id = model.currentId, id > 0 { onShowLog(id) } },
-                onShowHistory: { if let id = model.currentId, id > 0 { onShowHistory(id) } }
+                onShowHistory: { if let id = model.currentId, id > 0 { onShowHistory(id) } },
+                onDuplicate: { if let id = model.currentId, id > 0 { model.attempt(.duplicate(id)) } },
+                onDelete: { if let id = model.currentId, id > 0 { model.requestDelete(id: id) } }
             )
         } else if appState.snapshot.programs.isEmpty {
             ConfigEmptyStateView(
@@ -90,59 +96,6 @@ struct ConfigWindowView: View {
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    // MARK: - Toolbar
-
-    @ToolbarContentBuilder private var toolbarContent: some ToolbarContent {
-        ToolbarItem(placement: .navigation) {
-            Menu {
-                Button("新建服务") { model.attempt(.create(.service)) }
-                    .keyboardShortcut("n", modifiers: .command)
-                Button("新建一次性命令") { model.attempt(.create(.oneshot)) }
-                    .keyboardShortcut("n", modifiers: [.command, .shift])
-                Divider()
-                Button("从 supervisor 粘贴导入…") { onShowImport() }
-            } label: {
-                Label("新建", systemImage: "plus")
-            }
-            .labelStyle(.titleAndIcon)
-            .help("新建服务或一次性命令")
-        }
-
-        ToolbarItemGroup(placement: .navigation) {
-            Button {
-                if let id = model.currentId, id > 0 { model.attempt(.duplicate(id)) }
-            } label: {
-                Label("复制", systemImage: "plus.square.on.square")
-            }
-            .disabled(model.selectedSnapshot == nil)
-            .keyboardShortcut("d", modifiers: .command)
-            .help("复制所选程序")
-
-            Button {
-                if let id = model.currentId, id > 0 { model.requestDelete(id: id) }
-            } label: {
-                Label("删除", systemImage: "trash")
-            }
-            .disabled(model.selectedSnapshot == nil)
-            .keyboardShortcut(.delete, modifiers: .command)
-            .help("删除所选程序")
-        }
-
-        ToolbarItem(placement: .primaryAction) {
-            Menu {
-                Picker("分组方式", selection: $model.sortMode) {
-                    ForEach(ConfigSortMode.allCases) { mode in
-                        Text(mode.title).tag(mode)
-                    }
-                }
-                .pickerStyle(.inline)
-            } label: {
-                Label("分组方式", systemImage: "arrow.up.arrow.down")
-            }
-            .help("更改列表分组方式")
-        }
     }
 
     // MARK: - Alert plumbing

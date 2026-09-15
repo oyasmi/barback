@@ -8,6 +8,8 @@ enum FormField: Hashable {
     case command
     case directory
     case logPath
+    case stderrPath
+    case environment
     case number(String)
 }
 
@@ -15,19 +17,33 @@ enum FormField: Hashable {
 struct FieldErrorIndex {
     private var byField: [FormField: [String]] = [:]
 
-    init(_ errors: [ProgramValidationError]) {
+    init(_ errors: [ProgramValidationError], environmentErrors: [String] = [], program: Program? = nil) {
         for error in errors {
             let field: FormField
             switch error {
             case .invalidName, .duplicateName: field = .name
             case .emptyCommand, .executableNotFound: field = .command
             case .directoryNotFound: field = .directory
-            case .invalidLogPath: field = .logPath
+            case .invalidLogPath(let path): field = path == program?.logStderrPath && path != program?.logPath ? .stderrPath : .logPath
             case .invalidNumber(let name): field = .number(name)
             }
             byField[field, default: []].append(error.errorDescription ?? "")
         }
+        if !environmentErrors.isEmpty { byField[.environment] = environmentErrors }
     }
+
+    var firstField: FormField? {
+        let order: [FormField] = [
+            .name, .command, .directory, .environment, .number("timeoutSeconds"),
+            .number("startSeconds"), .number("startRetries"), .number("backoffBase"),
+            .number("backoffMax"), .number("stormWindowSec"), .number("stormMaxRestarts"),
+            .number("stopWaitSeconds"), .logPath, .stderrPath, .number("logMaxBytes"),
+            .number("logBackups"), .number("historyLimit")
+        ]
+        return order.first { byField[$0] != nil }
+    }
+
+    var count: Int { byField.count }
 
     func messages(_ field: FormField) -> [String] { byField[field] ?? [] }
 
@@ -88,14 +104,7 @@ enum CommandHint {
     }
 }
 
-/// One labelled row plus any validation messages for it. `LabeledContent` keeps the label
-/// column aligned with the plain `Form` rows around it.
-///
-/// `required` marks a field that must not be left empty (shown only while it actually is
-/// empty, so it never lingers as noise once filled in). `changed` marks a field inside an
-/// `AdvancedGroup` whose value differs from `Program`'s built-in default — a small dot ahead
-/// of the label, so a folded-open section shows at a glance which of its rows were actually
-/// touched versus left at the suggested value.
+/// Shared label width gives short fields and advanced rows the same leading edge.
 struct FormRow<Content: View>: View {
     let label: String
     var required: Bool = false
@@ -104,31 +113,74 @@ struct FormRow<Content: View>: View {
     @ViewBuilder let content: Content
 
     var body: some View {
-        LabeledContent {
-            VStack(alignment: .leading, spacing: 4) {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 4) {
+                    Text(label)
+                    if changed {
+                        Circle().fill(Color.secondary).frame(width: 4, height: 4)
+                            .help("此项使用自定义值")
+                    }
+                }
+                if required { Text("必填").font(.caption2).foregroundStyle(.secondary) }
+            }
+            .frame(width: 92, alignment: .leading)
+            VStack(alignment: .leading, spacing: 5) {
                 content
                 ForEach(messages, id: \.self) { message in
                     Label(message, systemImage: "exclamationmark.circle.fill")
-                        .font(.caption)
-                        .foregroundStyle(.red)
+                        .font(.caption).foregroundStyle(.red)
                 }
             }
-        } label: {
-            HStack(spacing: 5) {
-                if changed {
-                    Circle().fill(Color.accentColor).frame(width: 5, height: 5)
-                }
-                Text(label)
-                if required {
-                    Text("必填")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 1)
-                        .background(Color.secondary.opacity(0.15), in: Capsule())
-                }
-            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
+    }
+}
+
+struct ConfigSection<Content: View>: View {
+    var title: String? = nil
+    @ViewBuilder let content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let title {
+                Text(title).font(.headline)
+            }
+            VStack(alignment: .leading, spacing: 14) { content }
+                .padding(16)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
+                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.primary.opacity(0.06)))
+        }
+    }
+}
+
+@MainActor
+final class ConfigFieldFocusState: ObservableObject {
+    @Published private(set) var request = 0
+    private(set) var field: FormField?
+
+    func focus(_ field: FormField) {
+        self.field = field
+        request += 1
+    }
+}
+
+private struct ConfigFieldFocusModifier: ViewModifier {
+    let field: FormField
+    @EnvironmentObject private var focus: ConfigFieldFocusState
+    @FocusState private var isFocused: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .focused($isFocused)
+            .onChange(of: focus.request) { _ in isFocused = focus.field == field }
+    }
+}
+
+extension View {
+    func configField(_ field: FormField) -> some View {
+        modifier(ConfigFieldFocusModifier(field: field))
     }
 }
 
@@ -180,7 +232,7 @@ struct AdvancedGroup<Content: View>: View {
                 }
                 Spacer(minLength: 8)
                 if changedCount > 0 {
-                    Text("已改动 \(changedCount) 项")
+                    Text("自定义 \(changedCount) 项")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                         .padding(.horizontal, 6)
@@ -190,6 +242,8 @@ struct AdvancedGroup<Content: View>: View {
             }
             .padding(.vertical, 3)
         }
+        .onAppear { if hasError { isExpanded = true } }
+        .onChange(of: hasError) { value in if value { isExpanded = true } }
     }
 
     /// A validation error keeps the section open no matter what the user last chose; once
@@ -197,7 +251,7 @@ struct AdvancedGroup<Content: View>: View {
     private var expandedBinding: Binding<Bool> {
         Binding(
             get: { isExpanded || hasError },
-            set: { isExpanded = $0 }
+            set: { if !hasError { isExpanded = $0 } }
         )
     }
 }
@@ -205,7 +259,7 @@ struct AdvancedGroup<Content: View>: View {
 /// Fixed-width numeric entry so number fields don't stretch across a wide window.
 struct IntField<Value: BinaryInteger>: View {
     @Binding var value: Value
-    var width: CGFloat = 90
+    var width: CGFloat = 68
 
     var body: some View {
         TextField("", value: $value, format: IntegerFormatStyle<Value>())
@@ -216,7 +270,7 @@ struct IntField<Value: BinaryInteger>: View {
 
 struct DecimalField: View {
     @Binding var value: Double
-    var width: CGFloat = 90
+    var width: CGFloat = 68
 
     var body: some View {
         TextField("", value: $value, format: .number)
@@ -232,4 +286,26 @@ func optionalText(_ binding: Binding<String?>) -> Binding<String> {
         get: { binding.wrappedValue ?? "" },
         set: { binding.wrappedValue = $0.isEmpty ? nil : $0 }
     )
+}
+
+/// Remember the section at the top of each program's viewport (macOS 13 compatible).
+struct ConfigScrollPositions: PreferenceKey {
+    static let defaultValue: [String: CGFloat] = [:]
+
+    static func reduce(value: inout [String: CGFloat], nextValue: () -> [String: CGFloat]) {
+        value.merge(nextValue(), uniquingKeysWith: { _, latest in latest })
+    }
+}
+
+extension View {
+    func configScrollAnchor(_ name: String) -> some View {
+        id(name).background {
+            GeometryReader { geometry in
+                Color.clear.preference(
+                    key: ConfigScrollPositions.self,
+                    value: [name: geometry.frame(in: .named("configFormScroll")).minY]
+                )
+            }
+        }
+    }
 }

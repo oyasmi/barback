@@ -42,6 +42,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         supervisor = Supervisor(store: store)
         appState = AppState(supervisor: supervisor, store: store)
         windowController = WindowController(appState: appState)
+        NSApp.mainMenu = AppMenuBuilder.buildMainMenu(appState: appState, windowController: windowController)
         statusItemController = StatusItemController(appState: appState)
         statusItemController.windowController = windowController
 

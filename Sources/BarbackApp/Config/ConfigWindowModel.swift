@@ -53,6 +53,20 @@ final class ConfigWindowModel: ObservableObject {
     @Published private(set) var isDirty = false
     @Published private(set) var errors: [ProgramValidationError] = []
     @Published private(set) var hasAttemptedSave = false
+    @Published private(set) var isSaving = false
+    @Published private(set) var validationRequest = 0
+    @Published var environmentText = "" {
+        didSet {
+            guard !isLoadingDraft else { return }
+            let result = EnvironmentText.parse(environmentText)
+            if result.errors.isEmpty, draft?.environment != result.variables {
+                draft?.environment = result.variables
+            }
+            draftChanged()
+        }
+    }
+    @Published var expandedSections: [Int64: Set<String>] = [:]
+    @Published var scrollAnchors: [Int64: String] = [:]
     @Published var saveFailure: String?
     @Published var pendingNavigation: ConfigNavigation?
     @Published var deleteTarget: ProgramSnapshot?
@@ -65,20 +79,28 @@ final class ConfigWindowModel: ObservableObject {
     /// The last non-nil draft, kept only to feed `draftBinding` — see the comment there.
     private var lastDraft: Program?
     private var validationTask: Task<Void, Never>?
+    private var baselineEnvironmentText = ""
+    private var isLoadingDraft = false
+    private static let selectionKey = "config.lastSelectedProgram"
 
     /// Set by `WindowController` to drive the title-bar edited dot.
     var onDirtyChange: ((Bool) -> Void)?
 
     init(appState: AppState, initialSelection: Int64?) {
         self.appState = appState
-        if let initialSelection {
-            select(id: initialSelection)
-        }
+        let remembered = (UserDefaults.standard.object(forKey: Self.selectionKey) as? NSNumber)?.int64Value
+        let available = appState.snapshot.programs.map(\.id)
+        let selection = initialSelection ?? remembered.flatMap { available.contains($0) ? $0 : nil } ?? available.first
+        select(id: selection)
     }
 
     // MARK: - Derived state
 
     var isCreatingNew: Bool { currentId == Self.newDraftId }
+
+    var environmentErrors: [String] {
+        hasAttemptedSave ? EnvironmentText.parse(environmentText).errors : []
+    }
 
     /// A non-trapping `Binding` to the draft, for the detail form.
     ///
@@ -117,6 +139,7 @@ final class ConfigWindowModel: ObservableObject {
     // MARK: - Navigation, gated on unsaved changes
 
     func attempt(_ navigation: ConfigNavigation) {
+        guard !isSaving else { return }
         if case .select(let id) = navigation, id == currentId { return }
         guard isDirty else {
             perform(navigation)
@@ -160,6 +183,8 @@ final class ConfigWindowModel: ObservableObject {
             setDraft(nil, baseline: nil)
             return
         }
+        UserDefaults.standard.set(id, forKey: Self.selectionKey)
+        setDraft(nil, baseline: nil)
         appState.supervisor.snapshotProgram(id: id) { program in
             Task { @MainActor in
                 // A slow snapshot must not clobber a selection the user has moved on from.
@@ -171,6 +196,8 @@ final class ConfigWindowModel: ObservableObject {
 
     private func createNew(kind: ProgramKind) {
         currentId = Self.newDraftId
+        expandedSections[0] = []
+        scrollAnchors[0] = nil
         errors = []
         saveFailure = nil
         hasAttemptedSave = false
@@ -191,6 +218,8 @@ final class ConfigWindowModel: ObservableObject {
         copy.id = 0
         copy.name = uniqueName(base: source.name + "-copy")
         currentId = Self.newDraftId
+        expandedSections[0] = []
+        scrollAnchors[0] = nil
         errors = []
         saveFailure = nil
         hasAttemptedSave = false
@@ -213,27 +242,43 @@ final class ConfigWindowModel: ObservableObject {
     }
 
     func save(restart: Bool, completion: (@Sendable @MainActor (Bool) -> Void)? = nil) {
+        guard !isSaving else { completion?(false); return }
         guard let draft else {
             completion?(true)
             return
         }
         hasAttemptedSave = true
+        validationTask?.cancel()
+        validateNow()
+        guard environmentErrors.isEmpty else {
+            validationRequest += 1
+            completion?(false)
+            return
+        }
+        isSaving = true
         let wasActive = appState.program(id: draft.id)?.isActive ?? false
         appState.supervisor.validateAndSave(draft) { result in
             Task { @MainActor in
+                self.isSaving = false
                 switch result {
                 case .success(let saved):
                     self.currentId = saved.id
+                    UserDefaults.standard.set(saved.id, forKey: Self.selectionKey)
+                    if draft.id == 0 {
+                        self.expandedSections[saved.id] = self.expandedSections[0]
+                        self.scrollAnchors[saved.id] = self.scrollAnchors[0]
+                    }
                     self.setDraft(saved, baseline: saved)
                     self.errors = []
                     self.saveFailure = nil
                     self.hasAttemptedSave = false
-                    if restart, wasActive {
+                    if restart, wasActive, saved.kind == .service {
                         self.appState.supervisor.restart(id: saved.id)
                     }
                     completion?(true)
                 case .failure(.validation(let errors)):
                     self.errors = errors
+                    self.validationRequest += 1
                     completion?(false)
                 case .failure(.other(let message)):
                     self.saveFailure = message
@@ -267,15 +312,19 @@ final class ConfigWindowModel: ObservableObject {
     // MARK: - Internals
 
     private func setDraft(_ value: Program?, baseline: Program?) {
+        isLoadingDraft = true
         self.baseline = baseline
+        environmentText = EnvironmentText.format(value?.environment ?? [:])
+        baselineEnvironmentText = environmentText
         if let value { lastDraft = value }
+        isLoadingDraft = false
         self.draft = value
     }
 
     private func draftChanged() {
         let dirty: Bool
         if let draft {
-            dirty = baseline.map { $0 != draft } ?? true
+            dirty = (baseline.map { $0 != draft } ?? true) || environmentText != baselineEnvironmentText
         } else {
             dirty = false
         }

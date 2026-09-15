@@ -18,6 +18,8 @@ struct ConfigSidebarView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            collectionHeader
+            Divider()
             List(selection: selectionBinding) {
                 if model.isCreatingNew, let draft = model.draft {
                     Section("新建") {
@@ -50,12 +52,11 @@ struct ConfigSidebarView: View {
                     emptyListHint
                 }
             }
-            bottomBar
         }
     }
 
     private func row(for snap: ProgramSnapshot) -> some View {
-        ProgramRow(snap: snap)
+        ProgramRow(snap: snap, isDirty: model.currentId == snap.id && model.isDirty)
             .tag(snap.id)
             .contextMenu {
                 Button("查看日志…") { onShowLog(snap.id) }
@@ -76,35 +77,47 @@ struct ConfigSidebarView: View {
         }
     }
 
-    private var bottomBar: some View {
-        HStack(spacing: 4) {
-            Menu {
-                Button("新建服务") { model.attempt(.create(.service)) }
-                Button("新建一次性命令") { model.attempt(.create(.oneshot)) }
-                Divider()
-                Button("从 supervisor 粘贴导入…") { onImport() }
-            } label: {
-                Image(systemName: "plus")
+    private var collectionHeader: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("程序").font(.headline)
+                Spacer()
+                Menu {
+                    Button("新建服务") { model.attempt(.create(.service)) }
+                        .keyboardShortcut("n", modifiers: .command)
+                    Button("新建一次性命令") { model.attempt(.create(.oneshot)) }
+                        .keyboardShortcut("n", modifiers: [.command, .shift])
+                    Divider()
+                    Button("从 supervisor 粘贴导入…") { onImport() }
+                } label: {
+                    Image(systemName: "plus")
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .accessibilityLabel("添加程序")
+                .help("新建程序或导入")
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .frame(width: 20)
-            .help("新建程序")
-
-            Button {
-                if let id = model.currentId, id > 0 { model.requestDelete(id: id) }
-            } label: {
-                Image(systemName: "minus")
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                TextField("搜索程序…", text: $model.searchText)
+                    .textFieldStyle(.plain)
+                    .help("搜索名称、命令或分组")
+                if !model.searchText.isEmpty {
+                    Button { model.searchText = "" } label: {
+                        Image(systemName: "xmark.circle.fill").foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("清除搜索")
+                }
             }
-            .buttonStyle(.borderless)
-            .disabled(model.selectedSnapshot == nil)
-            .help("删除所选程序")
-
-            Spacer()
+            .padding(7)
+            .background(Color.primary.opacity(0.05), in: RoundedRectangle(cornerRadius: 6))
+            Picker("分组方式", selection: $model.sortMode) {
+                ForEach(ConfigSortMode.allCases) { mode in Text(mode.title).tag(mode) }
+            }
+            .controlSize(.small)
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(.bar)
+        .padding(14)
     }
 
     // MARK: - Selection
@@ -205,6 +218,7 @@ private struct DraftRow: View {
 
 private struct ProgramRow: View {
     let snap: ProgramSnapshot
+    let isDirty: Bool
 
     var body: some View {
         HStack(spacing: 8) {
@@ -227,8 +241,8 @@ private struct ProgramRow: View {
     }
 
     private var subtitle: String {
-        guard snap.program.enabled else { return "已停用" }
-        if let pid = snap.pid { return "\(snap.statusText) · PID \(pid)" }
+        guard snap.program.enabled else { return isDirty ? "未保存 · 已停用" : "已停用" }
+        if isDirty { return "未保存 · " + snap.statusText }
         return snap.statusText
     }
 
