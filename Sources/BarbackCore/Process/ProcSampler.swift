@@ -4,7 +4,10 @@ import Darwin
 #endif
 
 public struct ProcSample: Sendable, Equatable {
-    public let cpuPercent: Double
+    /// CPU% is a difference between two samples, so it is `nil` on the first sample of a
+    /// pid — there is nothing to subtract yet. Reporting that baseline as `0.0` made every
+    /// reading in the panel a permanent "0.0%", since the panel samples once per open.
+    public let cpuPercent: Double?
     public let rssBytes: UInt64
 }
 
@@ -17,13 +20,22 @@ public enum ProcSampler {
     private static let box = Box()
     private static let lock = NSLock()
 
+    /// `proc_taskinfo`'s CPU totals are in **mach time units, not nanoseconds** — a detail
+    /// that costs nothing on Intel (timebase 1/1) and a factor of 41.67 on Apple Silicon
+    /// (125/3), which is why a fully pegged core used to read as 2.4%.
+    private static let nanosecondsPerMachTick: Double = {
+        var info = mach_timebase_info_data_t()
+        guard mach_timebase_info(&info) == KERN_SUCCESS, info.denom != 0 else { return 1 }
+        return Double(info.numer) / Double(info.denom)
+    }()
+
     public static func sample(pid: Int32) -> ProcSample? {
         var taskInfo = proc_taskinfo()
         let size = proc_pidinfo(pid, PROC_PIDTASKINFO, 0, &taskInfo, Int32(MemoryLayout<proc_taskinfo>.size))
         guard size > 0 else { return nil }
 
-        let totalCPUNanos = Double(taskInfo.pti_total_user) + Double(taskInfo.pti_total_system)
-        let totalCPUSeconds = totalCPUNanos / 1_000_000_000.0
+        let totalCPUTicks = Double(taskInfo.pti_total_user) + Double(taskInfo.pti_total_system)
+        let totalCPUSeconds = totalCPUTicks * nanosecondsPerMachTick / 1_000_000_000.0
         let now = ProcessInfo.processInfo.systemUptime
 
         lock.lock()
@@ -31,8 +43,10 @@ public enum ProcSampler {
         box.lastCPUTime[pid] = (totalCPUSeconds, now)
         lock.unlock()
 
-        var cpuPercent = 0.0
-        if let previous, now > previous.wall {
+        // A window shorter than this is mostly scheduling noise divided by a tiny number,
+        // which reads as a wild percentage rather than a measurement.
+        var cpuPercent: Double?
+        if let previous, now - previous.wall >= 0.1 {
             let deltaCPU = totalCPUSeconds - previous.total
             let deltaWall = now - previous.wall
             let maxPercent = 100.0 * Double(ProcessInfo.processInfo.activeProcessorCount)

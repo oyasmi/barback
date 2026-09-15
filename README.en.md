@@ -93,7 +93,7 @@ First launch walks you through the login item and notification permissions and a
 | --- | --- |
 | Start / stop / restart a service | Left-click → the row's primary button |
 | Read a program's log | Left-click → 📄 on the row |
-| See PID / uptime / CPU / memory | Left-click — the metrics are on the row, refreshed every second |
+| See PID / uptime / CPU / memory | Left-click — the metrics are on the row, sampled when the panel opens (no idle polling) |
 | See the command, directory, log path | Left-click → click the row to expand its drawer |
 | Add, edit or delete a program | Right-click → *Open configuration window* (⌘,) |
 | Migrate from supervisor | Right-click → *Paste-import from supervisor* |

@@ -149,8 +149,11 @@ enum StatusStyle {
         return String(format: "%.1f MB", mb)
     }
 
-    static func cpu(_ percent: Double) -> String {
-        percent < 10 ? String(format: "%.1f%%", percent) : String(format: "%.0f%%", percent)
+    /// `nil` is the honest answer between the panel opening and its second sample landing:
+    /// there is no window to average over yet (see `ProcSample.cpuPercent`).
+    static func cpu(_ percent: Double?) -> String {
+        guard let percent else { return "—" }
+        return percent < 10 ? String(format: "%.1f%%", percent) : String(format: "%.0f%%", percent)
     }
 
     /// Times from today read as a clock; older ones carry the date.

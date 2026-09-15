@@ -24,6 +24,11 @@ final class StatusPanelModel: ObservableObject {
     var onRequestClose: (() -> Void)?
 
     private var toastTask: Task<Void, Never>?
+    private var cpuSampleTask: Task<Void, Never>?
+    /// Wall-clock window the CPU figure is measured over. Long enough that a short burst
+    /// isn't rounded away, short enough that the number is there before anyone has finished
+    /// reading the row.
+    private static let cpuWindowNanoseconds: UInt64 = 800_000_000
     private var cancellables: Set<AnyCancellable> = []
     /// When the snapshot we are showing was produced. `backoffRemaining` is frozen at
     /// publish time, so the countdown has to be advanced against this anchor rather than
@@ -43,15 +48,28 @@ final class StatusPanelModel: ObservableObject {
 
     // MARK: - Sampling
 
-    /// One-shot refresh of uptime/CPU/RSS for whatever is showing right now. Called once
-    /// when the panel opens rather than on a repeating timer — nobody needs second-by-second
-    /// precision on these figures, and skipping the timer means zero sampling while the
-    /// panel just sits open.
+    /// Refresh of uptime/CPU/RSS for whatever is showing right now. Driven by the panel
+    /// opening rather than by a repeating timer — nobody needs second-by-second precision
+    /// on these figures, and skipping the timer means zero sampling while the panel just
+    /// sits open.
+    ///
+    /// It has to be *two* samples, not one: CPU% is a difference in consumed CPU time over
+    /// a wall-clock window, so a single sample per open has nothing to subtract and could
+    /// only ever render 0.0% — which is what the panel did for every program regardless of
+    /// load. The follow-up sample supplies the other end of the window and then stops; the
+    /// row shows "CPU —" in between.
     func startTicking() {
         tick()
+        cpuSampleTask = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: Self.cpuWindowNanoseconds)
+            guard !Task.isCancelled else { return }
+            self?.tick()
+        }
     }
 
     func stopTicking() {
+        cpuSampleTask?.cancel()
+        cpuSampleTask = nil
         toastTask?.cancel()
         for pid in samples.keys { ProcSampler.clearHistory(pid: pid) }
         samples.removeAll()
