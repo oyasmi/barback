@@ -33,8 +33,8 @@ struct HistoryWindowView: View {
                 }.frame(maxWidth: 240)
                 Picker("结果", selection: $outcomeFilter) {
                     Text("全部").tag(RunOutcome?.none)
-                    ForEach([RunOutcome.succeeded, .failed, .timeout, .cancelled, .unknown], id: \.self) { o in
-                        Text(o.rawValue).tag(RunOutcome?.some(o))
+                    ForEach(RunOutcome.allCases, id: \.self) { outcome in
+                        Text(outcome.displayText).tag(RunOutcome?.some(outcome))
                     }
                 }.frame(maxWidth: 160)
                 Spacer()
@@ -45,8 +45,11 @@ struct HistoryWindowView: View {
             Divider()
             Table(filteredRuns) {
                 TableColumn("时间") { run in Text(Self.timeFormatter.string(from: run.startedAt)) }
-                TableColumn("触发") { run in Text(run.trigger.rawValue) }
-                TableColumn("结果") { run in Text(run.outcome?.rawValue ?? "运行中") }
+                TableColumn("触发") { run in Text(run.trigger.displayText) }
+                TableColumn("结果") { run in
+                    Text(run.outcome?.displayText ?? "运行中")
+                        .foregroundStyle(run.outcome.map { StatusStyle.outcomeColor($0) } ?? .secondary)
+                }
                 TableColumn("耗时") { run in Text(run.duration.map { String(format: "%.1fs", $0) } ?? "—") }
                 TableColumn("退出码") { run in Text(run.exitCode.map(String.init) ?? "—") }
                 TableColumn("") { run in

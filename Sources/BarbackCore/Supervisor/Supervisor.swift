@@ -1,6 +1,4 @@
 import Foundation
-import BarbackCore
-import UserNotifications
 
 public enum ProgramSaveError: Error, Sendable, Equatable {
     case validation([ProgramValidationError])
@@ -13,6 +11,7 @@ public enum ProgramSaveError: Error, Sendable, Equatable {
 public final class Supervisor: @unchecked Sendable {
     public let queue = DispatchQueue(label: "barback.core")
     private let store: Store
+    private let logsDir: String
     private let exitWatcher: ExitWatcher
     private let appBootId = UUID().uuidString
     private var baseEnvironment: [String: String] = ProcessInfo.processInfo.environment
@@ -41,13 +40,27 @@ public final class Supervisor: @unchecked Sendable {
     private var pendingDeletions: [Int64: () -> Void] = [:]
     private var logRotationTimer: DispatchSourceTimer?
     private var livenessTimer: DispatchSourceTimer?
+    /// The newest `run` row per program, kept in memory so building a snapshot costs no
+    /// queries at all. It used to be one `fetchRuns(limit: 1)` per program *per publish*,
+    /// and a batch command like 「全部停止」 publishes once per program — N programs cost
+    /// N² queries on the one queue every managed process depends on.
+    private var lastRuns: [Int64: RunRecord] = [:]
+    /// Set by `publishSnapshot`, cleared by the flush it schedules — see `publishSnapshot`.
+    private var snapshotDirty = false
+    /// What the UI was last handed, so an action list that ends in several `.publishSnapshot`
+    /// steps without actually changing anything doesn't wake the main thread.
+    private var lastPublished: SupervisorSnapshot?
 
     public var onSnapshot: (@MainActor @Sendable (SupervisorSnapshot) -> Void)?
     public var onNotify: (@Sendable (NotificationKind) -> Void)?
     public var onOneshotNotify: (@Sendable (Program, OneshotState, TimeInterval) -> Void)?
 
-    public init(store: Store) {
+    /// `logsDir` is injectable so tests can run against a scratch directory instead of the
+    /// real `~/Library/Logs/Barback` — every log path this type hands to `LogManager` is
+    /// derived from it (design.md §5.1).
+    public init(store: Store, logsDir: String = AppPaths.logsDir) {
         self.store = store
+        self.logsDir = logsDir
         self.exitWatcher = ExitWatcher(queue: queue)
     }
 
@@ -62,6 +75,7 @@ public final class Supervisor: @unchecked Sendable {
             } catch {
                 logSelf("加载配置失败：\(error)")
             }
+            loadLastRuns()
             recoverFromCrashIfNeeded()
             try? store.insertEvent(EventRecord(level: .info, type: .appStarted))
             autostartServices()
@@ -69,6 +83,21 @@ public final class Supervisor: @unchecked Sendable {
             scheduleLogRotationCheck()
             scheduleLivenessReconcile()
         }
+    }
+
+    /// One query per program, once per launch — from here on the cache is maintained by the
+    /// spawn/finalize paths rather than re-read.
+    private func loadLastRuns() {
+        lastRuns.removeAll()
+        for id in programs.keys {
+            if let run = (try? store.fetchRuns(programId: id, limit: 1))?.first {
+                lastRuns[id] = run
+            }
+        }
+    }
+
+    private func refreshLastRun(programId: Int64) {
+        lastRuns[programId] = (try? store.fetchRuns(programId: programId, limit: 1))?.first
     }
 
     private func loadOrCaptureEnvironment() -> [String: String] {
@@ -311,6 +340,13 @@ public final class Supervisor: @unchecked Sendable {
                     if let old, runtimeFieldsChanged(old, saved), isRunning(saved.id) {
                         needsRestartIds.insert(saved.id)
                     }
+                    // The default log path is derived from the name, so without this a rename
+                    // silently abandoned the program's whole log history and started a new,
+                    // empty file (design.md §4).
+                    if let old, old.name != saved.name, saved.kind == .service,
+                       saved.logPath == nil, old.logPath == nil {
+                        LogManager.renameServiceLogs(oldName: old.name, newName: saved.name, logsDir: logsDir)
+                    }
                 }
                 try? backupConfig()
                 try? store.insertEvent(EventRecord(level: .info, programId: saved.id, type: .configChanged))
@@ -373,8 +409,19 @@ public final class Supervisor: @unchecked Sendable {
         if let pid = serviceRuntimes[id]?.pid ?? oneshotRuntimes[id]?.pid {
             exitWatcher.unregister(pid: pid)
         }
+        // Collected before the row goes away: `ON DELETE CASCADE` drops the `run` rows, and
+        // with them the only record of where each run's output file lives — the files
+        // themselves used to stay in `runs/` forever with nothing left pointing at them.
+        let runLogPaths = (try? store.fetchRunLogPaths(programId: id)) ?? []
+        let deletedName = programs[id]?.name
+        let usedDefaultLogPath = programs[id]?.logPath == nil
         try? store.deleteProgram(id: id)
+        removeRunOutputFiles(runLogPaths)
+        if let deletedName, usedDefaultLogPath {
+            LogManager.removeServiceLogs(name: deletedName, logsDir: logsDir)
+        }
         programs.removeValue(forKey: id)
+        lastRuns.removeValue(forKey: id)
         serviceRuntimes.removeValue(forKey: id)
         oneshotRuntimes.removeValue(forKey: id)
         needsRestartIds.remove(id)
@@ -431,7 +478,11 @@ public final class Supervisor: @unchecked Sendable {
                 if let id = try? store.insertProgram(draft) {
                     draft.id = id
                     programs[id] = draft
-                    serviceRuntimes[id] = ServiceRuntime()
+                    if draft.kind == .service {
+                        serviceRuntimes[id] = ServiceRuntime()
+                    } else {
+                        oneshotRuntimes[id] = OneshotRuntime()
+                    }
                     saved.append(draft)
                 }
             }
@@ -528,8 +579,7 @@ public final class Supervisor: @unchecked Sendable {
             try? store.insertEvent(EventRecord(level: level, programId: programId, type: type, detailJSON: json))
         case .finalizeRun(let outcome, let code, let signal):
             if let runId = currentRunId[programId] {
-                try? store.finalizeRun(id: runId, endedAt: Date(), exitCode: code, termSignal: signal, outcome: outcome)
-                currentRunId.removeValue(forKey: programId)
+                finalizeRun(programId: programId, runId: runId, outcome: outcome, code: code, signal: signal)
             }
             // A service's run rows never had a trim call at all before this — an
             // `autorestart=always` service that flaps for a year would write unbounded rows
@@ -558,7 +608,7 @@ public final class Supervisor: @unchecked Sendable {
         do {
             if program.logRotatePolicy == .onRestart {
                 let paths = LogManager.serviceLogPaths(
-                    name: program.name, logsDir: AppPaths.logsDir, mergeStderr: program.logMergeStderr,
+                    name: program.name, logsDir: logsDir, mergeStderr: program.logMergeStderr,
                     explicitOutPath: program.logPath, explicitErrPath: program.logStderrPath
                 )
                 _ = try? LogManager.rotateIfNeeded(path: paths.out, maxBytes: program.logMaxBytes, backups: program.logBackups, force: true)
@@ -568,14 +618,16 @@ public final class Supervisor: @unchecked Sendable {
             }
             let fds = try LogManager.openServiceLogs(
                 name: program.name,
-                logsDir: AppPaths.logsDir,
+                logsDir: logsDir,
                 mergeStderr: program.logMergeStderr,
                 explicitOutPath: program.logPath,
                 explicitErrPath: program.logStderrPath
             )
             logFDs = fds
-            let runId = try store.insertRun(RunRecord(programId: program.id, trigger: trigger, logPath: fds.outPath))
-            currentRunId[program.id] = runId
+            var run = RunRecord(programId: program.id, trigger: trigger, logPath: fds.outPath)
+            run.id = try store.insertRun(run)
+            lastRuns[program.id] = run
+            currentRunId[program.id] = run.id
             if var p = programs[program.id] { p.runTotal += 1; programs[program.id] = p }
             let env = mergedEnvironment(for: program)
             let spawned = try ProcessHost.spawn(
@@ -722,9 +774,27 @@ public final class Supervisor: @unchecked Sendable {
             try? store.insertEvent(EventRecord(level: level, programId: programId, type: type, detailJSON: json))
         case .finalizeRun(let outcome, let code, let signal):
             if let runId = currentRunId[programId] {
-                try? store.finalizeRun(id: runId, endedAt: Date(), exitCode: code, termSignal: signal, outcome: outcome)
-                currentRunId.removeValue(forKey: programId)
+                finalizeRun(programId: programId, runId: runId, outcome: outcome, code: code, signal: signal)
             }
+        }
+    }
+
+    /// Writes the run's ending to the store and mirrors it into `lastRuns`, so the next
+    /// snapshot reports the outcome without going back to SQLite for it.
+    private func finalizeRun(programId: Int64, runId: Int64, outcome: RunOutcome, code: Int32?, signal: Int32?) {
+        let endedAt = Date()
+        try? store.finalizeRun(id: runId, endedAt: endedAt, exitCode: code, termSignal: signal, outcome: outcome)
+        currentRunId.removeValue(forKey: programId)
+        if var cached = lastRuns[programId], cached.id == runId {
+            cached.endedAt = endedAt
+            cached.exitCode = code
+            cached.termSignal = signal
+            cached.outcome = outcome
+            lastRuns[programId] = cached
+        } else {
+            // Adopted survivor: the row was written by the instance that crashed, so there is
+            // nothing cached to patch (design.md §3.7).
+            refreshLastRun(programId: programId)
         }
     }
 
@@ -734,10 +804,19 @@ public final class Supervisor: @unchecked Sendable {
         var logFDs: LogFDs?
         defer { if let logFDs { LogManager.closeFDs(logFDs) } }
         do {
-            let runId = try store.insertRun(RunRecord(programId: program.id, trigger: .manual))
-            let fds = try LogManager.openRunLog(name: program.name, runId: runId, logsDir: AppPaths.logsDir)
+            var run = RunRecord(programId: program.id, trigger: .manual)
+            run.id = try store.insertRun(run)
+            // The output file is named after the run id, so the path only exists once the row
+            // does — and nothing used to write it back. Every one-shot run row therefore had
+            // `log_path = NULL`, which is what 「查看本次输出」 and the history window's
+            // 「查看输出」 both read: they showed an empty/absent file for output that was
+            // sitting on disk the whole time (design.md §3.4, ONE-4).
+            let fds = try LogManager.openRunLog(name: program.name, runId: run.id, logsDir: logsDir)
             logFDs = fds
-            currentRunId[program.id] = runId
+            run.logPath = fds.outPath
+            try? store.setRunLogPath(id: run.id, path: fds.outPath)
+            lastRuns[program.id] = run
+            currentRunId[program.id] = run.id
             if var p = programs[program.id] { p.runTotal += 1; programs[program.id] = p }
             let env = mergedEnvironment(for: program)
             let spawned = try ProcessHost.spawn(
@@ -760,7 +839,21 @@ public final class Supervisor: @unchecked Sendable {
 
     private func trimHistoryIfNeeded(program: Program) {
         guard let paths = try? store.trimRunHistory(programId: program.id, historyLimit: program.historyLimit) else { return }
-        for path in paths {
+        removeRunOutputFiles(paths)
+    }
+
+    /// Deletes the output files a set of discarded run rows owned — and *only* those.
+    ///
+    /// A one-shot's run row owns its file outright (`runs/<name>-<runId>.log`). A service's
+    /// rows do not: every one of them carries the same path, the program's single
+    /// `programs/<name>.out.log`. Deleting by `log_path` therefore meant that trimming a
+    /// service's history down to `historyLimit` unlinked the live log file out from under the
+    /// running process — which, still holding the fd, carried on writing into an inode with no
+    /// name, while the log window showed an empty file. The `runs/` prefix is what separates
+    /// the two, and it also keeps this from ever touching a user-chosen explicit `logPath`.
+    private func removeRunOutputFiles(_ paths: [String]) {
+        let runsDir = (logsDir as NSString).appendingPathComponent("runs") + "/"
+        for path in paths where path.hasPrefix(runsDir) {
             try? FileManager.default.removeItem(atPath: path)
         }
     }
@@ -803,9 +896,49 @@ public final class Supervisor: @unchecked Sendable {
 
     // MARK: - Snapshot publishing
 
+    /// Marks the snapshot stale and schedules exactly one flush.
+    ///
+    /// A single reduction emits `.publishSnapshot` more than once, and a batch command
+    /// (`startAll`/`stopAll`/termination) runs a whole reduction per program — all of that
+    /// used to build a full snapshot and hop to the main thread each time. Because the core
+    /// queue is serial, work enqueued here always runs after the current block has finished
+    /// draining, so one `queue.async` collapses the entire batch into a single publish.
     private func publishSnapshot() {
+        guard !snapshotDirty else { return }
+        snapshotDirty = true
+        queue.async { [self] in
+            guard snapshotDirty else { return }
+            snapshotDirty = false
+            deliverSnapshot(buildSnapshot())
+        }
+    }
+
+    private func deliverSnapshot(_ snapshot: SupervisorSnapshot) {
+        guard snapshot != lastPublished else { return }
+        lastPublished = snapshot
+        let callback = onSnapshot
+        DispatchQueue.main.async { MainActor.assumeIsolated { callback?(snapshot) } }
+    }
+
+    /// Reads the current state of the world. Core-queue only.
+    public func fetchSnapshot(completion: @escaping @Sendable (SupervisorSnapshot) -> Void) {
+        queue.async { [self] in completion(buildSnapshot()) }
+    }
+
+    /// Clears 「上次异常退出，已接管 N 项」 once the user has seen it — design.md §3.7 step 7
+    /// promises that notice appears *once*, not on every panel open for the rest of the
+    /// session.
+    public func dismissRecoveryNotice() {
+        queue.async { [self] in
+            guard recoveredCount > 0 else { return }
+            recoveredCount = 0
+            publishSnapshot()
+        }
+    }
+
+    private func buildSnapshot() -> SupervisorSnapshot {
         let snapshotPrograms: [ProgramSnapshot] = programs.values.map { program in
-            let lastRun = (try? store.fetchRuns(programId: program.id, limit: 1))?.first
+            let lastRun = lastRuns[program.id]
             // `program.runTotal` is a column read straight off the in-memory `Program`, kept
             // current by the spawn path — no query here at all. Used to be a
             // `fetchRuns(limit: 100000)` per program per snapshot publish, which happens
@@ -833,9 +966,7 @@ public final class Supervisor: @unchecked Sendable {
                 )
             }
         }.sorted { $0.program.priority < $1.program.priority }
-        let snapshot = SupervisorSnapshot(programs: snapshotPrograms, recoveredCount: recoveredCount)
-        let callback = onSnapshot
-        DispatchQueue.main.async { MainActor.assumeIsolated { callback?(snapshot) } }
+        return SupervisorSnapshot(programs: snapshotPrograms, recoveredCount: recoveredCount)
     }
 
     // MARK: - Sleep/wake reconciliation (design.md §3.8)
@@ -918,7 +1049,7 @@ public final class Supervisor: @unchecked Sendable {
         for (id, runtime) in serviceRuntimes where runtime.state.isActive {
             guard let program = programs[id], program.logRotatePolicy == .size else { continue }
             let paths = LogManager.serviceLogPaths(
-                name: program.name, logsDir: AppPaths.logsDir, mergeStderr: program.logMergeStderr,
+                name: program.name, logsDir: logsDir, mergeStderr: program.logMergeStderr,
                 explicitOutPath: program.logPath, explicitErrPath: program.logStderrPath
             )
             candidates.append(RotationCandidate(programId: id, out: paths.out, err: paths.err, maxBytes: program.logMaxBytes, backups: program.logBackups))
@@ -1073,8 +1204,15 @@ public final class Supervisor: @unchecked Sendable {
     public func clearHistory(programId: Int64?, outcome: RunOutcome?, completion: @escaping @Sendable () -> Void) {
         queue.async { [self] in
             if let paths = try? store.deleteRuns(programId: programId, outcome: outcome) {
-                for path in paths { try? FileManager.default.removeItem(atPath: path) }
+                removeRunOutputFiles(paths)
             }
+            // The rows the cache mirrors may be exactly the ones just deleted.
+            if let programId {
+                refreshLastRun(programId: programId)
+            } else {
+                loadLastRuns()
+            }
+            publishSnapshot()
             completion()
         }
     }
@@ -1082,7 +1220,7 @@ public final class Supervisor: @unchecked Sendable {
     private func logSelf(_ message: String) {
         let line = "[\(Date())] \(message)\n"
         if let data = line.data(using: .utf8) {
-            let path = AppPaths.selfLogPath
+            let path = (logsDir as NSString).appendingPathComponent("barback.log")
             if !FileManager.default.fileExists(atPath: path) {
                 FileManager.default.createFile(atPath: path, contents: nil)
             }

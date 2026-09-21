@@ -9,13 +9,16 @@ import BarbackCore
 /// 常态零开销).
 @MainActor
 final class StatusPanelModel: ObservableObject {
-    /// Snapshot of "now" taken once when the panel opens; uptimes and countdowns read from
-    /// it rather than a live clock, so the display doesn't tick visibly while someone is
-    /// looking at it (each open still shows a fresh, correct value).
+    /// The panel's clock, advanced once a second by `startClock` while anything is running
+    /// and frozen the rest of the time. Uptimes and the backoff countdown read from it rather
+    /// than calling `Date()` during layout, so every row in one frame agrees on "now".
     @Published private(set) var now = Date()
     @Published private(set) var samples: [Int32: ProcSample] = [:]
     @Published var searchText = ""
     @Published var expandedId: Int64?
+    /// Keyboard cursor. `nil` until someone presses ↑/↓ — the panel is a pointer-first
+    /// surface and a selection ring on open would just be noise (BAR-10).
+    @Published var selectedId: Int64?
     /// Transient confirmation line in the footer ("已复制 PID"), instead of a modal.
     @Published private(set) var toast: String?
 
@@ -25,6 +28,7 @@ final class StatusPanelModel: ObservableObject {
 
     private var toastTask: Task<Void, Never>?
     private var cpuSampleTask: Task<Void, Never>?
+    private var clockTask: Task<Void, Never>?
     /// Wall-clock window the CPU figure is measured over. Long enough that a short burst
     /// isn't rounded away, short enough that the number is there before anyone has finished
     /// reading the row.
@@ -48,10 +52,11 @@ final class StatusPanelModel: ObservableObject {
 
     // MARK: - Sampling
 
-    /// Refresh of uptime/CPU/RSS for whatever is showing right now. Driven by the panel
-    /// opening rather than by a repeating timer — nobody needs second-by-second precision
-    /// on these figures, and skipping the timer means zero sampling while the panel just
-    /// sits open.
+    /// Samples CPU/RSS for whatever is showing right now, and starts the panel's clock.
+    ///
+    /// Sampling is driven by the panel opening rather than by a repeating timer — nobody
+    /// needs second-by-second precision on these figures, and skipping the timer means zero
+    /// sampling while the panel just sits open.
     ///
     /// It has to be *two* samples, not one: CPU% is a difference in consumed CPU time over
     /// a wall-clock window, so a single sample per open has nothing to subtract and could
@@ -65,11 +70,38 @@ final class StatusPanelModel: ObservableObject {
             guard !Task.isCancelled else { return }
             self?.tick()
         }
+        startClock()
+    }
+
+    /// Advances `now` once a second while the panel is on screen.
+    ///
+    /// `backoffRemaining` is frozen at the moment the snapshot was published, and BACKOFF
+    /// publishes nothing while it waits — so without a clock of its own the panel showed a
+    /// countdown and a progress hairline that both sat perfectly still for as long as anyone
+    /// looked at them, which design.md §6.3 explicitly says they shouldn't ("面板按本地时钟
+    /// 推进，不必等定时器到点才更新"). This is a `Date()` assignment, not a resample: CPU/RSS
+    /// still cost exactly the two samples per open they always did, and the tick is skipped
+    /// entirely when nothing is running, so an all-stopped panel is as free as before.
+    private func startClock() {
+        clockTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                guard !Task.isCancelled, let self else { return }
+                guard self.needsClock else { continue }
+                self.now = Date()
+            }
+        }
+    }
+
+    private var needsClock: Bool {
+        appState.snapshot.programs.contains(where: \.isActive)
     }
 
     func stopTicking() {
         cpuSampleTask?.cancel()
         cpuSampleTask = nil
+        clockTask?.cancel()
+        clockTask = nil
         toastTask?.cancel()
         for pid in samples.keys { ProcSampler.clearHistory(pid: pid) }
         samples.removeAll()
@@ -126,6 +158,20 @@ final class StatusPanelModel: ObservableObject {
 
     func toggleExpanded(_ id: Int64) {
         expandedId = expandedId == id ? nil : id
+    }
+
+    /// Runs whatever `StatusStyle.primaryAction` says the row's main button does. The row's
+    /// button and ⌘↩ both come through here, so the label someone reads and the thing that
+    /// happens can never drift apart.
+    func performPrimary(_ snap: ProgramSnapshot) {
+        switch StatusStyle.primaryAction(for: snap).kind {
+        case .enable: enable(snap)
+        case .start: start(snap)
+        case .stop: stop(snap)
+        case .forceKill: forceKill(snap)
+        case .run: runOneshot(snap)
+        case .cancel: cancelOneshot(snap)
+        }
     }
 
     func start(_ snap: ProgramSnapshot) { appState.supervisor.start(id: snap.id) }
@@ -214,7 +260,90 @@ final class StatusPanelModel: ObservableObject {
         appState.snapshot.programs.contains { $0.program.kind == .service }
     }
 
+    // MARK: - Keyboard (BAR-10)
+
+    /// The rows in the order the panel draws them — services by group, then one-shots — so
+    /// ↑/↓ walks the list the eye sees rather than the order the dictionary happened to give.
+    var navigableIds: [Int64] {
+        serviceGroups.flatMap { $0.items.map(\.id) } + visiblePrograms(kind: .oneshot).map(\.id)
+    }
+
+    /// Handles a key the panel claims, and reports whether it did. Returning `false` lets the
+    /// event fall through to the search field, which is otherwise the only thing here that
+    /// wants the keyboard.
+    func handleKeyDown(_ event: NSEvent) -> Bool {
+        guard let scalar = event.charactersIgnoringModifiers?.unicodeScalars.first else { return false }
+        switch Int(scalar.value) {
+        case NSUpArrowFunctionKey:
+            moveSelection(-1)
+            return true
+        case NSDownArrowFunctionKey:
+            moveSelection(1)
+            return true
+        case NSCarriageReturnCharacter, NSEnterCharacter:
+            guard let snap = selectedProgram else { return false }
+            // ↩ opens the drawer (the same thing clicking the row does) and ⌘↩ runs the
+            // primary action. Deliberately that way round: ↩ right after typing in the search
+            // field is far too easy to hit for it to stop a service.
+            if event.modifierFlags.contains(.command) {
+                performPrimary(snap)
+            } else {
+                toggleExpanded(snap.id)
+            }
+            return true
+        case 0x1B: // esc
+            close()
+            return true
+        default:
+            return false
+        }
+    }
+
+    var selectedProgram: ProgramSnapshot? {
+        guard let selectedId else { return nil }
+        return appState.program(id: selectedId)
+    }
+
+    private func moveSelection(_ delta: Int) {
+        let ids = navigableIds
+        guard !ids.isEmpty else { return }
+        guard let selectedId, let index = ids.firstIndex(of: selectedId) else {
+            selectedId = delta > 0 ? ids.first : ids.last
+            return
+        }
+        let next = index + delta
+        guard ids.indices.contains(next) else { return }
+        self.selectedId = ids[next]
+    }
+
+    // MARK: - Grouping
+
+    struct ServiceGroup {
+        let title: String
+        let items: [ProgramSnapshot]
+    }
+
+    /// Services are only broken out by group once more than one group is actually in use —
+    /// otherwise the headers are pure noise. Lives here rather than in the view because
+    /// keyboard traversal has to walk the same order the view draws.
+    var serviceGroups: [ServiceGroup] {
+        let services = visiblePrograms(kind: .service)
+        var order: [String] = []
+        var buckets: [String: [ProgramSnapshot]] = [:]
+        for snap in services {
+            let key = snap.program.groupName?.isEmpty == false ? snap.program.groupName! : "未分组"
+            if buckets[key] == nil { order.append(key) }
+            buckets[key, default: []].append(snap)
+        }
+        guard order.count > 1 else { return [ServiceGroup(title: "服务", items: services)] }
+        return order.map { ServiceGroup(title: $0, items: buckets[$0] ?? []) }
+    }
+
     // MARK: - Windows
+
+    func dismissRecoveryNotice() {
+        appState.supervisor.dismissRecoveryNotice()
+    }
 
     func openConfig(selecting id: Int64? = nil) {
         close()

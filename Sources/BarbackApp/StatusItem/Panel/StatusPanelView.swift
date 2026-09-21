@@ -11,6 +11,9 @@ struct StatusPanelView: View {
     @ObservedObject var model: StatusPanelModel
 
     @State private var contentHeight: CGFloat = 0
+    /// The search field takes focus as soon as it appears, so typing works the moment the
+    /// panel opens instead of silently going nowhere (BAR-10).
+    @FocusState private var searchFocused: Bool
 
     private let panelWidth: CGFloat = 420
     private let maxListHeight: CGFloat = 520
@@ -49,6 +52,10 @@ struct StatusPanelView: View {
                             color: StatusStyle.running, symbol: "circle.fill")
                 SummaryChip(count: snapshot.stoppedCount, label: "已停止",
                             color: StatusStyle.neutral, symbol: "circle")
+                if snapshot.transitioningCount > 0 {
+                    SummaryChip(count: snapshot.transitioningCount, label: "过渡中",
+                                color: StatusStyle.transitioning, symbol: "circle.bottomhalf.filled")
+                }
                 if snapshot.fatalCount > 0 {
                     SummaryChip(count: snapshot.fatalCount, label: "失败",
                                 color: StatusStyle.failure, symbol: "exclamationmark.triangle.fill")
@@ -65,7 +72,8 @@ struct StatusPanelView: View {
             if snapshot.recoveredCount > 0 {
                 noticeStrip(
                     "上次异常退出，已接管 \(snapshot.recoveredCount) 个仍在运行的进程",
-                    color: StatusStyle.transitioning
+                    color: StatusStyle.transitioning,
+                    onDismiss: { model.dismissRecoveryNotice() }
                 )
             }
 
@@ -87,6 +95,8 @@ struct StatusPanelView: View {
             TextField("搜索程序", text: $model.searchText)
                 .textFieldStyle(.plain)
                 .font(.system(size: 12))
+                .focused($searchFocused)
+                .onAppear { searchFocused = true }
             if !model.searchText.isEmpty {
                 GlyphButton(systemImage: "xmark.circle.fill", help: "清除") { model.searchText = "" }
             }
@@ -99,7 +109,10 @@ struct StatusPanelView: View {
         )
     }
 
-    private func noticeStrip(_ text: String, color: Color) -> some View {
+    /// design.md §3.7 step 7 says this notice appears *once*. It has no natural expiry —
+    /// `recoveredCount` is fixed for the life of the process — so without a way to dismiss it
+    /// the strip reappeared on every single panel open until the app was quit.
+    private func noticeStrip(_ text: String, color: Color, onDismiss: (() -> Void)? = nil) -> some View {
         HStack(spacing: 5) {
             Image(systemName: "arrow.triangle.2.circlepath")
                 .font(.system(size: 10))
@@ -107,6 +120,9 @@ struct StatusPanelView: View {
                 .font(.system(size: 11))
                 .lineLimit(2)
             Spacer(minLength: 0)
+            if let onDismiss {
+                GlyphButton(systemImage: "xmark", help: "知道了", tint: color, action: onDismiss)
+            }
         }
         .foregroundStyle(color)
         .padding(.horizontal, 7)
@@ -117,34 +133,44 @@ struct StatusPanelView: View {
     // MARK: - List
 
     private var list: some View {
-        ScrollView(.vertical) {
-            LazyVStack(alignment: .leading, spacing: 2) {
-                if services.isEmpty && oneshots.isEmpty {
-                    noMatches
-                }
-                if !services.isEmpty {
-                    sectionHeader(title: "服务", count: services.count)
-                    ForEach(serviceGroups, id: \.title) { group in
-                        if serviceGroups.count > 1 {
-                            groupHeader(group.title, count: group.items.count)
+        // Computed once per rebuild: `serviceGroups` buckets the whole list, and the body
+        // below would otherwise re-derive it for every group it draws.
+        let groups = model.serviceGroups
+        return ScrollViewReader { proxy in
+            ScrollView(.vertical) {
+                LazyVStack(alignment: .leading, spacing: 2) {
+                    if services.isEmpty && oneshots.isEmpty {
+                        noMatches
+                    }
+                    if !services.isEmpty {
+                        sectionHeader(title: "服务", count: services.count)
+                        ForEach(groups, id: \.title) { group in
+                            if groups.count > 1 {
+                                groupHeader(group.title, count: group.items.count)
+                            }
+                            ForEach(group.items) { row(for: $0) }
                         }
-                        ForEach(group.items) { row(for: $0) }
+                    }
+                    if !oneshots.isEmpty {
+                        sectionHeader(title: "一次性命令", count: oneshots.count)
+                        ForEach(oneshots) { row(for: $0) }
                     }
                 }
-                if !oneshots.isEmpty {
-                    sectionHeader(title: "一次性命令", count: oneshots.count)
-                    ForEach(oneshots) { row(for: $0) }
-                }
+                .padding(.horizontal, 9)
+                .padding(.vertical, 7)
+                .measuringHeight()
             }
-            .padding(.horizontal, 9)
-            .padding(.vertical, 7)
-            .measuringHeight()
+            // Keep the scroller on screen once the list overflows: in a popover there is no
+            // window edge to hint that something is below the fold.
+            .scrollIndicators(contentHeight > maxListHeight ? .visible : .hidden)
+            .frame(height: min(max(contentHeight, 44), maxListHeight))
+            .onPreferenceChange(ContentHeightKey.self) { contentHeight = $0 }
+            // ↑/↓ can walk past the fold, and a cursor you can't see is worse than no cursor.
+            .onChange(of: model.selectedId) { id in
+                guard let id else { return }
+                withAnimation(.easeOut(duration: 0.12)) { proxy.scrollTo(id, anchor: .center) }
+            }
         }
-        // Keep the scroller on screen once the list overflows: in a popover there is no
-        // window edge to hint that something is below the fold.
-        .scrollIndicators(contentHeight > maxListHeight ? .visible : .hidden)
-        .frame(height: min(max(contentHeight, 44), maxListHeight))
-        .onPreferenceChange(ContentHeightKey.self) { contentHeight = $0 }
     }
 
     private func row(for snap: ProgramSnapshot) -> some View {
@@ -181,25 +207,6 @@ struct StatusPanelView: View {
         }
         .padding(.leading, 20)
         .padding(.top, 3)
-    }
-
-    private struct ServiceGroup {
-        let title: String
-        let items: [ProgramSnapshot]
-    }
-
-    /// Services are only broken out by group once more than one group is actually in use —
-    /// otherwise the headers are pure noise.
-    private var serviceGroups: [ServiceGroup] {
-        var order: [String] = []
-        var buckets: [String: [ProgramSnapshot]] = [:]
-        for snap in services {
-            let key = snap.program.groupName?.isEmpty == false ? snap.program.groupName! : "未分组"
-            if buckets[key] == nil { order.append(key) }
-            buckets[key, default: []].append(snap)
-        }
-        guard order.count > 1 else { return [ServiceGroup(title: "服务", items: services)] }
-        return order.map { ServiceGroup(title: $0, items: buckets[$0] ?? []) }
     }
 
     private var noMatches: some View {
@@ -265,9 +272,11 @@ struct StatusPanelView: View {
                         .font(.system(size: 10))
                         .foregroundStyle(.secondary)
                 } else {
-                    Text("右键状态栏图标可打开应用菜单")
+                    Text("↑↓ 选择 · ↩ 展开 · ⌘↩ 执行 · 右键打开应用菜单")
                         .font(.system(size: 10))
                         .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
                 }
                 Spacer(minLength: 6)
                 Text("Barback \(Self.version)")

@@ -64,6 +64,7 @@ Barback 是一个常驻状态栏的进程管理器：把你长年跑在 Mac 上�
 
 - 主按钮随状态切换：运行中给「停止」、已停止给「启动」、停止中给「强制终止」（带确认）。
 - 点行任意处展开抽屉，可见命令、工作目录、日志路径、配置摘要，以及「在 Finder 中显示」「复制 PID」「编辑配置」。
+- 次级按钮（重启 / 日志 / 历史 / 展开）在指针悬停或键盘选中时才显现，静息态只剩状态脊、名称、徽标与一行指标。
 - 状态同时用形状、文字与颜色表达，不单靠颜色；异常态给出可直接点击的补救动作。
 - **右键**（或 Control + 左键）是 Barback 自身的功能菜单：配置窗口、执行历史、事件日志、偏好设置、粘贴导入、退出——与左键面板内容完全不重叠。
 
@@ -93,6 +94,7 @@ DEVELOPER_ID_APPLICATION="Developer ID Application: ..." make sign   # 签名 + 
 | 看某个程序的日志 | 左键图标 → 行上的 📄 |
 | 看 PID / 运行时长 / CPU / 内存 | 左键图标，指标就在行上（每次打开时采样，不常驻轮询） |
 | 看命令、工作目录、日志路径 | 左键图标 → 点行展开抽屉 |
+| 键盘操作面板 | ↑↓ 选择 · ↩ 展开详情 · ⌘↩ 执行该行主动作 · Esc 关闭；程序超过 8 项时搜索框自动聚焦 |
 | 增删改程序 | 右键图标 →「打开配置窗口」（⌘,） |
 | 从 supervisor 迁移 | 右键图标 →「从 supervisor 粘贴导入」 |
 
@@ -137,14 +139,14 @@ make clean                       # 删除 .build 与 dist
 ### 代码结构
 
 ```
-Sources/BarbackCore    监管内核，无 UI 依赖：状态机、进程管理、SQLite 存储、日志轮转、supervisor 导入
+Sources/BarbackCore    监管内核，无 UI 依赖：状态机、编排（Supervisor）、进程管理、SQLite 存储、日志轮转、supervisor 导入
 Sources/BarbackApp     界面层：状态栏左键面板与右键菜单、配置窗口、日志查看器、执行历史、事件日志、偏好设置
 Sources/CSQLite        系统 libsqlite3 的 modulemap shim
 Fixtures/testchild     行为可控的测试子进程，供进程管理集成测试使用
-Tests/                 CoreTests 纯函数单测 · ProcessTests 真实进程 · IntegrationTests 崩溃恢复等端到端场景
+Tests/                 CoreTests 纯函数单测 · ProcessTests 真实进程 · IntegrationTests 驱动真实 Supervisor 的端到端场景（启停、删除中途、崩溃接管）
 ```
 
-核心层运行在单一串行队列上、不 import AppKit/SwiftUI，状态变更后向主线程发布不可变快照——因此状态机可以脱离 UI 做穷举测试。
+核心层运行在单一串行队列上、不 import AppKit/SwiftUI，状态变更后向主线程发布不可变快照——因此状态机与编排层都可以脱离 UI 做穷举测试。
 
 ## 已知限制
 

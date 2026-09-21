@@ -23,6 +23,57 @@ enum StatusStyle {
         var symbol: String
         /// Transitional states show a spinner in place of the glyph — motion reads as "working".
         var isBusy = false
+        /// "Everything is fine" shouldn't shout. A panel of ten healthy services used to be a
+        /// wall of saturated green capsules, which spends the whole colour budget on the one
+        /// state nobody needs to be alerted about — and leaves BACKOFF orange and FATAL red
+        /// competing with it. A quiet state keeps its colour on the dot and the accent bar
+        /// (where it stays scannable) and renders its badge in plain secondary text.
+        var isQuiet = false
+    }
+
+    /// What the row's primary button does in the current state. Shared by the button itself
+    /// and by the keyboard path (⌘↩), so the two can't disagree about what "primary" means.
+    enum PrimaryActionKind {
+        case enable
+        case start
+        case stop
+        case forceKill
+        case run
+        case cancel
+    }
+
+    struct PrimaryAction {
+        var kind: PrimaryActionKind
+        var title: String
+        var symbol: String
+        var tint: Color
+    }
+
+    static func primaryAction(for snap: ProgramSnapshot) -> PrimaryAction {
+        guard snap.program.kind == .service else {
+            return snap.oneshotState == .running
+                ? PrimaryAction(kind: .cancel, title: "中止", symbol: "stop.fill", tint: failure)
+                : PrimaryAction(kind: .run, title: "运行", symbol: "play.fill", tint: active)
+        }
+        let state = snap.serviceState ?? .stopped
+        // A disabled-but-inactive service showed a perfectly clickable "启动" even though its
+        // own badge says 已停用 and "停用" is documented to mean "won't start on its own" — the
+        // only consistent reading is that starting it manually first requires turning it back
+        // on (design.md §6.3, ex-F06). A service disabled while still running keeps its normal
+        // stop/restart controls; disabling doesn't touch anything already active.
+        if !snap.program.enabled, !state.isActive {
+            return PrimaryAction(kind: .enable, title: "启用", symbol: "checkmark.circle", tint: running)
+        }
+        switch state {
+        case .stopping:
+            // TERM has been sent and we are waiting it out; the only useful escalation here is
+            // SIGKILL, so that is what the row offers.
+            return PrimaryAction(kind: .forceKill, title: "强制终止", symbol: "bolt.fill", tint: failure)
+        case .running, .starting, .backoff:
+            return PrimaryAction(kind: .stop, title: "停止", symbol: "stop.fill", tint: failure)
+        case .stopped, .exited, .fatal:
+            return PrimaryAction(kind: .start, title: "启动", symbol: "play.fill", tint: running)
+        }
     }
 
     // MARK: - State → presentation
@@ -34,7 +85,7 @@ enum StatusStyle {
     private static func service(_ snap: ProgramSnapshot) -> Presentation {
         switch snap.serviceState ?? .stopped {
         case .running:
-            return Presentation(label: "运行中", color: running, symbol: "circle.fill")
+            return Presentation(label: "运行中", color: running, symbol: "circle.fill", isQuiet: true)
         case .starting:
             return Presentation(label: "启动中", color: transitioning, symbol: "circle.bottomhalf.filled", isBusy: true)
         case .backoff:
@@ -60,7 +111,7 @@ enum StatusStyle {
         case .running:
             return Presentation(label: "执行中", color: active, symbol: "circle.dotted", isBusy: true)
         case .succeeded:
-            return Presentation(label: "成功", color: running, symbol: "checkmark.circle.fill")
+            return Presentation(label: "成功", color: running, symbol: "checkmark.circle.fill", isQuiet: true)
         case .failed:
             return Presentation(label: "失败", color: failure, symbol: "xmark.circle.fill")
         case .timeout:
@@ -71,21 +122,17 @@ enum StatusStyle {
             guard let outcome = snap.lastRun?.outcome else {
                 return Presentation(label: "尚未执行", color: neutral, symbol: "circle")
             }
-            return Presentation(label: outcomeLabel(outcome), color: outcomeColor(outcome), symbol: outcomeSymbol(outcome))
+            return Presentation(label: outcomeLabel(outcome), color: outcomeColor(outcome),
+                                symbol: outcomeSymbol(outcome), isQuiet: outcome == .succeeded)
         }
     }
 
     // MARK: - Run outcomes
 
-    static func outcomeLabel(_ outcome: RunOutcome) -> String {
-        switch outcome {
-        case .succeeded: return "成功"
-        case .failed: return "失败"
-        case .timeout: return "超时"
-        case .cancelled: return "已中止"
-        case .unknown: return "结果未知"
-        }
-    }
+    /// Kept as a shim over `RunOutcome.displayText` now that the label lives with the enum —
+    /// the history window and the config sidebar need the same words and used to print the
+    /// raw case name instead.
+    static func outcomeLabel(_ outcome: RunOutcome) -> String { outcome.displayText }
 
     static func outcomeColor(_ outcome: RunOutcome) -> Color {
         switch outcome {

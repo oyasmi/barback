@@ -4,7 +4,7 @@ import BarbackCore
 import UserNotifications
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var store: Store!
     private var supervisor: Supervisor!
     private var appState: AppState!
@@ -98,9 +98,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         window.styleMask = [.titled, .closable]
         window.center()
         window.isReleasedWhenClosed = false
+        // Closing with the red button counts as having seen it. Only 「完成」 wrote the flag
+        // before, so anyone who dismissed the window any other way got the welcome sheet
+        // again on every single launch, forever (UJ-1: "一次性欢迎窗口").
+        window.delegate = self
         onboardingWindow = window
         NSApp.activate(ignoringOtherApps: true)
         window.makeKeyAndOrderFront(nil)
+    }
+
+    /// Also covers 「完成」, which closes the window itself — the flag is idempotent.
+    func windowWillClose(_ notification: Notification) {
+        guard (notification.object as? NSWindow) === onboardingWindow else { return }
+        hasCompletedOnboarding = true
+        onboardingWindow = nil
     }
 
     @objc private func handleWake() {

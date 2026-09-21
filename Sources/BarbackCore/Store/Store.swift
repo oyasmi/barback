@@ -256,6 +256,27 @@ public final class Store {
         try stmt.run()
     }
 
+    /// A one-shot's output file is named after the run id, so its path can only be written
+    /// back once the row exists (see `Supervisor.spawnOneshot`).
+    public func setRunLogPath(id: Int64, path: String) throws {
+        let stmt = try db.prepare("UPDATE run SET log_path=? WHERE id=?")
+        stmt.bind(1, path)
+        stmt.bind(2, id)
+        try stmt.run()
+    }
+
+    /// Every output file this program's runs own, so deleting the program can take its logs
+    /// with it instead of leaving orphans in `runs/` forever.
+    public func fetchRunLogPaths(programId: Int64) throws -> [String] {
+        let stmt = try db.prepare("SELECT log_path FROM run WHERE program_id = ? AND log_path IS NOT NULL")
+        stmt.bind(1, programId)
+        var paths: [String] = []
+        while try stmt.step() {
+            if let p = stmt.columnStringOptional(0) { paths.append(p) }
+        }
+        return paths
+    }
+
     public func fetchRuns(programId: Int64, limit: Int = 100) throws -> [RunRecord] {
         let stmt = try db.prepare("SELECT id, program_id, trigger, pid, started_at, ended_at, exit_code, term_signal, outcome, log_path FROM run WHERE program_id = ? ORDER BY started_at DESC LIMIT ?")
         stmt.bind(1, programId)

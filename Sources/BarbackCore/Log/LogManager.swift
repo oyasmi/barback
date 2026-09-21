@@ -75,6 +75,62 @@ public enum LogManager {
         return LogFDs(outFD: fd, errFD: dup(fd), outPath: path, errPath: path)
     }
 
+    /// Follows a program's default log files when it is renamed.
+    ///
+    /// The default path is derived from the program's name, so a rename used to orphan
+    /// `programs/<old>.out.log` (plus its rotated backups) and point 「查看日志」 at a brand
+    /// new empty file — from the user's side, the history simply vanished. `rename(2)` keeps
+    /// the inode, so a service that is running right now keeps writing through its open fd
+    /// and its output lands in the new file without interruption.
+    ///
+    /// Only default paths move: an explicit `logPath` is the user's own choice of location
+    /// and has nothing to do with the name.
+    public static func renameServiceLogs(oldName: String, newName: String, logsDir: String) {
+        guard oldName != newName else { return }
+        let dir = (logsDir as NSString).appendingPathComponent("programs")
+        let fm = FileManager.default
+        for found in defaultLogEntries(name: oldName, dir: dir) {
+            let src = (dir as NSString).appendingPathComponent(found.entry)
+            let dst = (dir as NSString).appendingPathComponent("\(newName).\(found.suffix)\(found.rotation)")
+            try? fm.removeItem(atPath: dst)
+            try? fm.moveItem(atPath: src, toPath: dst)
+        }
+    }
+
+    /// Removes a program's default log files and their rotated backups — used when the
+    /// program itself is deleted, so its logs don't linger and get appended to by a
+    /// same-named program created later.
+    public static func removeServiceLogs(name: String, logsDir: String) {
+        let dir = (logsDir as NSString).appendingPathComponent("programs")
+        for found in defaultLogEntries(name: name, dir: dir) {
+            try? FileManager.default.removeItem(atPath: (dir as NSString).appendingPathComponent(found.entry))
+        }
+    }
+
+    struct FoundLog {
+        let entry: String
+        /// `out.log` or `err.log` — the part after the program name.
+        let suffix: String
+        /// `""` for the live file, `.1`/`.2`/… for a rotated backup.
+        let rotation: String
+    }
+
+    /// A program's default log files in `dir`: the `.out.log` / `.err.log` themselves plus any
+    /// `.N` rotation of them. Enumerating the directory rather than counting up to
+    /// `logBackups` means a file left behind by an older, larger backup setting still gets
+    /// picked up.
+    private static func defaultLogEntries(name: String, dir: String) -> [FoundLog] {
+        guard let entries = try? FileManager.default.contentsOfDirectory(atPath: dir) else { return [] }
+        var result: [FoundLog] = []
+        for suffix in ["out.log", "err.log"] {
+            let base = "\(name).\(suffix)"
+            for entry in entries where entry == base || entry.hasPrefix(base + ".") {
+                result.append(FoundLog(entry: entry, suffix: suffix, rotation: String(entry.dropFirst(base.count))))
+            }
+        }
+        return result
+    }
+
     public static func closeFDs(_ fds: LogFDs) {
         close(fds.outFD)
         if fds.errFD != fds.outFD { close(fds.errFD) }

@@ -33,7 +33,9 @@ There are three test targets, each with a different cost/purpose:
 - `CoreTests` — pure state-machine/util unit tests, no real processes, fast.
 - `ProcessTests` — spawns real processes via `Fixtures/testchild` to test `ProcessHost`/exit
   detection end to end.
-- `IntegrationTests` — end-to-end scenarios like crash recovery across a simulated Barback restart.
+- `IntegrationTests` — drives a real `Supervisor` (via `SupervisorHarness`) against a scratch
+  DB and log dir: start/stop/restart, delete-while-running, SIGTERM escalation, one-shot
+  outcomes, and crash recovery across a simulated Barback restart. Slowest of the three.
 
 `Fixtures/testchild` is a controllable child executable (flags: `--exit-after`, `--exit-code`,
 `--ignore-term`, `--spawn-children`, `--spam-stdout`, `--alloc`) used by `ProcessTests`/
@@ -68,12 +70,13 @@ Key components inside `BarbackCore`:
 | `Process/ProcSampler` | On-demand CPU/RSS sampling, only while the panel is open. |
 | `Log/LogManager` | Child stdout/stderr fds go straight to log files (never through Barback's own process) with size-based rotation via copy-then-truncate (rename would leave the child writing to the old inode). |
 | `Store/Store` + `Store/Schema` | Single SQLite file (WAL mode) for program config, live-process snapshot, run history, and events. `PRAGMA user_version` drives schema migrations (`Schema.currentVersion`). All access must happen on the core queue — `Store` does not hop queues itself. Recovers from a corrupt DB by restoring the latest JSON config backup (see `Store.restoredProgramCount`). |
+| `Supervisor/Supervisor` | Executes the reducers' `[ServiceAction]`/`[OneshotAction]` against real processes, timers and the store; owns crash recovery, autostart, termination and snapshot publishing. Injectable `logsDir` so tests run against a scratch directory. |
 | `Import/SupervisorImporter` | Parses pasted `supervisor` `[program:x]` INI text into a field-mapping preview (see README's mapping table) for non-destructive migration. |
 
 The reducers (`ServiceStateMachine.reduce`, `OneshotStateMachine`) are the core abstraction to
 understand before touching supervision behavior: they take `(runtime state, event, Program config)`
-and return `(new runtime, [ServiceAction])`, and never perform I/O themselves — `Supervisor` (`Sources/BarbackApp/Supervisor.swift`, despite
-living in the app target it only orchestrates the core queue) executes the returned actions
+and return `(new runtime, [ServiceAction])`, and never perform I/O themselves — `Supervisor`
+(`Sources/BarbackCore/Supervisor/Supervisor.swift`) executes the returned actions
 against real processes/timers/the store. When changing restart,
 backoff, or crash-storm logic, edit the reducer and its test in
 `Tests/CoreTests/ServiceStateMachineTests.swift`, then re-derive the state diagram in

@@ -149,18 +149,23 @@ struct SummaryChip: View {
 }
 
 /// The state badge that sits beside a program's name.
+///
+/// `quiet` is for the states that need no attention (运行中 / 成功): they keep their colour on
+/// the row's dot and accent bar, but their badge drops to plain secondary text so a screen of
+/// healthy services doesn't spend the whole colour budget saying "fine" (StatusStyle.isQuiet).
 struct StateBadge: View {
     let text: String
     let color: Color
+    var quiet = false
 
     var body: some View {
         Text(text)
             .font(.system(size: 10, weight: .medium))
             .monospacedDigit()
-            .foregroundStyle(color)
+            .foregroundStyle(quiet ? Color.secondary : color)
             .padding(.horizontal, 5)
             .padding(.vertical, 1.5)
-            .background(Capsule().fill(color.opacity(0.13)))
+            .background(Capsule().fill(quiet ? Color.primary.opacity(0.06) : color.opacity(0.13)))
             .fixedSize()
     }
 }

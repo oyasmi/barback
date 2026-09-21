@@ -20,6 +20,10 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     /// (one of the pricier Foundation/AppKit objects to construct) when the icon wouldn't
     /// actually change, which is most of the time (design.md §6.2, ex-F20).
     private var lastIconSymbol: String?
+    /// Installed only while the panel is on screen. SwiftUI in a popover never gets a first
+    /// responder of its own for anything but the search field, so arrow-key navigation has to
+    /// come from AppKit (BAR-10).
+    private var keyMonitor: Any?
 
     init(appState: AppState) {
         self.appState = appState
@@ -91,6 +95,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         // Without this the panel's buttons would need a click to focus the window first.
         popover.contentViewController?.view.window?.makeKey()
         button.highlight(true)
+        installKeyMonitor()
         model.startTicking()
         // Cheap liveness re-check right when someone is about to look at the panel, per
         // design.md's own suggestion for this safety net (ex-F25).
@@ -101,8 +106,29 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         popover?.performClose(nil)
     }
 
+    private func installKeyMonitor() {
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            // Local monitors are always delivered on the main thread; `assumeIsolated` is how
+            // the rest of this codebase states that to the compiler.
+            MainActor.assumeIsolated { () -> NSEvent? in
+                // Scoped to the open panel: a monitor left armed would swallow arrow keys in
+                // the config window too.
+                guard let self, self.popover?.isShown == true, let model = self.panelModel else { return event }
+                return model.handleKeyDown(event) ? nil : event
+            }
+        }
+    }
+
+    private func removeKeyMonitor() {
+        if let keyMonitor {
+            NSEvent.removeMonitor(keyMonitor)
+            self.keyMonitor = nil
+        }
+    }
+
     func popoverDidClose(_ notification: Notification) {
         guard let closed = notification.object as? NSPopover, closed === popover else { return }
+        removeKeyMonitor()
         panelModel?.stopTicking()
         panelModel = nil
         popover?.contentViewController = nil

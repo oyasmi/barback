@@ -14,7 +14,12 @@ struct ProgramRowView: View {
     @State private var isHovering = false
 
     private var isExpanded: Bool { model.expandedId == snap.id }
+    private var isSelected: Bool { model.selectedId == snap.id }
     private var style: StatusStyle.Presentation { StatusStyle.presentation(for: snap) }
+    /// Secondary actions are revealed on approach — pointer, keyboard cursor, or an open
+    /// drawer. The primary button stays put; four permanent controls per row turned a list of
+    /// ten services into forty buttons to scan past (design.md §6.3).
+    private var showsSecondaryActions: Bool { isHovering || isSelected || isExpanded }
     private var isService: Bool { snap.program.kind == .service }
     private var serviceState: ServiceState { snap.serviceState ?? .stopped }
 
@@ -55,9 +60,15 @@ struct ProgramRowView: View {
         .overlay(alignment: .topLeading) { accentBar }
         .contentShape(Rectangle())
         .onHover { isHovering = $0 }
-        .onTapGesture { model.toggleExpanded(snap.id) }
+        .onTapGesture {
+            // Clicking a row also moves the keyboard cursor there, so ↑/↓ continues from
+            // where the pointer left off instead of jumping back to the top.
+            model.selectedId = snap.id
+            model.toggleExpanded(snap.id)
+        }
         .accessibilityElement(children: .contain)
         .accessibilityLabel("\(snap.program.name)，\(style.label)")
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
     }
 
     // MARK: - Title row
@@ -73,7 +84,7 @@ struct ProgramRowView: View {
             // A disabled program is always stopped, so the state badge would only repeat what
             // 已停用 already says — and the row needs that width for its actions.
             if snap.program.enabled {
-                StateBadge(text: style.label, color: style.color)
+                StateBadge(text: style.label, color: style.color, quiet: style.isQuiet)
             } else {
                 MetaTag(text: "已停用")
             }
@@ -102,10 +113,21 @@ struct ProgramRowView: View {
         }
     }
 
-    @ViewBuilder
     private var actionCluster: some View {
         HStack(spacing: 2) {
             primaryButton
+            secondaryActions
+                // Kept in the layout rather than removed, so the primary button doesn't shift
+                // sideways the moment the pointer arrives.
+                .opacity(showsSecondaryActions ? 1 : 0)
+                .allowsHitTesting(showsSecondaryActions)
+                .animation(.easeOut(duration: 0.12), value: showsSecondaryActions)
+        }
+    }
+
+    @ViewBuilder
+    private var secondaryActions: some View {
+        HStack(spacing: 2) {
             if isService {
                 GlyphButton(systemImage: "arrow.clockwise", help: "重启", isEnabled: serviceState.isActive) {
                     model.restart(snap)
@@ -122,50 +144,12 @@ struct ProgramRowView: View {
         }
     }
 
-    @ViewBuilder
+    /// Label, tint and behaviour all come from `StatusStyle.primaryAction`, which the ⌘↩
+    /// keyboard path uses too.
     private var primaryButton: some View {
-        if isService {
-            // A disabled-but-inactive service showed a perfectly clickable "启动" here even
-            // though the row's own badge says 已停用 and "停用" is documented to mean "won't
-            // start on its own" — the only consistent reading is that starting it manually
-            // first requires turning it back on (design.md §6.3, ex-F06). A service disabled
-            // while still running keeps its normal stop/restart controls; disabling doesn't
-            // touch anything already active.
-            if !snap.program.enabled, !serviceState.isActive {
-                PillButton(title: "启用", systemImage: "checkmark.circle", tint: StatusStyle.running) {
-                    model.enable(snap)
-                }
-            } else {
-                serviceButton
-            }
-        } else if snap.oneshotState == .running {
-            PillButton(title: "中止", systemImage: "stop.fill", tint: StatusStyle.failure) {
-                model.cancelOneshot(snap)
-            }
-        } else {
-            PillButton(title: "运行", systemImage: "play.fill", tint: StatusStyle.active) {
-                model.runOneshot(snap)
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var serviceButton: some View {
-        switch serviceState {
-        case .stopping:
-            // TERM has been sent and we are waiting it out; the only useful escalation
-            // here is SIGKILL, so that is what the row offers.
-            PillButton(title: "强制终止", systemImage: "bolt.fill", tint: StatusStyle.failure) {
-                model.forceKill(snap)
-            }
-        case .running, .starting, .backoff:
-            PillButton(title: "停止", systemImage: "stop.fill", tint: StatusStyle.failure) {
-                model.stop(snap)
-            }
-        case .stopped, .exited, .fatal:
-            PillButton(title: "启动", systemImage: "play.fill", tint: StatusStyle.running) {
-                model.start(snap)
-            }
+        let action = StatusStyle.primaryAction(for: snap)
+        return PillButton(title: action.title, systemImage: action.symbol, tint: action.tint) {
+            model.performPrimary(snap)
         }
     }
 
@@ -387,16 +371,23 @@ struct ProgramRowView: View {
 
     private var rowBackground: some View {
         RoundedRectangle(cornerRadius: 8, style: .continuous)
-            .fill(Color.primary.opacity(isExpanded ? 0.06 : (isHovering ? 0.045 : 0)))
+            .fill(Color.primary.opacity(isExpanded || isSelected ? 0.06 : (isHovering ? 0.045 : 0)))
             .overlay {
                 RoundedRectangle(cornerRadius: 8, style: .continuous)
-                    .stroke(style.color.opacity(isExpanded ? 0.2 : 0), lineWidth: 1)
+                    .stroke(strokeColor, lineWidth: 1)
             }
     }
 
+    private var strokeColor: Color {
+        if isSelected { return Color.accentColor.opacity(0.55) }
+        return style.color.opacity(isExpanded ? 0.2 : 0)
+    }
+
+    /// The scannable spine. A quiet state keeps it, but dimmer: on a healthy panel it should
+    /// read as texture, and let an orange or red bar be the thing that catches the eye.
     private var accentBar: some View {
         Capsule()
-            .fill(style.color.opacity(snap.isActive ? 0.75 : 0.3))
+            .fill(style.color.opacity(snap.isActive ? (style.isQuiet ? 0.45 : 0.8) : 0.3))
             .frame(width: 3, height: 18)
             .padding(.leading, 1)
             .padding(.top, 8)

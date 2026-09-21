@@ -34,8 +34,12 @@ struct EventsWindowView: View {
                 TableColumn("时间") { e in Text(format(e.ts)) }
                 TableColumn("级别") { e in Text(e.level.rawValue).foregroundStyle(color(for: e.level)) }
                 TableColumn("对象") { e in Text(programName(e.programId)) }
-                TableColumn("类型") { e in Text(e.type.rawValue) }
-                TableColumn("详情") { e in Text(e.detailJSON).lineLimit(1) }
+                TableColumn("类型") { e in Text(e.type.displayText) }
+                TableColumn("详情") { e in
+                    Text(EventPresentation.detail(for: e))
+                        .lineLimit(1)
+                        .help(e.detailJSON)
+                }
             }
         }
         .onAppear { reload() }
@@ -63,15 +67,28 @@ struct EventsWindowView: View {
     }
 
     private func exportEvents() {
+        // Rendered before the panel opens, so the completion handler carries nothing but a
+        // string — and so the exported rows say the same thing the table on screen does.
+        // A leading BOM makes Excel read the file as UTF-8 instead of mojibake, and the time
+        // column is an ISO timestamp rather than the raw epoch double the rows carry.
+        let formatter = ISO8601DateFormatter()
+        var csv = "\u{FEFF}time,level,program,type,detail\n"
+        for event in events {
+            let fields = [
+                formatter.string(from: event.ts),
+                event.level.rawValue,
+                programName(event.programId),
+                event.type.displayText,
+                EventPresentation.detail(for: event)
+            ]
+            csv += fields.map { "\"\($0.replacingOccurrences(of: "\"", with: "\"\""))\"" }.joined(separator: ",") + "\n"
+        }
+        let document = csv
         let panel = NSSavePanel()
         panel.nameFieldStringValue = "barback-events.csv"
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
-            var csv = "time,level,program_id,type,detail\n"
-            for e in events {
-                csv += "\(e.ts),\(e.level.rawValue),\(e.programId.map(String.init) ?? ""),\(e.type.rawValue),\"\(e.detailJSON.replacingOccurrences(of: "\"", with: "'"))\"\n"
-            }
-            try? csv.write(to: url, atomically: true, encoding: .utf8)
+            try? document.write(to: url, atomically: true, encoding: .utf8)
         }
     }
 

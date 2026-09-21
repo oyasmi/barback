@@ -179,7 +179,7 @@ IDLE ──[运行]──► RUNNING ──┬─ 退出码 ∈ exitCodes ─►
 - **无** autostart / autorestart / startSeconds / startRetries / 退避——一次性命令永不自动重试。
 - 禁止并发：RUNNING 时菜单「运行」置灰，`Supervisor.dispatchOneshotEvent` 无条件拒绝重复触发。曾经计划过 `allowConcurrent=true` 放开多实例，但 `OneshotRuntime`/`currentRunId` 只有单槽位记账，两个并发实例会互相踩踏对方的运行记录，故已放弃该方向并移除相关字段（ex-F12）。
 - `confirmBeforeRun=true` 的命令在触发前弹确认框。
-- 每次执行写一条 `runs` 记录并分配独立输出文件 `runs/<name>-<runId>.log`；超出保留条数（默认 50）时按 FIFO 删记录与文件。
+- 每次执行写一条 `runs` 记录并分配独立输出文件 `runs/<name>-<runId>.log`——文件名取决于 run id，所以路径只能在插入记录之后回写（`Store.setRunLogPath`）；超出保留条数（默认 50）时按 FIFO 删记录与文件。
 - 终态触发系统通知（结果 + 耗时），点击通知打开该次输出。
 
 ### 3.5 停止序列（两类通用）
@@ -219,7 +219,7 @@ applicationShouldTerminate:
 4. a 成功 b 失败 → PID 已复用，原进程已消失 → 按"退出码未知"处理
 5. a 失败 → 进程已在 Barback 缺席期间退出 → 服务按 autorestart 语义处理，一次性命令记为"结果未知"
 6. 接管完成后再处理 autostart（避免重复启动已接管的服务）
-7. 事件日志记 `recoveredFromCrash`，菜单顶部提示一次"上次异常退出，已恢复 N 项"
+7. 事件日志记 `recoveredFromCrash`，面板顶部提示"上次异常退出，已接管 N 项"，带关闭按钮（`Supervisor.dismissRecoveryNotice` 清零 `recoveredCount`）——`recoveredCount` 在进程存活期内不会自然归零，没有这个按钮该提示会在每次打开面板时重复出现
 ```
 
 `live` 表在每次状态迁移后同步写入（当前未做合并批量写入——每次迁移一次 `UPSERT`），崩溃时最多丢失最近一次尚未落盘的状态变化。
@@ -240,6 +240,8 @@ applicationShouldTerminate:
 - 动作：`<name>.log` → 复制为 `.1`（旧的依次后移，超 `backups` 的删除）→ 对原文件 `ftruncate(0)`（子进程因 `O_APPEND` 从 0 继续写）→ 写入轮转标记行 → 记 `logRotated` 事件。
 - **取舍**：复制与截断之间写入的极少量数据可能丢失。提供 `rotatePolicy = onRestart` 严格模式：仅在服务重启时 `rename` 轮转，此时无写入者，零丢失。
 - 写失败（ENOSPC 等）：子进程的 fd 直连日志文件，Barback 并不在那条数据路径上，因此无法实时感知单次 `write` 失败；下一次周期性轮转检查（`stat`/复制/截断的过程）若因磁盘写满而出错，会记一条 `logWriteFailed` error 事件，**不停止业务进程**。
+
+**重命名与删除**：默认日志路径由程序名派生，因此改名时 `LogManager.renameServiceLogs` 会把 `programs/<旧名>.out.log` 及其 `.N` 备份一并 `rename` 过去——`rename(2)` 保持 inode，运行中的子进程通过已打开的 fd 继续写，输出无缝落到新文件；显式配置过 `logPath` 的程序不动。删除程序时一并删除其 `run` 记录指向的输出文件与默认日志文件（`ON DELETE CASCADE` 会先抹掉唯一指向这些文件的记录，必须先取路径再删行）。
 
 **读取（按需）**：日志窗口打开时由 UI 层直接读文件——`seek` 到 `max(0, size − 2 MB)` 对齐行边界后加载；跟随模式用 `DispatchSource.makeFileSystemObjectSource(.write|.extend|.rename|.delete)` 增量读取，检测到 inode 变化或文件缩小则重开。行数组设 5000 行上限。窗口关闭即注销监听、归零开销。渲染用 `NSTextView`（`NSViewRepresentable` 包装）而非 SwiftUI 列表，保证大文本性能。
 
@@ -383,7 +385,11 @@ statusItem.button?.action = #selector(handleClick(_:))
 }
 ```
 
-面板与菜单都**只在打开的瞬间构建、关闭即释放**，且面板不持有任何周期性计时器：打开时采样一次，800 ms 后再采样一次，随即结束。第二次采样不是刷新，而是 CPU% 的必要条件——`proc_taskinfo` 给的是累计 CPU 时间，占用率只能由两次采样的差值算出，只采一次的结果永远是 0.0%（0.3.0 曾因此让所有程序恒显 0.0%）。运行时长与退避倒计时按快照时刻推算，不逐秒跳动。`popoverDidClose` 取消尚未落地的第二次采样并清空采样历史：**面板关闭时不采样 CPU/RSS、不刷新计时**，这是常态零开销的关键。
+面板与菜单都**只在打开的瞬间构建、关闭即释放**。CPU/RSS 采样只发生两次：打开时一次，800 ms 后再一次。第二次采样不是刷新，而是 CPU% 的必要条件——`proc_taskinfo` 给的是累计 CPU 时间，占用率只能由两次采样的差值算出，只采一次的结果永远是 0.0%（0.3.0 曾因此让所有程序恒显 0.0%）。
+
+面板另有一个**每秒只做一次 `Date()` 赋值**的时钟（`StatusPanelModel.startClock`），用于推进运行时长与退避倒计时——`backoff_remaining` 冻结在快照发布时刻，而 BACKOFF 等待期间不会有新快照，没有这个时钟时倒计时与进度发丝线在面板打开期间完全静止（与 §6.3 的约定相悖）。该时钟在没有任何活动进程时跳过赋值，且随面板关闭一并取消。
+
+`popoverDidClose` 取消尚未落地的第二次采样、停掉时钟并清空采样历史：**面板关闭时不采样 CPU/RSS、不走时钟**，这是常态零开销的关键。
 
 ### 6.3 左键面板
 
@@ -436,7 +442,11 @@ statusItem.button?.action = #selector(handleClick(_:))
 - 状态**同时用形状、文字与颜色表达**（实心绿=运行 / 半填充橙+转轮=启动中·停止中 / 空心灰=停止·退出 / 红⚠=启动失败 / ✓✗=一次性结果），不单靠颜色传达信息；行首还有一条同色竖条作为可扫视的状态脊。
 - 强制终止只在 `STOPPING` 出现——状态机也只在这个状态接受 `forceKill`，其余状态给出这个按钮等于给一个死键。它会先关面板再弹确认。
 - 异常态用整条提示带表达而不是一行小字：`FATAL` 给「清除状态」，运行中改过运行时字段给「立即重启」。
-- 退避用倒计时 + 进度发丝线。快照里的 `backoff_remaining` 冻结在发布时刻，面板按本地时钟推进，不必等定时器到点才更新。
+- 退避用倒计时 + 进度发丝线。快照里的 `backoff_remaining` 冻结在发布时刻，面板按本地时钟（§6.2 的每秒时钟）推进，不必等定时器到点才更新。
+- 行上的次级图标按钮（重启 / 日志 / 历史 / 展开）在指针悬停、键盘选中或抽屉展开时才显现，主按钮常驻；十个服务的静息态因此是十条「状态脊 + 名称 + 徽标 + 一行指标」，而不是四十个常亮控件。占位保留，显隐不引起布局跳动。
+- 「运行中」「成功」属于**安静态**：颜色只留在状态点与状态脊（且脊的不透明度更低），徽标退为次要文字。颜色预算留给 BACKOFF 的橙与 FATAL 的红。
+- 键盘（BAR-10）：面板打开即聚焦搜索框；↑/↓ 按绘制顺序移动选中行并滚动到可见，↩ 展开/收起抽屉，⌘↩ 执行该行主动作，Esc 关闭面板。按键由 `StatusItemController` 在面板显示期间挂的 `NSEvent` 本地监视器转发给 `StatusPanelModel.handleKeyDown`。↩ 与 ⌘↩ 这样分工是刻意的：在搜索框里打完字顺手敲回车太容易，不能让它停掉一个服务。
+- 主按钮的文案、图标、配色与行为统一来自 `StatusStyle.primaryAction(for:)`，键盘路径与按钮走同一个入口。
 - 项数 > 8 时出现搜索框；服务存在一个以上 `group_name` 时按分组分节。
 - 紧凑密度（偏好设置）去掉指标行，其余不变。
 

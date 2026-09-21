@@ -21,7 +21,10 @@ final class WindowController: NSObject, NSWindowDelegate {
         self.appState = appState
     }
 
-    private func makeWindow<Content: View>(title: String, size: NSSize, content: Content) -> NSWindow {
+    /// `autosaveName` makes AppKit remember where the window was and how big it was, per
+    /// WIN-1 — without it every window reopened dead centre at its default size, which is
+    /// especially annoying for the log viewer someone has parked beside their editor.
+    private func makeWindow<Content: View>(title: String, size: NSSize, autosaveName: String, content: Content) -> NSWindow {
         let hosting = NSHostingController(rootView: content)
         let window = NSWindow(contentViewController: hosting)
         window.title = title
@@ -29,6 +32,8 @@ final class WindowController: NSObject, NSWindowDelegate {
         window.styleMask = [.titled, .closable, .resizable, .miniaturizable]
         window.isReleasedWhenClosed = false
         window.center()
+        // Set after `center()`: a saved frame is applied by this call and must win over it.
+        _ = window.setFrameAutosaveName(autosaveName)
         return window
     }
 
@@ -53,7 +58,7 @@ final class WindowController: NSObject, NSWindowDelegate {
             onShowHistory: { [weak self] in self?.showHistoryWindow(programId: $0) },
             onShowImport: { [weak self] in self?.showImportWindow() }
         )
-        let window = makeWindow(title: "配置", size: NSSize(width: 980, height: 680), content: view)
+        let window = makeWindow(title: "配置", size: NSSize(width: 980, height: 680), autosaveName: "barback.config", content: view)
         window.minSize = NSSize(width: 840, height: 560)
         window.toolbarStyle = .unified
         window.delegate = self
@@ -73,7 +78,7 @@ final class WindowController: NSObject, NSWindowDelegate {
             return
         }
         let view = LogViewerView(programName: snap.program.name, path: ProgramLogPath.resolve(for: snap))
-        let window = makeWindow(title: "日志 · \(snap.program.name)", size: NSSize(width: 760, height: 520), content: view)
+        let window = makeWindow(title: "日志 · \(snap.program.name)", size: NSSize(width: 760, height: 520), autosaveName: "barback.log.\(programId)", content: view)
         window.delegate = self
         logWindows[programId] = window
         NSApp.activate(ignoringOtherApps: true)
@@ -92,7 +97,7 @@ final class WindowController: NSObject, NSWindowDelegate {
                 initialProgramId: programId,
                 onRerun: { [weak self] id in self?.runOneshotRespectingConfirm(programId: id) }
             )
-            let window = makeWindow(title: "执行历史", size: NSSize(width: 820, height: 520), content: view)
+            let window = makeWindow(title: "执行历史", size: NSSize(width: 820, height: 520), autosaveName: "barback.history", content: view)
             window.delegate = self
             historyWindow = window
         }
@@ -103,7 +108,7 @@ final class WindowController: NSObject, NSWindowDelegate {
     func showEventsWindow() {
         if eventsWindow == nil {
             let view = EventsWindowView(appState: appState)
-            let window = makeWindow(title: "事件日志", size: NSSize(width: 820, height: 520), content: view)
+            let window = makeWindow(title: "事件日志", size: NSSize(width: 820, height: 520), autosaveName: "barback.events", content: view)
             window.delegate = self
             eventsWindow = window
         }
@@ -114,7 +119,7 @@ final class WindowController: NSObject, NSWindowDelegate {
     func showPreferencesWindow() {
         if preferencesWindow == nil {
             let view = PreferencesWindowView(appState: appState)
-            let window = makeWindow(title: "偏好设置", size: NSSize(width: 480, height: 520), content: view)
+            let window = makeWindow(title: "偏好设置", size: NSSize(width: 480, height: 520), autosaveName: "barback.preferences", content: view)
             window.delegate = self
             preferencesWindow = window
         }
@@ -125,7 +130,7 @@ final class WindowController: NSObject, NSWindowDelegate {
     func showImportWindow() {
         if importWindow == nil {
             let view = ImportWindowView(appState: appState, onClose: { [weak self] in self?.importWindow?.close() })
-            let window = makeWindow(title: "从 supervisor 粘贴导入", size: NSSize(width: 720, height: 560), content: view)
+            let window = makeWindow(title: "从 supervisor 粘贴导入", size: NSSize(width: 720, height: 560), autosaveName: "barback.import", content: view)
             window.delegate = self
             importWindow = window
         }

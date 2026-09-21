@@ -5,14 +5,36 @@ public enum RunTrigger: String, Codable, Sendable {
     case autostart
     case autorestart
     case retry
+
+    public var displayText: String {
+        switch self {
+        case .manual: return "手动"
+        case .autostart: return "开机自启"
+        case .autorestart: return "自动重启"
+        case .retry: return "重试"
+        }
+    }
 }
 
-public enum RunOutcome: String, Codable, Sendable {
+public enum RunOutcome: String, Codable, Sendable, CaseIterable {
     case succeeded
     case failed
     case timeout
     case cancelled
     case unknown
+
+    /// The raw values are storage, not copy. They were reaching the history table and the
+    /// config sidebar verbatim, so a Chinese UI showed 「succeeded」 in two places while the
+    /// status panel showed 「成功」 for the same run.
+    public var displayText: String {
+        switch self {
+        case .succeeded: return "成功"
+        case .failed: return "失败"
+        case .timeout: return "超时"
+        case .cancelled: return "已中止"
+        case .unknown: return "结果未知"
+        }
+    }
 }
 
 /// One row of the `run` table: one service start, or one oneshot execution.
