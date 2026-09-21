@@ -40,6 +40,11 @@ public struct SupervisorSnapshot: Equatable, Sendable {
     public var programs: [ProgramSnapshot]
     public var recoveredCount: Int
 
+    public init(programs: [ProgramSnapshot], recoveredCount: Int) {
+        self.programs = programs
+        self.recoveredCount = recoveredCount
+    }
+
     public var runningCount: Int { programs.filter { $0.serviceState == .running }.count }
     /// Services that are neither settled-running nor settled-stopped. Without this the
     /// header's chips silently dropped them: three services with one in BACKOFF read as

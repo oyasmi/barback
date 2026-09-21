@@ -109,13 +109,15 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     private func installKeyMonitor() {
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             // Local monitors are always delivered on the main thread; `assumeIsolated` is how
-            // the rest of this codebase states that to the compiler.
-            MainActor.assumeIsolated { () -> NSEvent? in
+            // the rest of this codebase states that to the compiler. NSEvent isn't Sendable, so
+            // the isolated closure returns a Bool instead of the event itself.
+            let consumed = MainActor.assumeIsolated { () -> Bool in
                 // Scoped to the open panel: a monitor left armed would swallow arrow keys in
                 // the config window too.
-                guard let self, self.popover?.isShown == true, let model = self.panelModel else { return event }
-                return model.handleKeyDown(event) ? nil : event
+                guard let self, self.popover?.isShown == true, let model = self.panelModel else { return false }
+                return model.handleKeyDown(event)
             }
+            return consumed ? nil : event
         }
     }
 
