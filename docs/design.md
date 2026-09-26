@@ -262,7 +262,7 @@ applicationShouldTerminate:
 └── runs/<name>-<runId>.log                   # 一次性命令每次输出
 ```
 
-SQLite 以 **WAL + `synchronous=NORMAL`** 运行，写入全部发生在 core 串行队列（单写者），无并发写问题。启动时执行 `PRAGMA integrity_check`，失败则从最近备份恢复并提示。
+SQLite 以 **WAL + `synchronous=NORMAL`** 运行，写入全部发生在 core 串行队列（单写者），无并发写问题。启动时执行 `PRAGMA quick_check`（比 `integrity_check` 快一到两个数量级，代价是跳过索引交叉校验，足以覆盖启动时最常见的"文件根本坏了"这一类问题），失败则从最近备份恢复并提示。
 
 ### 5.2 Schema
 
@@ -562,7 +562,7 @@ SwiftUI `NavigationSplitView` 挂在 AppKit 窗口上，默认 980×680、最小
 | 崩溃风暴 | 指数退避 + 滑动窗口阈值强制 FATAL |
 | 停止残留子孙进程 | SETSID + 整组信号 + KILL 兜底 |
 | 磁盘写满 | 事件 + 通知 + 菜单标注，业务进程照常运行 |
-| 数据库损坏 | WAL + 事务；启动 `integrity_check`；每次配置变更后滚动 JSON 备份（10 份）可一键恢复 |
+| 数据库损坏 | WAL + 事务；启动 `quick_check`；每次配置变更后滚动 JSON 备份（10 份）可一键恢复 |
 | 睡眠唤醒状态漂移 | 唤醒后全量双因子核对 |
 | 升级 | 只换 `.app`；按 `PRAGMA user_version` 做 schema 迁移，迁移前自动备份数据库 |
 

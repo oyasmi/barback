@@ -19,14 +19,18 @@ codesign --force --deep --options runtime \
   --sign "$DEVELOPER_ID_APPLICATION" \
   "$APP_BUNDLE"
 
-codesign --verify --deep --strict --verbose=2 "$APP_BUNDLE"
+# `Scripts/package.sh` was run once already, by `make all` before this script — but that DMG
+# wraps the app bundle as `build.sh` ad-hoc-signed it, not the Developer ID signature just
+# applied above. Notarizing that DMG unmodified would submit the pre-signing copy: repackage
+# now, from the app this script just actually signed, so what gets submitted (and later
+# stapled and shipped) is the same bytes that were verified above (R07).
+echo "==> Repackaging DMG from the signed app"
+Scripts/package.sh
 
-if [ -f "$DMG_PATH" ]; then
-  echo "==> Submitting for notarization"
-  xcrun notarytool submit "$DMG_PATH" --keychain-profile "barback-notary" --wait
-  echo "==> Stapling"
-  xcrun stapler staple "$DMG_PATH"
-else
-  echo "$DMG_PATH not found; run Scripts/package.sh first" >&2
-  exit 1
-fi
+echo "==> Submitting for notarization"
+xcrun notarytool submit "$DMG_PATH" --keychain-profile "barback-notary" --wait
+echo "==> Stapling"
+xcrun stapler staple "$DMG_PATH"
+
+echo "==> Verifying stapled DMG"
+xcrun stapler validate "$DMG_PATH"

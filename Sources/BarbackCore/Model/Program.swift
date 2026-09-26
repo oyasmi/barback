@@ -156,6 +156,25 @@ public struct Program: Codable, Sendable, Equatable, Identifiable {
         self.updatedAt = updatedAt
     }
 
+    /// Deterministic ordering for every place a list of programs is displayed or iterated in
+    /// priority order — two programs sharing a priority (the common case: every new program
+    /// defaults to the same value) used to fall back on `Dictionary`'s own unspecified
+    /// iteration order, which can silently reshuffle between snapshots with nothing in the
+    /// data actually having changed.
+    public static func priorityAscending(_ a: Program, _ b: Program) -> Bool {
+        if a.priority != b.priority { return a.priority < b.priority }
+        if a.name != b.name { return a.name < b.name }
+        return a.id < b.id
+    }
+
+    /// Same tie-break as `priorityAscending`, for the handful of call sites (stop order,
+    /// termination order) that need highest-priority-first instead.
+    public static func priorityDescending(_ a: Program, _ b: Program) -> Bool {
+        if a.priority != b.priority { return a.priority > b.priority }
+        if a.name != b.name { return a.name < b.name }
+        return a.id < b.id
+    }
+
     /// The fields that only take effect for an *already-running* instance after a restart —
     /// the rest (autostart/autorestart/priority/group/notes/rotation params, per CFG-5) apply
     /// immediately. The config window and the status panel both need this same distinction
@@ -164,6 +183,7 @@ public struct Program: Codable, Sendable, Equatable, Identifiable {
     public static func runtimeFieldsDiffer(_ a: Program, _ b: Program) -> Bool {
         a.command != b.command || a.useShell != b.useShell || a.directory != b.directory ||
         a.environment != b.environment || a.logPath != b.logPath || a.logStderrPath != b.logStderrPath ||
+        a.logMergeStderr != b.logMergeStderr ||
         a.stopSignal != b.stopSignal || a.stopWaitSeconds != b.stopWaitSeconds || a.timeoutSeconds != b.timeoutSeconds
     }
 

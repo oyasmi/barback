@@ -12,7 +12,6 @@ final class LogTailModel: ObservableObject {
     @Published var sizeDescription: String = ""
 
     private var source: DispatchSourceFileSystemObject?
-    private var fd: Int32 = -1
     private var lastInode: UInt64?
     private var pendingFSWork: DispatchWorkItem?
 
@@ -30,21 +29,27 @@ final class LogTailModel: ObservableObject {
 
     func stop() {
         pendingFSWork?.cancel()
+        pendingFSWork = nil
         source?.cancel()
         source = nil
-        if fd >= 0 { close(fd); fd = -1 }
     }
 
     func resumeFollowing() {
         guard source == nil else { return }
-        fd = open(path, O_EVTONLY)
-        guard fd >= 0 else { return }
-        let src = DispatchSource.makeFileSystemObjectSource(fileDescriptor: fd, eventMask: [.write, .extend, .rename, .delete], queue: .main)
+        let newFD = open(path, O_EVTONLY)
+        guard newFD >= 0 else { return }
+        let src = DispatchSource.makeFileSystemObjectSource(fileDescriptor: newFD, eventMask: [.write, .extend, .rename, .delete], queue: .main)
         src.setEventHandler { [weak self] in
             self?.handleFSEvent()
         }
-        src.setCancelHandler { [weak self] in
-            if let self, self.fd >= 0 { close(self.fd); self.fd = -1 }
+        // Captures `newFD` itself rather than reading `self.fd` back — that mutable property
+        // used to be shared across every `resumeFollowing`/`pauseFollowing` cycle, so a quick
+        // pause-then-resume left this cancel handler closing the *new* source's fd instead of
+        // its own once it eventually fired, and `stop()`'s own manual `close(fd)` raced it for
+        // the same descriptor (Apple's own guidance is that only a source's cancel handler
+        // should close the descriptor it was created with, R13).
+        src.setCancelHandler {
+            close(newFD)
         }
         src.resume()
         source = src
@@ -72,9 +77,17 @@ final class LogTailModel: ObservableObject {
     /// to 5000 lines into a string and diffs it against the full `NSTextView` contents — cheap
     /// once, not at that rate (design.md §4, ex-F18). Coalescing to one pass per ~100ms caps
     /// the rebuild rate without changing what ends up on screen.
+    ///
+    /// This only schedules a new pass when none is already pending — it used to cancel and
+    /// reschedule on every single event, which is a debounce, not a throttle: output arriving
+    /// faster than once every 100ms kept pushing the deadline back and the view could go
+    /// arbitrarily long without a single refresh (R13).
     private func handleFSEvent() {
-        pendingFSWork?.cancel()
-        let work = DispatchWorkItem { [weak self] in self?.processFSEvent() }
+        guard pendingFSWork == nil else { return }
+        let work = DispatchWorkItem { [weak self] in
+            self?.pendingFSWork = nil
+            self?.processFSEvent()
+        }
         pendingFSWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: work)
     }
@@ -131,10 +144,22 @@ final class LogTailModel: ObservableObject {
             loadTail()
             return
         }
+        // A paused viewer resuming into a burst of output — or any gap this large — should be
+        // capped the same way the initial load caps it, rather than reading the whole thing
+        // into memory in one `readDataToEndOfFile()` just because it happened to arrive as a
+        // single follow-up event (R13).
+        guard size - readOffset <= UInt64(Self.maxBytes) else {
+            loadTail()
+            return
+        }
         try? handle.seek(toOffset: readOffset)
         let data = handle.readDataToEndOfFile()
-        readOffset = size
         guard !data.isEmpty else { return }
+        // Advances by what was actually read, not by the size observed before reading it — the
+        // file can grow between that `seekToEnd()` and this read, and stamping `readOffset` to
+        // the earlier, smaller size used to mean the bytes appended in between got queued up to
+        // be read (and displayed) a second time on the next event (R13).
+        readOffset += UInt64(data.count)
         let text = String(data: data, encoding: .utf8) ?? String(decoding: data, as: UTF8.self)
         var newLines = text.components(separatedBy: "\n")
         if newLines.last == "" { newLines.removeLast() }
@@ -142,6 +167,6 @@ final class LogTailModel: ObservableObject {
         if lines.count > Self.maxLines {
             lines = Array(lines.suffix(Self.maxLines))
         }
-        sizeDescription = ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file)
+        sizeDescription = ByteCountFormatter.string(fromByteCount: Int64(readOffset), countStyle: .file)
     }
 }

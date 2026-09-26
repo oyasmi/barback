@@ -18,8 +18,11 @@ test:
 run:
 	swift run BarbackApp
 
-# Sign (Developer ID + Hardened Runtime) and notarize the dist/*.dmg.
+# Sign (Developer ID + Hardened Runtime), notarize and staple the dist/*.dmg.
 # Requires DEVELOPER_ID_APPLICATION to be set in the environment.
+# `all`'s own package.sh run only produces the ad-hoc-signed DMG build.sh needs to exist at
+# all — sign-notarize.sh repackages it itself from the Developer ID–signed app before
+# submitting, so what gets notarized/stapled is never the pre-signing copy (R07).
 sign: all
 	Scripts/sign-notarize.sh
 

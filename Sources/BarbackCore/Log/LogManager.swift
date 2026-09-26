@@ -12,9 +12,11 @@ public struct LogFDs {
 
 public enum LogManagerError: Error, LocalizedError {
     case openFailed(String)
+    case rotationFailed(String)
     public var errorDescription: String? {
         switch self {
         case .openFailed(let p): return "无法打开日志文件：\(p)"
+        case .rotationFailed(let detail): return "日志轮转失败：\(detail)"
         }
     }
 }
@@ -50,14 +52,17 @@ public enum LogManager {
             try FileManager.default.createDirectory(atPath: (errPath as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
         }
 
-        let outFD = open(outPath, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0o644)
+        // design.md §8.1 promises 0600 on files under Barback's own data directories — a
+        // managed process's stdout/stderr can carry secrets logged by mistake, and 0644 left
+        // every other local account able to read it (R-UX "默认日志权限与文档一致").
+        let outFD = open(outPath, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0o600)
         guard outFD >= 0 else { throw LogManagerError.openFailed(outPath) }
 
         let errFD: Int32
         if mergeStderr {
             errFD = dup(outFD)
         } else {
-            errFD = open(errPath, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0o644)
+            errFD = open(errPath, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0o600)
         }
         guard errFD >= 0 else { close(outFD); throw LogManagerError.openFailed(errPath) }
 
@@ -69,7 +74,7 @@ public enum LogManager {
         let dir = (logsDir as NSString).appendingPathComponent("runs")
         try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
         let path = (dir as NSString).appendingPathComponent("\(name)-\(runId).log")
-        let fd = open(path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0o644)
+        let fd = open(path, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0o600)
         guard fd >= 0 else { throw LogManagerError.openFailed(path) }
         writeSeparatorLine(fd: fd, name: name)
         return LogFDs(outFD: fd, errFD: dup(fd), outPath: path, errPath: path)
@@ -119,13 +124,23 @@ public enum LogManager {
     /// `.N` rotation of them. Enumerating the directory rather than counting up to
     /// `logBackups` means a file left behind by an older, larger backup setting still gets
     /// picked up.
+    ///
+    /// Only the exact base name or `base + "." + <positive integer>` counts as this program's
+    /// — a plain `entry.hasPrefix(base + ".")` used to also match e.g. program `api`'s
+    /// `api.out.log` against program `api.out.log.worker`'s own live file, so renaming or
+    /// deleting `api` would rename/delete a completely different program's log out from under
+    /// it (R03).
     private static func defaultLogEntries(name: String, dir: String) -> [FoundLog] {
         guard let entries = try? FileManager.default.contentsOfDirectory(atPath: dir) else { return [] }
         var result: [FoundLog] = []
         for suffix in ["out.log", "err.log"] {
             let base = "\(name).\(suffix)"
-            for entry in entries where entry == base || entry.hasPrefix(base + ".") {
-                result.append(FoundLog(entry: entry, suffix: suffix, rotation: String(entry.dropFirst(base.count))))
+            for entry in entries {
+                if entry == base {
+                    result.append(FoundLog(entry: entry, suffix: suffix, rotation: ""))
+                } else if entry.hasPrefix(base + "."), let n = Int(entry.dropFirst(base.count + 1)), n > 0 {
+                    result.append(FoundLog(entry: entry, suffix: suffix, rotation: ".\(n)"))
+                }
             }
         }
         return result
@@ -170,13 +185,27 @@ public enum LogManager {
                 }
                 n -= 1
             }
-            try? fm.copyItem(atPath: path, toPath: "\(path).1")
+            // The backup must actually land *before* the original is touched — this used to be
+            // `try?`, so a full disk or a permission error here silently fell straight through
+            // to `ftruncate` below and destroyed the only copy of everything the file held,
+            // with no working backup ever having been produced (R02).
+            do {
+                try fm.copyItem(atPath: path, toPath: "\(path).1")
+            } catch {
+                throw LogManagerError.rotationFailed("备份 \(path).1 失败：\(error)")
+            }
         }
 
         let fd = open(path, O_WRONLY)
-        guard fd >= 0 else { return false }
+        guard fd >= 0 else { throw LogManagerError.rotationFailed("无法打开 \(path) 进行截断") }
         defer { close(fd) }
-        ftruncate(fd, 0)
+        // Checking the return value matters here for the same reason as the copy above: an
+        // unchecked `ftruncate` used to report `rotated: true` (and log a plain `.logRotated`
+        // info event) even on failure, hiding the fact that the live file never actually
+        // shrank (R02).
+        guard ftruncate(fd, 0) == 0 else {
+            throw LogManagerError.rotationFailed("截断 \(path) 失败：errno=\(errno)")
+        }
         let marker = "----- rotated \(ISO8601DateFormatter().string(from: Date())) -----\n"
         marker.withCString { cstr in _ = write(fd, cstr, strlen(cstr)) }
         return true

@@ -97,6 +97,11 @@ public final class SQLiteDatabase {
         var handle: OpaquePointer?
         let rc = sqlite3_open(path, &handle)
         guard rc == SQLITE_OK else {
+            // `sqlite3_open` can return a non-null handle even on failure (its docs call this
+            // out explicitly, precisely so the caller can read `sqlite3_errmsg` off it) —
+            // leaving it unclosed here leaked it, one open file descriptor at a time, on every
+            // failed open the corruption-recovery path was specifically written to expect.
+            if let handle { sqlite3_close_v2(handle) }
             throw SQLiteError.openFailed("sqlite3_open failed: \(rc)")
         }
         db = handle

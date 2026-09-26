@@ -33,6 +33,7 @@ public enum ServiceAction: Sendable, Equatable {
     /// that emits this action, which used to make the kill silently a no-op (ex-F21).
     case sendKill(pid: Int32?, pgid: Int32?, group: Bool)
     case scheduleStopGrace(seconds: Double)
+    case cancelStopGrace
     case persistLive
     case publishSnapshot
     case notify(NotificationKind)
@@ -242,6 +243,12 @@ public enum ServiceStateMachine {
 
         case (.stopping, .processExited(let code, let signal, _)):
             actions.append(.cancelStopTimer)
+            // A previous `.stopTimerElapsed` may have scheduled a 2s stop-grace fallback
+            // (below) — if the process actually exits within that window, the grace timer
+            // must not survive to force-clear whatever *next* run this program is on by the
+            // time it fires (it used to be able to stomp a fresh STOPPING with no relation
+            // to the run that scheduled it).
+            actions.append(.cancelStopGrace)
             if config.killAsGroup, let pgid = r.pgid {
                 // The leader already exited; this is purely a group sweep for anything it
                 // forked. Capturing pgid now — before it is cleared below — is what makes

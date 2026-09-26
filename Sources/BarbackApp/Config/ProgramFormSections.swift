@@ -696,11 +696,21 @@ struct ByteSizeField: View {
         }
     }
 
+    /// `Int64(_: Double)` traps on NaN, infinity, or anything outside `Int64`'s range — a
+    /// `TextField(value:, format: .number)` hands back exactly those for a pasted huge number
+    /// or a momentarily-empty field mid-edit, which used to crash the whole app instead of
+    /// just rejecting that keystroke (R12).
+    private static func clampedBytes(_ raw: Double) -> Int64 {
+        guard raw.isFinite else { return 0 }
+        let clamped = max(0, min(raw, Double(Int64.max)))
+        return Int64(clamped.rounded(.towardZero))
+    }
+
     private var amountBinding: Binding<Double> {
         Binding(
             get: { Double(bytes) / Double(Self.units[unitIndex].1) },
             set: { newAmount in
-                bytes = Int64((max(0, newAmount) * Double(Self.units[unitIndex].1)).rounded())
+                bytes = Self.clampedBytes(max(0, newAmount) * Double(Self.units[unitIndex].1))
             }
         )
     }
@@ -710,7 +720,7 @@ struct ByteSizeField: View {
             get: { unitIndex },
             set: { newIndex in
                 let amount = Double(bytes) / Double(Self.units[unitIndex].1)
-                bytes = Int64((amount * Double(Self.units[newIndex].1)).rounded())
+                bytes = Self.clampedBytes(amount * Double(Self.units[newIndex].1))
             }
         )
     }

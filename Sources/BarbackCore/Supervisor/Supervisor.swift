@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(Darwin)
+import Darwin
+#endif
 
 public enum ProgramSaveError: Error, Sendable, Equatable {
     case validation([ProgramValidationError])
@@ -187,11 +190,21 @@ public final class Supervisor: @unchecked Sendable {
             var runtime = OneshotRuntime(state: .running, pid: live.pid, pgid: live.pgid, procStartTime: live.procStartTime)
             runtime.stopRequested = live.stopRequested
             oneshotRuntimes[program.id] = runtime
-            // design.md §3.7 step 3: a recovered one-shot must resume its timeout, not run
-            // forever unwatched — `procStartTime` is the OS's own record of when it actually
-            // started, so the remaining budget survives a crash exactly like a normal run's
-            // would (ex-F42).
-            if program.timeoutSeconds > 0, let procStartTime = live.procStartTime {
+            if live.stopRequested, let pid = live.pid {
+                // A stop (manual cancel or a timeout that already fired) was in flight when
+                // Barback crashed — the original stop timer died with it, exactly like a
+                // service's `wasStopping` case just above. Re-send the signal and restart the
+                // wait from scratch rather than resuming the timeout budget on a one-shot that
+                // was already on its way out (R09).
+                ProcessHost.signal(pid: pid, pgid: live.pgid, name: program.stopSignal, asGroup: program.stopAsGroup)
+                scheduleTimer(\.stopTimers, id: program.id, seconds: Double(program.stopWaitSeconds)) { [weak self] in
+                    self?.dispatchOneshotEvent(programId: program.id, event: .stopTimerElapsed)
+                }
+            } else if program.timeoutSeconds > 0, let procStartTime = live.procStartTime {
+                // design.md §3.7 step 3: a recovered one-shot must resume its timeout, not run
+                // forever unwatched — `procStartTime` is the OS's own record of when it
+                // actually started, so the remaining budget survives a crash exactly like a
+                // normal run's would (ex-F42).
                 let elapsed = Date().timeIntervalSince1970 - procStartTime
                 let remaining = max(0, Double(program.timeoutSeconds) - elapsed)
                 scheduleTimer(\.timeoutTimers, id: program.id, seconds: remaining) { [weak self] in
@@ -233,7 +246,7 @@ public final class Supervisor: @unchecked Sendable {
     private func autostartServices() {
         let services = programs.values
             .filter { $0.kind == .service && $0.enabled && $0.autostart }
-            .sorted { $0.priority < $1.priority }
+            .sorted(by: Program.priorityAscending)
         for program in services {
             let runtime = serviceRuntimes[program.id] ?? ServiceRuntime()
             guard runtime.state == .stopped || runtime.state == .exited else { continue }
@@ -244,7 +257,15 @@ public final class Supervisor: @unchecked Sendable {
     // MARK: - Public commands (all hop to core queue)
 
     public func start(id: Int64) { queue.async { self.dispatchServiceEvent(programId: id, event: .start(trigger: .manual)) } }
-    public func stop(id: Int64) { queue.async { self.dispatchServiceEvent(programId: id, event: .stop) } }
+    public func stop(id: Int64) {
+        queue.async {
+            // A later, explicit stop overrides any restart a previous `restart(id:)` queued up
+            // behind this program's in-flight stop — otherwise "重启 → 停止" would still spawn
+            // a fresh instance the moment the old one finished exiting (design.md §3.5, R08).
+            self.pendingRestartAfterStop.remove(id)
+            self.dispatchServiceEvent(programId: id, event: .stop)
+        }
+    }
     public func restart(id: Int64) {
         queue.async { [self] in
             guard let runtime = serviceRuntimes[id] else { return }
@@ -261,14 +282,15 @@ public final class Supervisor: @unchecked Sendable {
 
     public func startAll() {
         queue.async { [self] in
-            for program in programs.values.filter({ $0.kind == .service && $0.enabled }).sorted(by: { $0.priority < $1.priority }) {
+            for program in programs.values.filter({ $0.kind == .service && $0.enabled }).sorted(by: Program.priorityAscending) {
                 dispatchServiceEvent(programId: program.id, event: .start(trigger: .manual))
             }
         }
     }
     public func stopAll(completion: (@Sendable () -> Void)? = nil) {
         queue.async { [self] in
-            for program in programs.values.filter({ $0.kind == .service }).sorted(by: { $0.priority > $1.priority }) {
+            for program in programs.values.filter({ $0.kind == .service }).sorted(by: Program.priorityDescending) {
+                pendingRestartAfterStop.remove(program.id)
                 if serviceRuntimes[program.id]?.state.isActive == true {
                     dispatchServiceEvent(programId: program.id, event: .stop)
                 }
@@ -288,7 +310,7 @@ public final class Supervisor: @unchecked Sendable {
             // for startAll/stopAll (design.md §3.5).
             for program in programs.values
                 .filter({ $0.kind == .service })
-                .sorted(by: { $0.priority < $1.priority }) {
+                .sorted(by: Program.priorityAscending) {
                 guard serviceRuntimes[program.id]?.state.isActive == true else { continue }
                 restart(id: program.id)
             }
@@ -307,7 +329,7 @@ public final class Supervisor: @unchecked Sendable {
     }
 
     public func allPrograms(completion: @escaping @Sendable ([Program]) -> Void) {
-        queue.async { completion(Array(self.programs.values).sorted { $0.priority < $1.priority }) }
+        queue.async { completion(Array(self.programs.values).sorted(by: Program.priorityAscending)) }
     }
 
     public func validateAndSave(_ program: Program, completion: @escaping @Sendable (Result<Program, ProgramSaveError>) -> Void) {
@@ -325,6 +347,11 @@ public final class Supervisor: @unchecked Sendable {
             do {
                 var saved = program
                 if saved.id == 0 {
+                    // A "new" draft can be a duplicate of an existing program (design.md §6.3
+                    // 「复制」) carrying its source's lifetime run count straight into what is
+                    // about to become an unrelated row — reset it here, at the write boundary,
+                    // rather than trusting every draft-producing UI path to have done it (R11).
+                    saved.runTotal = 0
                     let id = try store.insertProgram(saved)
                     saved.id = id
                     programs[id] = saved
@@ -335,6 +362,17 @@ public final class Supervisor: @unchecked Sendable {
                     }
                 } else {
                     let old = programs[saved.id]
+                    // `store.updateProgram` already excludes `run_total` from the write so the
+                    // database's lifetime counter can't be rolled back by a stale draft — but
+                    // without this, the in-memory cache below still got overwritten with
+                    // whatever `runTotal`/`createdAt` the draft happened to carry from whenever
+                    // the config window opened it, so a run completing (and bumping the real
+                    // counter) while the window was open could make the panel's count jump
+                    // backwards the moment the draft was saved (R11).
+                    if let old {
+                        saved.runTotal = old.runTotal
+                        saved.createdAt = old.createdAt
+                    }
                     try store.updateProgram(saved)
                     programs[saved.id] = saved
                     if let old, runtimeFieldsChanged(old, saved), isRunning(saved.id) {
@@ -383,6 +421,10 @@ public final class Supervisor: @unchecked Sendable {
     /// row is only actually removed once its stop has really completed.
     public func deleteProgram(id: Int64, completion: @escaping @Sendable () -> Void) {
         queue.async { [self] in
+            // Delete outranks any restart a previous `restart(id:)` queued behind this
+            // program's in-flight stop (design.md §3.5, R08) — without this, "重启 → 删除"
+            // could spawn a brand-new instance of a program that is about to be removed.
+            pendingRestartAfterStop.remove(id)
             let serviceActive = serviceRuntimes[id]?.state.isActive == true
             let oneshotActive = oneshotRuntimes[id]?.state.isActive == true
             guard serviceActive || oneshotActive else {
@@ -434,6 +476,10 @@ public final class Supervisor: @unchecked Sendable {
         cancelTimer(\.stopTimers, id: id)
         cancelTimer(\.stopGraceTimers, id: id)
         cancelTimer(\.timeoutTimers, id: id)
+        // Save and reorder backed up the config on every commit but delete never did — a user
+        // who only ever deletes programs (never edits or reorders) could have zero config
+        // backups to fall back on if the database were then lost (design.md §8.1, R15).
+        try? backupConfig()
         publishSnapshot()
         completion?()
     }
@@ -469,8 +515,15 @@ public final class Supervisor: @unchecked Sendable {
                 var existing = Set(programs.values.map(\.name))
                 var name = draft.name
                 var suffix = 2
+                // `draft.name` is already ≤64 chars (`Program.namePattern`), but appending
+                // `-N` to a name already at that limit used to push it past it — silently
+                // saving a program whose own name failed the validator it was never actually
+                // run through here (R12). Truncating the base before appending keeps the
+                // final result within bounds without changing the suffix itself.
                 while existing.contains(name) {
-                    name = "\(draft.name)-\(suffix)"
+                    let suffixText = "-\(suffix)"
+                    let base = String(draft.name.prefix(64 - suffixText.count))
+                    name = base + suffixText
                     suffix += 1
                 }
                 draft.name = name
@@ -487,6 +540,11 @@ public final class Supervisor: @unchecked Sendable {
                 }
             }
             try? store.insertEvent(EventRecord(level: .info, type: .imported, detailJSON: "{\"count\":\(saved.count)}"))
+            // A user who builds their whole config through import (never touching the form or
+            // sidebar reorder, the only two places that used to call this) could end up with
+            // zero config backups — the one mechanism that survives a corrupt/lost database
+            // (design.md §8.1, R15).
+            if !saved.isEmpty { try? backupConfig() }
             publishSnapshot()
             completion(saved)
         }
@@ -538,8 +596,16 @@ public final class Supervisor: @unchecked Sendable {
             // `serviceRuntimes` here, because some transitions (stop's processExited) clear
             // the runtime's pid in the very same reduction that emits this action — reading
             // it back afterwards would always see nil (design.md §3.3, ex-F21).
+            //
+            // `pid` is deliberately nil for the group-sweep-only case (stop's processExited,
+            // §3.3): the leader already exited, and the only thing left to kill is whatever
+            // it forked into the group. That still requires an actual `kill(-pgid, SIGKILL)`
+            // — without this branch the sweep was silently skipped whenever `pid` was nil,
+            // leaving TERM-ignoring descendants running with the panel showing STOPPED.
             if let pid {
                 ProcessHost.sendKill(pid: pid, pgid: pgid, asGroup: group)
+            } else if group, let pgid {
+                ProcessHost.sendKill(pid: pgid, pgid: pgid, asGroup: true)
             }
         case .scheduleStopGrace(let seconds):
             scheduleTimer(\.stopGraceTimers, id: programId, seconds: seconds) { [weak self] in
@@ -550,6 +616,13 @@ public final class Supervisor: @unchecked Sendable {
                     r.state = .stopped
                     r.pid = nil
                     self.serviceRuntimes[programId] = r
+                    // This bypasses the reducer entirely, so — like the two follow-ups noted
+                    // below — it also has to repeat `.finalizeRun` itself: without it the run
+                    // row `spawnService` inserted stayed `ended_at IS NULL` forever, the same
+                    // orphaned-row shape as ex-F30/ex-F31 (R14).
+                    if let runId = self.currentRunId[programId] {
+                        self.finalizeRun(programId: programId, runId: runId, outcome: .cancelled, code: nil, signal: nil)
+                    }
                     self.persistLive(programId: programId)
                     self.publishSnapshot()
                     // This settles the runtime to STOPPED exactly like a normal
@@ -565,6 +638,8 @@ public final class Supervisor: @unchecked Sendable {
                     self.checkPendingDeletion(programId: programId)
                 }
             }
+        case .cancelStopGrace:
+            cancelTimer(\.stopGraceTimers, id: programId)
         case .persistLive:
             persistLive(programId: programId)
         case .publishSnapshot:
@@ -806,6 +881,14 @@ public final class Supervisor: @unchecked Sendable {
         do {
             var run = RunRecord(programId: program.id, trigger: .manual)
             run.id = try store.insertRun(run)
+            // Set as soon as the row exists, not after `openRunLog` below also succeeds — a
+            // log-open failure (unwritable runs dir, out of fds) used to throw before this ran,
+            // so `.spawnFailed`'s `.finalizeRun` action (dispatched from the `catch` below)
+            // found no `currentRunId` entry to finalize and the row just inserted sat with
+            // `ended_at IS NULL` forever, invisible even to "清空历史" (R14, same shape as
+            // ex-F30's fd-leak fix just below).
+            lastRuns[program.id] = run
+            currentRunId[program.id] = run.id
             // The output file is named after the run id, so the path only exists once the row
             // does — and nothing used to write it back. Every one-shot run row therefore had
             // `log_path = NULL`, which is what 「查看本次输出」 and the history window's
@@ -816,7 +899,6 @@ public final class Supervisor: @unchecked Sendable {
             run.logPath = fds.outPath
             try? store.setRunLogPath(id: run.id, path: fds.outPath)
             lastRuns[program.id] = run
-            currentRunId[program.id] = run.id
             if var p = programs[program.id] { p.runTotal += 1; programs[program.id] = p }
             let env = mergedEnvironment(for: program)
             let spawned = try ProcessHost.spawn(
@@ -965,7 +1047,7 @@ public final class Supervisor: @unchecked Sendable {
                     needsRestart: drifted && runtime.state.isActive
                 )
             }
-        }.sorted { $0.program.priority < $1.program.priority }
+        }.sorted { Program.priorityAscending($0.program, $1.program) }
         return SupervisorSnapshot(programs: snapshotPrograms, recoveredCount: recoveredCount)
     }
 
@@ -980,15 +1062,29 @@ public final class Supervisor: @unchecked Sendable {
         for (id, runtime) in serviceRuntimes where runtime.state.isActive {
             guard let pid = runtime.pid, let startTime = runtime.procStartTime else { continue }
             if !ProcessHost.verifyAlive(pid: pid, expectedStartTime: startTime) {
+                reapDeadPid(pid)
                 dispatchServiceEvent(programId: id, event: .processExited(code: nil, signal: nil, at: Date()))
             }
         }
         for (id, runtime) in oneshotRuntimes where runtime.state.isActive {
             guard let pid = runtime.pid, let startTime = runtime.procStartTime else { continue }
             if !ProcessHost.verifyAlive(pid: pid, expectedStartTime: startTime) {
+                reapDeadPid(pid)
                 dispatchOneshotEvent(programId: id, event: .processExited(code: nil, signal: nil, at: Date()))
             }
         }
+    }
+
+    /// This is the same conclusion `ExitWatcher`'s own kqueue callback would have reached for
+    /// this pid — reaching it independently here (this is the safety-net path, not the normal
+    /// one) means the watcher's registration for it must be retired the same way: unregistered
+    /// so a delayed/duplicate NOTE_EXIT for this pid can never land on whatever *new* run this
+    /// program is on by the time it arrives, and reaped via `waitpid` so an own child doesn't
+    /// linger as a zombie once nothing is left watching for its exit.
+    private func reapDeadPid(_ pid: Int32) {
+        exitWatcher.unregister(pid: pid)
+        var status: Int32 = 0
+        _ = waitpid(pid, &status, WNOHANG)
     }
 
     /// design.md §3.8: a 3s delay before the post-wake double-check, so volumes/network have
@@ -1100,8 +1196,11 @@ public final class Supervisor: @unchecked Sendable {
     public func stopAllForTermination(completion: @escaping @MainActor @Sendable () -> Void) {
         queue.async { [self] in
             pendingTerminationHandlers.append(completion)
+            // The app is quitting — no pending restart should survive to spawn a new
+            // instance while everything else is being torn down (design.md §3.5, R08).
+            pendingRestartAfterStop.removeAll()
             var anyActive = false
-            for program in programs.values.filter({ $0.kind == .service }).sorted(by: { $0.priority > $1.priority }) {
+            for program in programs.values.filter({ $0.kind == .service }).sorted(by: Program.priorityDescending) {
                 if serviceRuntimes[program.id]?.state.isActive == true {
                     anyActive = true
                     dispatchServiceEvent(programId: program.id, event: .stop)
@@ -1151,6 +1250,14 @@ public final class Supervisor: @unchecked Sendable {
             r.pid = nil
             r.pgid = nil
             serviceRuntimes[id] = r
+            // `persistLive` below is about to clear this program's `live` row entirely (state
+            // is no longer active), so this is the last chance to close out its run row —
+            // without it, the row stays `ended_at IS NULL` with no `live` row left pointing at
+            // it either, an orphan that crash-recovery's live-table sweep can never find on the
+            // next launch (R14).
+            if let runId = currentRunId[id] {
+                finalizeRun(programId: id, runId: runId, outcome: .cancelled, code: nil, signal: nil)
+            }
             persistLive(programId: id)
         }
         for (id, runtime) in oneshotRuntimes where runtime.state.isActive {
@@ -1163,6 +1270,9 @@ public final class Supervisor: @unchecked Sendable {
             r.pid = nil
             r.pgid = nil
             oneshotRuntimes[id] = r
+            if let runId = currentRunId[id] {
+                finalizeRun(programId: id, runId: runId, outcome: .cancelled, code: nil, signal: nil)
+            }
             persistLive(programId: id)
         }
     }

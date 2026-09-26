@@ -56,9 +56,19 @@ public final class Store {
             try db.setUserVersion(1)
         }
         if db.userVersion < 2 {
-            try db.exec("ALTER TABLE program ADD COLUMN run_total INTEGER NOT NULL DEFAULT 0")
-            try db.exec("UPDATE program SET run_total = (SELECT COUNT(*) FROM run WHERE run.program_id = program.id)")
-            try db.setUserVersion(2)
+            // DDL, backfill and the version stamp used to be three separate autocommit
+            // statements — if the process died right after the `ALTER TABLE` (which SQLite
+            // commits immediately on its own), the next launch still saw `user_version == 1`
+            // and repeated the same `ALTER TABLE`, which fails outright with "duplicate column
+            // name" because the column is already there (R05). SQLite's DDL is transactional,
+            // so wrapping all three in one `BEGIN IMMEDIATE`/`COMMIT` makes the whole step
+            // atomic: a crash mid-migration leaves the database at v1 with no partial column,
+            // safe to retry from scratch.
+            try db.inTransaction {
+                try db.exec("ALTER TABLE program ADD COLUMN run_total INTEGER NOT NULL DEFAULT 0")
+                try db.exec("UPDATE program SET run_total = (SELECT COUNT(*) FROM run WHERE run.program_id = program.id)")
+                try db.setUserVersion(2)
+            }
         }
         // Future migrations: `if db.userVersion < 3 { ...; try db.setUserVersion(3) }`, each
         // preceded by a JSON backup.
@@ -84,22 +94,34 @@ public final class Store {
         try Self.applyPragmas(db)
     }
 
-    /// Re-populates the (now-empty, freshly created) program table from the newest JSON
-    /// config backup. Run/event history cannot be recovered this way — only configuration.
+    /// Re-populates the (now-empty, freshly created) program table from the newest *decodable*
+    /// JSON config backup. Run/event history cannot be recovered this way — only configuration.
+    ///
+    /// Tries backups from newest to oldest rather than only the single newest one — a backup
+    /// can itself be truncated or corrupt (the same disk trouble that took out the database
+    /// could easily have hit the last write to `backupsDir` too), and giving up right there
+    /// used to mean corruption recovery silently produced zero programs even when an earlier,
+    /// perfectly good backup existed one file back (R15). The returned count is how many
+    /// programs were actually inserted, not how many the chosen backup listed — a partial
+    /// failure mid-restore no longer overstates what came back.
     private func restoreFromLatestConfigBackup() throws -> Int {
         let fm = FileManager.default
         let backups = ((try? fm.contentsOfDirectory(atPath: backupsDir)) ?? [])
             .filter { $0.hasPrefix("config-") }
             .sorted()
-        guard let latest = backups.last else { return 0 }
-        let data = try Data(contentsOf: URL(fileURLWithPath: (backupsDir as NSString).appendingPathComponent(latest)))
-        let programs = try JSONDecoder().decode([Program].self, from: data)
-        for var program in programs {
-            program.id = 0
-            program.runTotal = 0
-            _ = try? insertProgram(program)
+            .reversed()
+        for candidate in backups {
+            guard let data = try? Data(contentsOf: URL(fileURLWithPath: (backupsDir as NSString).appendingPathComponent(candidate))),
+                  let programs = try? JSONDecoder().decode([Program].self, from: data) else { continue }
+            var restored = 0
+            for var program in programs {
+                program.id = 0
+                program.runTotal = 0
+                if (try? insertProgram(program)) != nil { restored += 1 }
+            }
+            return restored
         }
-        return programs.count
+        return 0
     }
 
     // MARK: - Program CRUD

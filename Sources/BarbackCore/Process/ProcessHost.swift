@@ -43,7 +43,11 @@ public enum ProcessHost {
             argv = try ShellLexer.tokenize(command)
         }
         guard let executable = argv.first else { throw ProcessHostError.invalidCommand }
-        let resolvedExecutable = useShell ? executable : (PathUtil.resolveExecutable(executable, directory: directory) ?? executable)
+        // Must resolve against the same PATH `ProgramValidator.validate` used to approve this
+        // command (`environment["PATH"]`, from `Supervisor.mergedEnvironment`) — not this
+        // process's own — or "找到了" and "启动了" can silently disagree about which
+        // executable that is, in either direction (ex-F41, R10).
+        let resolvedExecutable = useShell ? executable : (PathUtil.resolveExecutable(executable, directory: directory, pathEnv: environment["PATH"]) ?? executable)
 
         let fileActionsPtr = UnsafeMutablePointer<posix_spawn_file_actions_t?>.allocate(capacity: 1)
         defer { fileActionsPtr.deallocate() }

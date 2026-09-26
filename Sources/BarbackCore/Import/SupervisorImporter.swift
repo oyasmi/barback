@@ -90,16 +90,30 @@ public enum SupervisorImporter {
 
         let exitCodes = (kv["exitcodes"] ?? "0").split(separator: ",").compactMap { Int32($0.trimmingCharacters(in: .whitespaces)) }
 
+        // supervisor's own semantics (https://supervisord.org/configuration.html#program-x-section-values):
+        // `AUTO` means "let us pick a path" — Barback's equivalent is simply not setting an
+        // explicit path, so the program's default `<name>.out.log` applies. `NONE` means
+        // "don't create a log file at all", which Barback has no first-class "discard" target
+        // for — mapping both to the same nil used to silently turn a deliberate "discard this
+        // program's output" into "write it to the default path" instead (R12).
         var logPath: String?
         var logStderrPath: String?
         let mergeStderr = (kv["redirect_stderr"]?.lowercased() == "true")
-        if let stdout = kv["stdout_logfile"], stdout.uppercased() != "NONE", stdout.uppercased() != "AUTO" {
-            logPath = stdout
+        if let stdout = kv["stdout_logfile"] {
+            let upper = stdout.uppercased()
+            if upper == "NONE" {
+                logPath = "/dev/null"
+            } else if upper != "AUTO" {
+                logPath = stdout
+            }
         }
-        if let stderr = kv["stderr_logfile"], stderr.uppercased() != "NONE", stderr.uppercased() != "AUTO" {
+        if let stderr = kv["stderr_logfile"] {
+            let upper = stderr.uppercased()
             if mergeStderr {
                 // redirect_stderr already merges; explicit stderr path becomes moot.
-            } else {
+            } else if upper == "NONE" {
+                logStderrPath = "/dev/null"
+            } else if upper != "AUTO" {
                 logStderrPath = stderr
             }
         }
@@ -153,7 +167,11 @@ public enum SupervisorImporter {
         return ImportPreview(program: program, unmapped: unmapped, sourceSectionName: sectionName)
     }
 
-    private static let allowedNameCharacters = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "._-"))
+    // `CharacterSet.alphanumerics` is Unicode-aware (it passes accented letters, CJK, etc.)
+    // while `Program.namePattern` only ever accepts `[A-Za-z0-9._-]` — an INI section like
+    // `[program:服务]` used to sail straight through this filter and only then fail the name
+    // regex it was supposed to already satisfy (R12).
+    private static let allowedNameCharacters = CharacterSet(charactersIn: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-")
 
     private static func sanitizeName(_ name: String) -> String {
         let filtered = name.unicodeScalars.filter { allowedNameCharacters.contains($0) }
@@ -202,7 +220,11 @@ public enum SupervisorImporter {
         if s.hasSuffix("KB") { multiplier = 1024; s.removeLast(2) }
         else if s.hasSuffix("MB") { multiplier = 1024 * 1024; s.removeLast(2) }
         else if s.hasSuffix("GB") { multiplier = 1024 * 1024 * 1024; s.removeLast(2) }
-        guard let value = Int64(s.trimmingCharacters(in: .whitespaces)) else { return nil }
-        return value * multiplier
+        guard let value = Int64(s.trimmingCharacters(in: .whitespaces)), value >= 0 else { return nil }
+        // `value * multiplier` on a plain `Int64` traps on overflow — a pasted
+        // `stdout_logfile_maxbytes=9223372036854775807GB` used to crash the whole import
+        // instead of just failing to parse that one field (R12).
+        let (result, overflowed) = value.multipliedReportingOverflow(by: multiplier)
+        return overflowed ? nil : result
     }
 }
