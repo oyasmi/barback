@@ -389,4 +389,453 @@
   <data name="SearchChanged">
     <value>日志分段已轮转或清理，请重新搜索以定位输出。</value>
   </data>
+  <data name="Activity" xml:space="preserve">
+    <value>活动</value>
+  </data>
+  <data name="Views" xml:space="preserve">
+    <value>查看</value>
+  </data>
+  <data name="Attention" xml:space="preserve">
+    <value>需要处理</value>
+  </data>
+  <data name="Groups" xml:space="preserve">
+    <value>分组</value>
+  </data>
+  <data name="CloseContinues" xml:space="preserve">
+    <value>关闭窗口后继续运行</value>
+  </data>
+  <data name="LocalProcesses" xml:space="preserve">
+    <value>本地进程管理</value>
+  </data>
+  <data name="LocalOutput" xml:space="preserve">
+    <value>输出仅保存在本机</value>
+  </data>
+  <data name="AddProgram" xml:space="preserve">
+    <value>＋ 添加</value>
+  </data>
+  <data name="AllProgramActions" xml:space="preserve">
+    <value>全部程序操作</value>
+  </data>
+  <data name="MoreActions" xml:space="preserve">
+    <value>更多操作</value>
+  </data>
+  <data name="Dismiss" xml:space="preserve">
+    <value>关闭提示</value>
+  </data>
+  <data name="ProgramType" xml:space="preserve">
+    <value>程序类型</value>
+  </data>
+  <data name="AllTypes" xml:space="preserve">
+    <value>所有类型</value>
+  </data>
+  <data name="ServiceKind" xml:space="preserve">
+    <value>常驻服务</value>
+  </data>
+  <data name="OneshotKind" xml:space="preserve">
+    <value>一次性命令</value>
+  </data>
+  <data name="ServiceHint" xml:space="preserve">
+    <value>持续运行，可自动重启。保存配置后再手动启动。</value>
+  </data>
+  <data name="OneshotHint" xml:space="preserve">
+    <value>按需执行，保留每次结果。保存不会自动运行。</value>
+  </data>
+  <data name="Ungrouped" xml:space="preserve">
+    <value>未分组</value>
+  </data>
+  <data name="RetryCleanup" xml:space="preserve">
+    <value>重试清理</value>
+  </data>
+  <data name="WaitingStop" xml:space="preserve">
+    <value>等待停止</value>
+  </data>
+  <data name="StopRetry" xml:space="preserve">
+    <value>停止重试</value>
+  </data>
+  <data name="CancelRun" xml:space="preserve">
+    <value>中止</value>
+  </data>
+  <data name="StopService" xml:space="preserve">
+    <value>停止</value>
+  </data>
+  <data name="Disabled" xml:space="preserve">
+    <value>已禁用</value>
+  </data>
+  <data name="RunAgain" xml:space="preserve">
+    <value>重新运行…</value>
+  </data>
+  <data name="Retry" xml:space="preserve">
+    <value>重试</value>
+  </data>
+  <data name="RunCommand" xml:space="preserve">
+    <value>运行</value>
+  </data>
+  <data name="StartService" xml:space="preserve">
+    <value>启动</value>
+  </data>
+  <data name="Executing" xml:space="preserve">
+    <value>执行中</value>
+  </data>
+  <data name="RunInProgress" xml:space="preserve">
+    <value>执行中</value>
+  </data>
+  <data name="RunSuccess" xml:space="preserve">
+    <value>成功</value>
+  </data>
+  <data name="RunFailed" xml:space="preserve">
+    <value>失败</value>
+  </data>
+  <data name="RunTimeout" xml:space="preserve">
+    <value>超时</value>
+  </data>
+  <data name="RunInterrupted" xml:space="preserve">
+    <value>已中断 · 结果未知</value>
+  </data>
+  <data name="RunCancelled" xml:space="preserve">
+    <value>已中止</value>
+  </data>
+  <data name="RunExited" xml:space="preserve">
+    <value>已退出</value>
+  </data>
+  <data name="RunUnknown" xml:space="preserve">
+    <value>结果未知</value>
+  </data>
+  <data name="Unknown" xml:space="preserve">
+    <value>未知</value>
+  </data>
+  <data name="RetryIn" xml:space="preserve">
+    <value>{0} 秒后重试 · 第 {1} 次</value>
+  </data>
+  <data name="StoppingIn" xml:space="preserve">
+    <value>等待进程退出 · 剩余 {0} 秒</value>
+  </data>
+  <data name="RunningFor" xml:space="preserve">
+    <value>已运行 {0}</value>
+  </data>
+  <data name="LastExitCode" xml:space="preserve">
+    <value>上次退出码 {0}</value>
+  </data>
+  <data name="ManualRun" xml:space="preserve">
+    <value>按需启动</value>
+  </data>
+  <data name="HoursMinutes" xml:space="preserve">
+    <value>{0} 小时 {1} 分</value>
+  </data>
+  <data name="MinutesSeconds" xml:space="preserve">
+    <value>{0} 分 {1} 秒</value>
+  </data>
+  <data name="Seconds" xml:space="preserve">
+    <value>{0} 秒</value>
+  </data>
+  <data name="Output" xml:space="preserve">
+    <value>输出</value>
+  </data>
+  <data name="Configuration" xml:space="preserve">
+    <value>配置</value>
+  </data>
+  <data name="ProgramRecords" xml:space="preserve">
+    <value>执行记录</value>
+  </data>
+  <data name="ExecutionRecord" xml:space="preserve">
+    <value>执行记录</value>
+  </data>
+  <data name="SystemEvents" xml:space="preserve">
+    <value>系统事件</value>
+  </data>
+  <data name="EmptyHeading" xml:space="preserve">
+    <value>添加第一个程序</value>
+  </data>
+  <data name="EmptyDescription" xml:space="preserve">
+    <value>管理常驻服务，或保存经常执行的命令。</value>
+  </data>
+  <data name="ChooseProgram" xml:space="preserve">
+    <value>选择一个程序查看输出</value>
+  </data>
+  <data name="NoMatches" xml:space="preserve">
+    <value>没有匹配的程序</value>
+  </data>
+  <data name="NoMatchesHint" xml:space="preserve">
+    <value>尝试其他名称、分组或类型。</value>
+  </data>
+  <data name="ClearFilter" xml:space="preserve">
+    <value>清除筛选</value>
+  </data>
+  <data name="NothingToResolve" xml:space="preserve">
+    <value>当前没有需要处理的问题</value>
+  </data>
+  <data name="NothingToResolveHint" xml:space="preserve">
+    <value>需要处理的问题会在这里显示，直到处理完成。</value>
+  </data>
+  <data name="BackToList" xml:space="preserve">
+    <value>← 返回</value>
+  </data>
+  <data name="SearchHistory" xml:space="preserve">
+    <value>搜索执行记录</value>
+  </data>
+  <data name="SearchEvents" xml:space="preserve">
+    <value>搜索系统事件</value>
+  </data>
+  <data name="Since" xml:space="preserve">
+    <value>起始日期</value>
+  </data>
+  <data name="ViewRunOutput" xml:space="preserve">
+    <value>查看本次输出</value>
+  </data>
+  <data name="HistoryHint" xml:space="preserve">
+    <value>仅显示已结束的执行。打开记录查看本次输出。</value>
+  </data>
+  <data name="NoHistory" xml:space="preserve">
+    <value>没有符合筛选条件的已完成执行。</value>
+  </data>
+  <data name="RerunCurrent" xml:space="preserve">
+    <value>用当前配置重新运行…</value>
+  </data>
+  <data name="RerunUnavailable" xml:space="preserve">
+    <value>该命令已禁用、已删除或仍在执行。</value>
+  </data>
+  <data name="RerunPrompt" xml:space="preserve">
+    <value>使用 {0} 的当前配置 v{1} 重新运行？
+所选记录（{3}）使用 v{2}。这会创建一次新执行，原记录不会改变。</value>
+  </data>
+  <data name="HistoryConfigHint" xml:space="preserve">
+    <value>本次执行使用配置 v{0}。原配置快照未保留；下方摘要展示当前配置。</value>
+  </data>
+  <data name="RunDescription" xml:space="preserve">
+    <value>{0} · 配置 v{1} · {2}</value>
+  </data>
+  <data name="PreparingOutput" xml:space="preserve">
+    <value>等待本次执行的输出…</value>
+  </data>
+  <data name="DeletedProgram" xml:space="preserve">
+    <value>程序已删除</value>
+  </data>
+  <data name="CleanupFailed" xml:space="preserve">
+    <value>清理失败</value>
+  </data>
+  <data name="CleanupFailedHint" xml:space="preserve">
+    <value>仍有未确认退出的进程，请先重试清理。</value>
+  </data>
+  <data name="FailureHint" xml:space="preserve">
+    <value>请检查输出与配置，再尝试运行。</value>
+  </data>
+  <data name="ProcessMetrics" xml:space="preserve">
+    <value>主进程 · PID {0}
+CPU {1} · 内存 {2} MiB</value>
+  </data>
+  <data name="ProgramSummary" xml:space="preserve">
+    <value>{0} 个运行 · {1} 个重试中 · {2} 个需要处理 · 共 {3} 个程序</value>
+  </data>
+  <data name="ActivityHint" xml:space="preserve">
+    <value>执行结果与系统事件，各自保留清晰记录。</value>
+  </data>
+  <data name="SettingsHint" xml:space="preserve">
+    <value>符合你的使用习惯，安静地在后台工作。</value>
+  </data>
+  <data name="BatchStopPrompt" xml:space="preserve">
+    <value>停止 {0} 个服务和 {1} 个任务？
+包含所有分组，搜索与筛选不改变操作范围。</value>
+  </data>
+  <data name="BatchRestartPrompt" xml:space="preserve">
+    <value>重启 {0} 个已启用服务？
+已停止的服务也会启动。一次性命令不受影响，包含所有分组。</value>
+  </data>
+  <data name="DeleteProgramPrompt" xml:space="preserve">
+    <value>删除“{0}”？
+会先停止活动进程，并删除配置、执行历史及应用拥有的输出。此操作不可撤销。</value>
+  </data>
+  <data name="CopySuffix" xml:space="preserve">
+    <value>副本</value>
+  </data>
+  <data name="GeneralSettings" xml:space="preserve">
+    <value>常规与外观</value>
+  </data>
+  <data name="Theme" xml:space="preserve">
+    <value>主题</value>
+  </data>
+  <data name="ThemeSystem" xml:space="preserve">
+    <value>跟随系统</value>
+  </data>
+  <data name="ThemeLight" xml:space="preserve">
+    <value>浅色</value>
+  </data>
+  <data name="ThemeDark" xml:space="preserve">
+    <value>深色</value>
+  </data>
+  <data name="NotificationHint" xml:space="preserve">
+    <value>只通知需要处理的失败与问题，正常成功保持安静。</value>
+  </data>
+  <data name="LoginStartup" xml:space="preserve">
+    <value>登录启动</value>
+  </data>
+  <data name="EnvironmentHint" xml:space="preserve">
+    <value>环境更新仅影响新执行。</value>
+  </data>
+  <data name="DataSettings" xml:space="preserve">
+    <value>数据与诊断</value>
+  </data>
+  <data name="Duration" xml:space="preserve">
+    <value>耗时</value>
+  </data>
+  <data name="EventTitle" xml:space="preserve">
+    <value>事件</value>
+  </data>
+  <data name="Yes" xml:space="preserve">
+    <value>开启</value>
+  </data>
+  <data name="No" xml:space="preserve">
+    <value>关闭</value>
+  </data>
+  <data name="Cancel" xml:space="preserve">
+    <value>取消</value>
+  </data>
+  <data name="BrowseDirectory" xml:space="preserve">
+    <value>选择工作目录…</value>
+  </data>
+  <data name="InheritedEnvironment" xml:space="preserve">
+    <value>继承 Windows 用户环境</value>
+  </data>
+  <data name="EnvironmentSyntax" xml:space="preserve">
+    <value>KEY=value 覆盖变量，-KEY 移除继承项；值按字面量使用。</value>
+  </data>
+  <data name="AdvancedLaunch" xml:space="preserve">
+    <value>高级启动参数</value>
+  </data>
+  <data name="RetrySettings" xml:space="preserve">
+    <value>启动与重试</value>
+  </data>
+  <data name="StopSettings" xml:space="preserve">
+    <value>停止方式</value>
+  </data>
+  <data name="LogSettings" xml:space="preserve">
+    <value>日志与保留</value>
+  </data>
+  <data name="RetrySummary" xml:space="preserve">
+    <value>稳定期 {0} 秒 · 最多 {1} 次重试</value>
+  </data>
+  <data name="TimeoutSummary" xml:space="preserve">
+    <value>超时 {0} 秒（0 表示不限制）</value>
+  </data>
+  <data name="LogSummary" xml:space="preserve">
+    <value>编码 {0} · {1} MiB × {2}</value>
+  </data>
+  <data name="Optional" xml:space="preserve">
+    <value>可选</value>
+  </data>
+  <data name="SecretsNeedInput" xml:space="preserve">
+    <value>敏感值需要重新输入，此配置保持禁用。</value>
+  </data>
+  <data name="RemoveVariable" xml:space="preserve">
+    <value>移除</value>
+  </data>
+  <data name="VariableName" xml:space="preserve">
+    <value>变量名称</value>
+  </data>
+  <data name="InvalidNumber" xml:space="preserve">
+    <value>{0}：请输入有效数字。</value>
+  </data>
+  <data name="InvalidInteger" xml:space="preserve">
+    <value>{0}：请输入整数。</value>
+  </data>
+  <data name="EnvironmentError" xml:space="preserve">
+    <value>第 {0} 行：{1}</value>
+  </data>
+  <data name="SavedConfiguration" xml:space="preserve">
+    <value>已保存，变更在下一次启动时生效。</value>
+  </data>
+  <data name="OpenSeparate" xml:space="preserve">
+    <value>在独立窗口打开</value>
+  </data>
+  <data name="SearchLoaded" xml:space="preserve">
+    <value>搜索已加载输出</value>
+  </data>
+  <data name="SearchNext" xml:space="preserve">
+    <value>查找下一个</value>
+  </data>
+  <data name="OutputOptions" xml:space="preserve">
+    <value>输出选项</value>
+  </data>
+  <data name="LoadedSearchHint" xml:space="preserve">
+    <value>搜索范围：已加载输出。</value>
+  </data>
+  <data name="LogIncomplete" xml:space="preserve">
+    <value>输出存在缺口，详见 .gaps 文件。</value>
+  </data>
+  <data name="LogRotated" xml:space="preserve">
+    <value>[日志已轮转]</value>
+  </data>
+  <data name="RecentOutput" xml:space="preserve">
+    <value>[仅展示最近输出]</value>
+  </data>
+  <data name="NewOutput" xml:space="preserve">
+    <value>有新输出，继续跟随可跳到末尾。</value>
+  </data>
+  <data name="EventConfigSaved" xml:space="preserve">
+    <value>配置已保存</value>
+  </data>
+  <data name="EventConfigImported" xml:space="preserve">
+    <value>配置已导入</value>
+  </data>
+  <data name="EventRunEnded" xml:space="preserve">
+    <value>执行已结束</value>
+  </data>
+  <data name="EventFatal" xml:space="preserve">
+    <value>自动重试已停止</value>
+  </data>
+  <data name="EventForcedStop" xml:space="preserve">
+    <value>已终止进程树</value>
+  </data>
+  <data name="EventLogIncomplete" xml:space="preserve">
+    <value>输出不完整</value>
+  </data>
+  <data name="EventCleanupFailed" xml:space="preserve">
+    <value>清理失败</value>
+  </data>
+  <data name="EventRecovered" xml:space="preserve">
+    <value>中断后恢复</value>
+  </data>
+  <data name="EventStorageFailed" xml:space="preserve">
+    <value>存储失败</value>
+  </data>
+  <data name="TraySummary" xml:space="preserve">
+    <value>{0} 个运行 · {1} 个需要处理</value>
+  </data>
+  <data name="OpenWorkbench" xml:space="preserve">
+    <value>打开工作台</value>
+  </data>
+  <data name="TrayEmpty" xml:space="preserve">
+    <value>还没有程序，请在工作台中添加。</value>
+  </data>
+  <data name="SearchPrograms" xml:space="preserve">
+    <value>搜索程序或分组</value>
+  </data>
+  <data name="ExportSameFile" xml:space="preserve">
+    <value>请选择其他文件，不能覆盖当前日志。</value>
+  </data>
+  <data name="EventAppInterrupted" xml:space="preserve">
+    <value>上次会话意外中断</value>
+  </data>
+  <data name="EnvironmentTitle" xml:space="preserve">
+    <value>环境变量</value>
+  </data>
+  <data name="EditEnvironment" xml:space="preserve">
+    <value>编辑环境变量</value>
+  </data>
+  <data name="StartupUnavailable" xml:space="preserve">
+    <value>登录启动在已签名的安装版本中提供。</value>
+  </data>
+  <data name="StartupEnabled" xml:space="preserve">
+    <value>已开启</value>
+  </data>
+  <data name="StartupDisabled" xml:space="preserve">
+    <value>未开启</value>
+  </data>
+  <data name="StartupDisabledByUser" xml:space="preserve">
+    <value>已在 Windows 启动设置中禁用</value>
+  </data>
+  <data name="StartupDisabledByPolicy" xml:space="preserve">
+    <value>已被系统策略禁用</value>
+  </data>
+  <data name="StartupEnabledByPolicy" xml:space="preserve">
+    <value>已被系统策略开启</value>
+  </data>
 </root>

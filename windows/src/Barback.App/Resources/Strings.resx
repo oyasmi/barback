@@ -389,4 +389,453 @@
   <data name="SearchChanged">
     <value>This log segment changed or was cleaned. Search again to locate the output.</value>
   </data>
+  <data name="Activity" xml:space="preserve">
+    <value>Activity</value>
+  </data>
+  <data name="Views" xml:space="preserve">
+    <value>Views</value>
+  </data>
+  <data name="Attention" xml:space="preserve">
+    <value>Needs attention</value>
+  </data>
+  <data name="Groups" xml:space="preserve">
+    <value>Groups</value>
+  </data>
+  <data name="CloseContinues" xml:space="preserve">
+    <value>Closing the window keeps programs running.</value>
+  </data>
+  <data name="LocalProcesses" xml:space="preserve">
+    <value>Local process management</value>
+  </data>
+  <data name="LocalOutput" xml:space="preserve">
+    <value>Output stays on this computer</value>
+  </data>
+  <data name="AddProgram" xml:space="preserve">
+    <value>＋ Add</value>
+  </data>
+  <data name="AllProgramActions" xml:space="preserve">
+    <value>All program actions</value>
+  </data>
+  <data name="MoreActions" xml:space="preserve">
+    <value>More actions</value>
+  </data>
+  <data name="Dismiss" xml:space="preserve">
+    <value>Dismiss</value>
+  </data>
+  <data name="ProgramType" xml:space="preserve">
+    <value>Program type</value>
+  </data>
+  <data name="AllTypes" xml:space="preserve">
+    <value>All types</value>
+  </data>
+  <data name="ServiceKind" xml:space="preserve">
+    <value>Service</value>
+  </data>
+  <data name="OneshotKind" xml:space="preserve">
+    <value>One-time command</value>
+  </data>
+  <data name="ServiceHint" xml:space="preserve">
+    <value>Runs continuously. Restart and stop rules are configured separately.</value>
+  </data>
+  <data name="OneshotHint" xml:space="preserve">
+    <value>Run on demand and keep each execution result.</value>
+  </data>
+  <data name="Ungrouped" xml:space="preserve">
+    <value>Ungrouped</value>
+  </data>
+  <data name="RetryCleanup" xml:space="preserve">
+    <value>Retry cleanup</value>
+  </data>
+  <data name="WaitingStop" xml:space="preserve">
+    <value>Waiting for exit</value>
+  </data>
+  <data name="StopRetry" xml:space="preserve">
+    <value>Stop retrying</value>
+  </data>
+  <data name="CancelRun" xml:space="preserve">
+    <value>Cancel</value>
+  </data>
+  <data name="StopService" xml:space="preserve">
+    <value>Stop</value>
+  </data>
+  <data name="Disabled" xml:space="preserve">
+    <value>Disabled</value>
+  </data>
+  <data name="RunAgain" xml:space="preserve">
+    <value>Run again…</value>
+  </data>
+  <data name="Retry" xml:space="preserve">
+    <value>Retry</value>
+  </data>
+  <data name="RunCommand" xml:space="preserve">
+    <value>Run</value>
+  </data>
+  <data name="StartService" xml:space="preserve">
+    <value>Start</value>
+  </data>
+  <data name="Executing" xml:space="preserve">
+    <value>Executing</value>
+  </data>
+  <data name="RunInProgress" xml:space="preserve">
+    <value>In progress</value>
+  </data>
+  <data name="RunSuccess" xml:space="preserve">
+    <value>Succeeded</value>
+  </data>
+  <data name="RunFailed" xml:space="preserve">
+    <value>Failed</value>
+  </data>
+  <data name="RunTimeout" xml:space="preserve">
+    <value>Timed out</value>
+  </data>
+  <data name="RunInterrupted" xml:space="preserve">
+    <value>Interrupted · result unknown</value>
+  </data>
+  <data name="RunCancelled" xml:space="preserve">
+    <value>Stopped by request</value>
+  </data>
+  <data name="RunExited" xml:space="preserve">
+    <value>Exited</value>
+  </data>
+  <data name="RunUnknown" xml:space="preserve">
+    <value>Unknown result</value>
+  </data>
+  <data name="Unknown" xml:space="preserve">
+    <value>Unknown</value>
+  </data>
+  <data name="RetryIn" xml:space="preserve">
+    <value>Retry in {0}s · attempt {1}</value>
+  </data>
+  <data name="StoppingIn" xml:space="preserve">
+    <value>Waiting for exit · {0}s remaining</value>
+  </data>
+  <data name="RunningFor" xml:space="preserve">
+    <value>Up {0}</value>
+  </data>
+  <data name="LastExitCode" xml:space="preserve">
+    <value>Last exit code {0}</value>
+  </data>
+  <data name="ManualRun" xml:space="preserve">
+    <value>Run on demand</value>
+  </data>
+  <data name="HoursMinutes" xml:space="preserve">
+    <value>{0}h {1}m</value>
+  </data>
+  <data name="MinutesSeconds" xml:space="preserve">
+    <value>{0}m {1}s</value>
+  </data>
+  <data name="Seconds" xml:space="preserve">
+    <value>{0}s</value>
+  </data>
+  <data name="Output" xml:space="preserve">
+    <value>Output</value>
+  </data>
+  <data name="Configuration" xml:space="preserve">
+    <value>Configuration</value>
+  </data>
+  <data name="ProgramRecords" xml:space="preserve">
+    <value>Executions</value>
+  </data>
+  <data name="ExecutionRecord" xml:space="preserve">
+    <value>Execution record</value>
+  </data>
+  <data name="SystemEvents" xml:space="preserve">
+    <value>System events</value>
+  </data>
+  <data name="EmptyHeading" xml:space="preserve">
+    <value>Add your first program</value>
+  </data>
+  <data name="EmptyDescription" xml:space="preserve">
+    <value>Manage a background service or save a command you run often.</value>
+  </data>
+  <data name="ChooseProgram" xml:space="preserve">
+    <value>Select a program to inspect its output</value>
+  </data>
+  <data name="NoMatches" xml:space="preserve">
+    <value>No matching programs</value>
+  </data>
+  <data name="NoMatchesHint" xml:space="preserve">
+    <value>Try a different name, group, or type.</value>
+  </data>
+  <data name="ClearFilter" xml:space="preserve">
+    <value>Clear filters</value>
+  </data>
+  <data name="NothingToResolve" xml:space="preserve">
+    <value>Nothing needs attention</value>
+  </data>
+  <data name="NothingToResolveHint" xml:space="preserve">
+    <value>Problems appear here until they are resolved.</value>
+  </data>
+  <data name="BackToList" xml:space="preserve">
+    <value>← Back</value>
+  </data>
+  <data name="SearchHistory" xml:space="preserve">
+    <value>Search execution records</value>
+  </data>
+  <data name="SearchEvents" xml:space="preserve">
+    <value>Search system events</value>
+  </data>
+  <data name="Since" xml:space="preserve">
+    <value>Records since</value>
+  </data>
+  <data name="ViewRunOutput" xml:space="preserve">
+    <value>View this execution</value>
+  </data>
+  <data name="HistoryHint" xml:space="preserve">
+    <value>Finished executions only. Open a record to inspect its output.</value>
+  </data>
+  <data name="NoHistory" xml:space="preserve">
+    <value>No completed executions match these filters.</value>
+  </data>
+  <data name="RerunCurrent" xml:space="preserve">
+    <value>Run again with current configuration…</value>
+  </data>
+  <data name="RerunUnavailable" xml:space="preserve">
+    <value>The command is disabled, deleted, or still running.</value>
+  </data>
+  <data name="RerunPrompt" xml:space="preserve">
+    <value>Run {0} with current configuration v{1}?
+The selected execution ({3}) used v{2}. This creates a new execution; the original record is unchanged.</value>
+  </data>
+  <data name="HistoryConfigHint" xml:space="preserve">
+    <value>This execution used configuration v{0}. The original configuration was not retained; the summary below is the current configuration.</value>
+  </data>
+  <data name="RunDescription" xml:space="preserve">
+    <value>{0} · configuration v{1} · {2}</value>
+  </data>
+  <data name="PreparingOutput" xml:space="preserve">
+    <value>Waiting for this execution’s output…</value>
+  </data>
+  <data name="DeletedProgram" xml:space="preserve">
+    <value>Deleted program</value>
+  </data>
+  <data name="CleanupFailed" xml:space="preserve">
+    <value>Cleanup failed</value>
+  </data>
+  <data name="CleanupFailedHint" xml:space="preserve">
+    <value>Some processes have not confirmed exit. Retry cleanup before starting again.</value>
+  </data>
+  <data name="FailureHint" xml:space="preserve">
+    <value>Inspect the output and configuration before retrying.</value>
+  </data>
+  <data name="ProcessMetrics" xml:space="preserve">
+    <value>Main process · PID {0}
+CPU {1} · working set {2} MiB</value>
+  </data>
+  <data name="ProgramSummary" xml:space="preserve">
+    <value>{0} running · {1} retrying · {2} need attention · {3} programs</value>
+  </data>
+  <data name="ActivityHint" xml:space="preserve">
+    <value>Execution results and system decisions, kept separate.</value>
+  </data>
+  <data name="SettingsHint" xml:space="preserve">
+    <value>Work quietly in the background, your way.</value>
+  </data>
+  <data name="BatchStopPrompt" xml:space="preserve">
+    <value>Stop {0} services and {1} tasks?
+This affects all groups. Search and filters do not change the scope.</value>
+  </data>
+  <data name="BatchRestartPrompt" xml:space="preserve">
+    <value>Restart {0} enabled services?
+Stopped services will also start. One-time commands are unaffected. This affects all groups.</value>
+  </data>
+  <data name="DeleteProgramPrompt" xml:space="preserve">
+    <value>Delete “{0}”?
+Active processes will stop. Configuration, execution history, and application-owned output will be deleted. This cannot be undone.</value>
+  </data>
+  <data name="CopySuffix" xml:space="preserve">
+    <value>copy</value>
+  </data>
+  <data name="GeneralSettings" xml:space="preserve">
+    <value>General and appearance</value>
+  </data>
+  <data name="Theme" xml:space="preserve">
+    <value>Appearance</value>
+  </data>
+  <data name="ThemeSystem" xml:space="preserve">
+    <value>Follow Windows</value>
+  </data>
+  <data name="ThemeLight" xml:space="preserve">
+    <value>Light</value>
+  </data>
+  <data name="ThemeDark" xml:space="preserve">
+    <value>Dark</value>
+  </data>
+  <data name="NotificationHint" xml:space="preserve">
+    <value>Notify for failures and problems that need action. Routine success stays quiet.</value>
+  </data>
+  <data name="LoginStartup" xml:space="preserve">
+    <value>Start at sign-in</value>
+  </data>
+  <data name="EnvironmentHint" xml:space="preserve">
+    <value>Changes affect new executions only.</value>
+  </data>
+  <data name="DataSettings" xml:space="preserve">
+    <value>Data and diagnostics</value>
+  </data>
+  <data name="Duration" xml:space="preserve">
+    <value>Duration</value>
+  </data>
+  <data name="EventTitle" xml:space="preserve">
+    <value>Event</value>
+  </data>
+  <data name="Yes" xml:space="preserve">
+    <value>On</value>
+  </data>
+  <data name="No" xml:space="preserve">
+    <value>Off</value>
+  </data>
+  <data name="Cancel" xml:space="preserve">
+    <value>Cancel</value>
+  </data>
+  <data name="BrowseDirectory" xml:space="preserve">
+    <value>Choose working directory…</value>
+  </data>
+  <data name="InheritedEnvironment" xml:space="preserve">
+    <value>Inherits Windows user environment</value>
+  </data>
+  <data name="EnvironmentSyntax" xml:space="preserve">
+    <value>KEY=value overrides a value. -KEY removes an inherited variable. Values are literal.</value>
+  </data>
+  <data name="AdvancedLaunch" xml:space="preserve">
+    <value>Advanced launch</value>
+  </data>
+  <data name="RetrySettings" xml:space="preserve">
+    <value>Startup and retries</value>
+  </data>
+  <data name="StopSettings" xml:space="preserve">
+    <value>Stopping</value>
+  </data>
+  <data name="LogSettings" xml:space="preserve">
+    <value>Output and retention</value>
+  </data>
+  <data name="RetrySummary" xml:space="preserve">
+    <value>Stable after {0}s · {1} retries</value>
+  </data>
+  <data name="TimeoutSummary" xml:space="preserve">
+    <value>Timeout: {0}s (0 means none)</value>
+  </data>
+  <data name="LogSummary" xml:space="preserve">
+    <value>Code page {0} · {1} MiB × {2}</value>
+  </data>
+  <data name="Optional" xml:space="preserve">
+    <value>Optional</value>
+  </data>
+  <data name="SecretsNeedInput" xml:space="preserve">
+    <value>Sensitive values require re-entry. The configuration remains disabled.</value>
+  </data>
+  <data name="RemoveVariable" xml:space="preserve">
+    <value>Remove</value>
+  </data>
+  <data name="VariableName" xml:space="preserve">
+    <value>Variable name</value>
+  </data>
+  <data name="InvalidNumber" xml:space="preserve">
+    <value>{0}: enter a finite number.</value>
+  </data>
+  <data name="InvalidInteger" xml:space="preserve">
+    <value>{0}: enter an integer.</value>
+  </data>
+  <data name="EnvironmentError" xml:space="preserve">
+    <value>Line {0}: {1}</value>
+  </data>
+  <data name="SavedConfiguration" xml:space="preserve">
+    <value>Saved. Changes apply on the next start.</value>
+  </data>
+  <data name="OpenSeparate" xml:space="preserve">
+    <value>Open in separate window</value>
+  </data>
+  <data name="SearchLoaded" xml:space="preserve">
+    <value>Search loaded output</value>
+  </data>
+  <data name="SearchNext" xml:space="preserve">
+    <value>Find next</value>
+  </data>
+  <data name="OutputOptions" xml:space="preserve">
+    <value>Output options</value>
+  </data>
+  <data name="LoadedSearchHint" xml:space="preserve">
+    <value>Search covers loaded output only.</value>
+  </data>
+  <data name="LogIncomplete" xml:space="preserve">
+    <value>Output has gaps; see the .gaps file.</value>
+  </data>
+  <data name="LogRotated" xml:space="preserve">
+    <value>[output rotated]</value>
+  </data>
+  <data name="RecentOutput" xml:space="preserve">
+    <value>[showing recent output]</value>
+  </data>
+  <data name="NewOutput" xml:space="preserve">
+    <value>New output · resume following to jump to the end.</value>
+  </data>
+  <data name="EventConfigSaved" xml:space="preserve">
+    <value>Configuration saved</value>
+  </data>
+  <data name="EventConfigImported" xml:space="preserve">
+    <value>Configuration imported</value>
+  </data>
+  <data name="EventRunEnded" xml:space="preserve">
+    <value>Execution ended</value>
+  </data>
+  <data name="EventFatal" xml:space="preserve">
+    <value>Automatic retry stopped</value>
+  </data>
+  <data name="EventForcedStop" xml:space="preserve">
+    <value>Process tree terminated</value>
+  </data>
+  <data name="EventLogIncomplete" xml:space="preserve">
+    <value>Output incomplete</value>
+  </data>
+  <data name="EventCleanupFailed" xml:space="preserve">
+    <value>Cleanup failed</value>
+  </data>
+  <data name="EventRecovered" xml:space="preserve">
+    <value>Recovered after interruption</value>
+  </data>
+  <data name="EventStorageFailed" xml:space="preserve">
+    <value>Storage failed</value>
+  </data>
+  <data name="TraySummary" xml:space="preserve">
+    <value>{0} running · {1} need attention</value>
+  </data>
+  <data name="OpenWorkbench" xml:space="preserve">
+    <value>Open Barback</value>
+  </data>
+  <data name="TrayEmpty" xml:space="preserve">
+    <value>No programs. Add one in the workbench.</value>
+  </data>
+  <data name="SearchPrograms" xml:space="preserve">
+    <value>Search programs or groups</value>
+  </data>
+  <data name="ExportSameFile" xml:space="preserve">
+    <value>Choose a different file; the active log cannot be overwritten.</value>
+  </data>
+  <data name="EventAppInterrupted" xml:space="preserve">
+    <value>Previous session interrupted</value>
+  </data>
+  <data name="EnvironmentTitle" xml:space="preserve">
+    <value>Environment variables</value>
+  </data>
+  <data name="EditEnvironment" xml:space="preserve">
+    <value>Edit environment variables</value>
+  </data>
+  <data name="StartupUnavailable" xml:space="preserve">
+    <value>Login startup is available in the signed installed version.</value>
+  </data>
+  <data name="StartupEnabled" xml:space="preserve">
+    <value>Enabled</value>
+  </data>
+  <data name="StartupDisabled" xml:space="preserve">
+    <value>Disabled</value>
+  </data>
+  <data name="StartupDisabledByUser" xml:space="preserve">
+    <value>Disabled in Windows startup settings</value>
+  </data>
+  <data name="StartupDisabledByPolicy" xml:space="preserve">
+    <value>Disabled by system policy</value>
+  </data>
+  <data name="StartupEnabledByPolicy" xml:space="preserve">
+    <value>Enabled by system policy</value>
+  </data>
 </root>

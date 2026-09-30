@@ -6,7 +6,7 @@
 
 为个人开发者管理当前用户会话中的本地后台程序，例如开发服务器、隧道、同步工具，以及备份、构建等一次性命令。沿用 macOS 版的“配置与日常操作分离”，使用 Windows 原生桌面技术实现。
 
-首版面向**仍在微软支持期内的 Windows 11，x64 与 ARM64**。不支持 Windows 7/8；Windows 10、Windows Server 和多用户服务器部署不在首版验收范围。这是控制首版验证范围的产品决策，不表示 WPF 无法运行在 Windows 10；如后续需要企业 LTSC/ESU 环境，应单独补充支持与测试矩阵。Windows 11 的具体受测版本、版本号和补丁由每次发布记录列出，不能仅以 API 最低版本代表产品支持范围。
+首版面向 **Windows 10 2004（build 19041）及以上和 Windows 11，x64 与 ARM64**。最低版本与项目 Windows API 基线、启动检查和 MSIX 安装清单一致，覆盖 Windows 10 21H2 / LTSC 2021 和 22H2；LTSC 2019（build 17763）、更早的 Windows 10、Windows 7/8、Windows Server 和多用户服务器部署不在验收范围。Windows 10 与 Windows 11 均纳入实机测试矩阵，具体受测版本、版本号和补丁由每次发布记录列出；API 兼容下限不等于全部版本已经验收，也不改变微软对 Windows/.NET 的维护生命周期。
 
 首版包括：服务和一次性命令、分组与搜索、逐项/批量启停、重试保护、配置编辑、日志轮转和查看、历史与事件、托盘、登录启动、本地通知、诊断导出、supervisor INI 迁移预览。主窗口可完成所有操作，不依赖托盘始终可见。
 
@@ -117,7 +117,7 @@ windows/
   docs/
 ```
 
-平台项目以 `net10.0-windows10.0.19041.0` 为 API 基线，打包清单把产品最低版本限制为 Windows 11；两者含义不同。最终 SDK 投影版本在 M0 固定。核心测试可在非 Windows 跑，但 Windows 进程与 UI 验证必须在真实 Windows 运行。
+平台项目以 `net10.0-windows10.0.19041.0` 为 API 基线，启动检查及打包清单同样要求 Windows 10 2004（`10.0.19041.0`）及以上。Windows App SDK 1.8 本身可兼容至 Windows 10 1809，但 Barback 使用更高的项目 API 基线，不能仅降低安装清单来承诺支持更早版本。参考：[Windows SDK 与 Windows App SDK 版本说明](https://learn.microsoft.com/en-us/windows/apps/get-started/versioning-overview)、[.NET 10 系统支持矩阵](https://github.com/dotnet/core/blob/main/release-notes/10.0/supported-os.md)。核心测试可在非 Windows 跑，但 Windows 进程与 UI 验证必须在真实 Windows 运行。
 
 ## 4. 进程所有权与生命周期
 

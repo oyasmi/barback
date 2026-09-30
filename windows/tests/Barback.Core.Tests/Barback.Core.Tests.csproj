@@ -5,6 +5,7 @@
     <IsPackable>false</IsPackable>
   </PropertyGroup>
   <ItemGroup>
+    <Compile Include="../../src/Barback.App/ProgramActionPolicy.cs" Link="ProgramActionPolicy.cs" />
     <ProjectReference Include="../../src/Barback.Core/Barback.Core.csproj" />
     <PackageReference Include="Microsoft.NET.Test.Sdk" />
     <PackageReference Include="xunit" />

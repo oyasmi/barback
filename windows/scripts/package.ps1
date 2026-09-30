@@ -1,7 +1,8 @@
 [CmdletBinding()]
 param(
  [ValidateSet('x64','arm64')][string]$Architecture='x64',
- [string]$Version='0.1.0.0',
+ [string]$Version='0.3.2.0',
+ [switch]$SelfContained,
  [string]$Publisher='CN=Oyasmi',
  [string]$CertificateThumbprint,
  [string]$TimestampUrl='http://timestamp.digicert.com'
@@ -12,14 +13,23 @@ if ($Version -notmatch '^\d+\.\d+\.\d+\.\d+$') { throw 'Use a four-part MSIX ver
 Push-Location (Join-Path $PSScriptRoot '..')
 try {
     $sdkRoot=Join-Path ${env:ProgramFiles(x86)} 'Windows Kits/10/bin'
-    $sdk=Get-ChildItem $sdkRoot -Directory | Where-Object { Test-Path (Join-Path $_.FullName 'x64/makeappx.exe') } | Sort-Object Name -Descending | Select-Object -First 1
-    if (!$sdk) { throw 'Install the Windows SDK packaging tools.' }
-    $makeappx=Join-Path $sdk.FullName 'x64/makeappx.exe'; $signtool=Join-Path $sdk.FullName 'x64/signtool.exe'
+    $sdk=Get-ChildItem $sdkRoot -Directory -ErrorAction SilentlyContinue | Where-Object { Test-Path (Join-Path $_.FullName 'x64/makeappx.exe') } | Sort-Object Name -Descending | Select-Object -First 1
+    if ($sdk) {
+        $makeappx=Join-Path $sdk.FullName 'x64/makeappx.exe'; $signtool=Join-Path $sdk.FullName 'x64/signtool.exe'
+    } else {
+        $buildToolsRoot=Join-Path $env:USERPROFILE '.nuget/packages/microsoft.windows.sdk.buildtools'
+        $makeappxFile=Get-ChildItem $buildToolsRoot -Filter makeappx.exe -Recurse -File -ErrorAction SilentlyContinue | Where-Object { $_.Directory.Name -eq 'x64' } | Sort-Object FullName -Descending | Select-Object -First 1
+        if (!$makeappxFile) { throw 'Install the Windows SDK packaging tools.' }
+        $makeappx=$makeappxFile.FullName; $signtool=Join-Path $makeappxFile.Directory.FullName 'signtool.exe'
+    }
     $stage=Join-Path (Get-Location) "artifacts/package/$Architecture/$Version"
     if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
     New-Item $stage -ItemType Directory -Force | Out-Null
+    & dotnet restore Barback.sln --locked-mode -p:Platform=$Architecture -p:NuGetAudit=false -m:1
+    if ($LASTEXITCODE) { throw 'Locked dependency restore failed.' }
+    $selfContainedValue=if ($SelfContained) { 'true' } else { 'false' }
     foreach ($project in @('src/Barback.App','src/Barback.ConsoleHost')) {
-        & dotnet publish $project -c Release -r "win-$Architecture" --self-contained true -p:RestoreLockedMode=true -p:Platform=$Architecture -o $stage
+        & dotnet publish $project -c Release -r "win-$Architecture" --self-contained $selfContainedValue --no-restore -p:Platform=$Architecture -m:1 -o $stage
         if ($LASTEXITCODE) { throw "Publish failed: $project" }
     }
     Copy-Item packaging/Assets $stage -Recurse -Force
@@ -36,7 +46,7 @@ try {
         & $signtool verify /pa $package
         if ($LASTEXITCODE) { throw 'Signature verification failed.' }
     } else { Write-Warning 'Unsigned build artifact only. A signed package and completed M0/W01–W40 evidence are required for release.' }
-    $inventory=& dotnet list src/Barback.App package --include-transitive --format json
+    $inventory=& dotnet list src/Barback.App package --include-transitive --format json --no-restore
     if ($LASTEXITCODE) { throw 'Dependency inventory failed.' }
     $inventoryText=$inventory -join "`n"
     $inventoryText | Set-Content "$package.dependencies.json"
@@ -52,5 +62,5 @@ try {
     $components=$components | Sort-Object { $_.purl } -Unique
     @{ bomFormat='CycloneDX'; specVersion='1.5'; serialNumber="urn:uuid:$([guid]::NewGuid())"; version=1; metadata=@{ timestamp=(Get-Date).ToUniversalTime().ToString('O') }; components=@($components) } | ConvertTo-Json -Depth 10 | Set-Content "$package.sbom.json"
     Get-FileHash $package -Algorithm SHA256 | Format-List
-    & dotnet list src/Barback.App package --include-transitive | Out-File "$package.dependencies.txt"
+    & dotnet list src/Barback.App package --include-transitive --no-restore | Out-File "$package.dependencies.txt"
 } finally { Pop-Location }

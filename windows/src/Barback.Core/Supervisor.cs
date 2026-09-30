@@ -57,7 +57,7 @@ public sealed class Supervisor : IAsyncDisposable
     private void Publish()
     {
         var next = configs.Values.OrderBy(c => c.Priority).ThenBy(c => c.NameKey).ThenBy(c => c.Id)
-            .Select(c => new ProgramSnapshot(c, states.GetValueOrDefault(c.Id) ?? new())).ToArray();
+            .Select(c => new ProgramSnapshot(c, states.GetValueOrDefault(c.Id) ?? new(), states.GetValueOrDefault(c.Id)?.Active == true ? runConfigs.GetValueOrDefault(c.Id) : null)).ToArray();
         if (!snapshot.SequenceEqual(next) || publishedStorageError != StorageError) { snapshot = next; publishedStorageError = StorageError; Changed?.Invoke(); }
     }
     public Task InitializeAsync() => Enqueue(async () =>

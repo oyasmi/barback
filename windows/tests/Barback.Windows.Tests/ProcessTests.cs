@@ -11,6 +11,15 @@ public sealed class ProcessTests
     private static string ConsoleHost => Environment.GetEnvironmentVariable("BARBACK_CONSOLE_HOST_PATH") ?? throw new InvalidOperationException("Set BARBACK_CONSOLE_HOST_PATH.");
     private static string Temp() { var root = Path.Combine(Path.GetTempPath(), "barback-native-" + Guid.NewGuid()); Directory.CreateDirectory(root); return root; }
     private static LaunchSpec Spec(string[] args, StopMode mode = StopMode.TerminateJob) => new() { Executable = Child, Arguments = args, WorkingDirectory = Path.GetDirectoryName(Child)!, StopMode = mode };
+    private static async Task AssertTreeExitedAsync(WindowsProcessHost host, IEnumerable<string> identities)
+    {
+        var processes = identities.Select(line => { var parts = line.Split(' '); return (Pid: int.Parse(parts[0]), Creation: long.Parse(parts[1])); }).ToArray();
+        // Job termination and releasing descendant process objects do not complete at the same instant.
+        // Wait for every identity, not just the root; unknown/access-denied results remain conservative.
+        var deadline = Stopwatch.GetTimestamp() + 5 * Stopwatch.Frequency;
+        while (processes.Any(p => host.IsSameProcessAlive(p.Pid, p.Creation)) && Stopwatch.GetTimestamp() < deadline) await Task.Delay(25);
+        foreach (var p in processes) Assert.False(host.IsSameProcessAlive(p.Pid, p.Creation), $"Process {p.Pid} (creation {p.Creation}) did not exit within five seconds.");
+    }
     [WindowsTheory]
     [InlineData(0u)]
     [InlineData(259u)]
@@ -45,7 +54,7 @@ public sealed class ProcessTests
             var host = new WindowsProcessHost(ConsoleHost); await using var run = await host.PrepareAsync(Guid.NewGuid(), Spec(["--mode", "tree", "--depth", "3", "--manifest", manifest, "--root-exit", "true"]), Path.Combine(root, "logs"), _ => { }, CancellationToken.None);
             await run.ActivateAsync(CancellationToken.None); await run.Exit.WaitAsync(TimeSpan.FromSeconds(15)); Assert.True(await run.CleanAsync(CancellationToken.None));
             var lines = File.ReadAllLines(manifest); Assert.True(lines.Length >= 2);
-            foreach (var line in lines) { var parts = line.Split(' '); Assert.False(host.IsSameProcessAlive(int.Parse(parts[0]), long.Parse(parts[1]))); }
+            await AssertTreeExitedAsync(host, lines);
         }
         finally { Directory.Delete(root, true); }
     }
@@ -89,10 +98,8 @@ public sealed class ProcessTests
             {
                 var ready = await owner.StandardOutput.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(15)); Assert.StartsWith("READY ", ready); var fields = ready!.Split(' ');
                 if (stage == "resume") await Task.Delay(700); owner.Kill(); await owner.WaitForExitAsync();
-                var host = new WindowsProcessHost(ConsoleHost); var deadline = DateTime.UtcNow.AddSeconds(5);
-                while (host.IsSameProcessAlive(int.Parse(fields[1]), long.Parse(fields[2])) && DateTime.UtcNow < deadline) await Task.Delay(25);
-                Assert.False(host.IsSameProcessAlive(int.Parse(fields[1]), long.Parse(fields[2])));
-                if (File.Exists(manifest)) foreach (var line in File.ReadAllLines(manifest)) { var parts = line.Split(' '); Assert.False(host.IsSameProcessAlive(int.Parse(parts[0]), long.Parse(parts[1]))); }
+                var host = new WindowsProcessHost(ConsoleHost);
+                await AssertTreeExitedAsync(host, new[] { $"{fields[1]} {fields[2]}" }.Concat(File.Exists(manifest) ? File.ReadAllLines(manifest) : []));
             }
             finally { if (!owner.HasExited) { owner.Kill(); await owner.WaitForExitAsync(); } }
         }

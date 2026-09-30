@@ -2,24 +2,27 @@
 
 C# + .NET 10 LTS + WPF 的首版实现已加入仓库。**当前为开发候选，尚未通过 Windows 实机发布验收，不提供已签名正式发行包。** 实现和实测状态见 [开发验证记录](docs/implementation-status.md)；产品要求仍以 [总体设计](docs/design.md)、[交互设计](docs/interaction.md)、[40 项验收标准](docs/validation.md)为准。
 
-目标平台为 Windows 11 x64 / ARM64、普通用户登录会话。Barback 管理自己启动的进程树，不安装系统服务，不接管任意 PID，也不管理 WSL、Docker 或其他系统代理的任务。应用拒绝以管理员身份运行。
+目标平台为 Windows 10 2004（build 19041）及以上和 Windows 11，x64 / ARM64、普通用户登录会话。运行检查和 MSIX 安装清单均使用 `10.0.19041.0` 最低版本，与项目 API 基线一致；包括 Windows 10 21H2 / LTSC 2021 和 22H2，不包括 LTSC 2019（build 17763）及更早版本。具体实测版本见开发验证记录。Barback 管理自己启动的进程树，不安装系统服务，不接管任意 PID，也不管理 WSL、Docker 或其他系统代理的任务。应用拒绝以管理员身份运行。
 
 ## 构建与运行
 
-在普通用户 Windows PowerShell / PowerShell 7 中操作，需要固定版本 .NET SDK（见 `global.json`），构建自包含包时还需要 Windows SDK 的 `mt`、`makepri` 和 `makeappx` 工具。SDK 和 NuGet 版本集中固定，项目锁文件覆盖 x64 与 ARM64。
+在普通用户 Windows PowerShell / PowerShell 7 中操作，需要固定版本 .NET SDK（见 `global.json`）。默认 MSIX 是框架依赖发布，需要目标机器安装 .NET 10 Desktop Runtime；使用 `-SelfContained` 才会把 .NET 运行时一并放入包中。打包还需要 Windows SDK 的 `mt`、`makepri` 和 `makeappx` 工具；脚本也支持使用 NuGet 缓存中的 `Microsoft.Windows.SDK.BuildTools`。SDK 和 NuGet 版本集中固定，项目锁文件覆盖 x64 与 ARM64。
 
 ```powershell
 cd windows
 ./scripts/build.ps1
 ./scripts/test.ps1
+./scripts/test-ui.ps1 # x64 原生工作台控件回归与截图，使用隔离数据库和模拟宿主
 ./scripts/run.ps1
 ```
 
 `run.ps1` 将 App、ConsoleHost 和品牌资源发布至 `artifacts/dev/x64/`，再启动 App。两者必须同目录、同架构；单独 `dotnet run` App 不会自动提供 ConsoleHost。ARM64 实机使用 `-Architecture arm64`。
 
 ```powershell
-./scripts/package.ps1 -Architecture x64
+./scripts/package.ps1 -Architecture x64 # 默认框架依赖，约 16 MB 的 MSIX
 ./scripts/package.ps1 -Architecture arm64
+# 需要独立携带 .NET 运行时时使用自包含模式，包会明显变大。
+./scripts/package.ps1 -Architecture x64 -SelfContained
 # 正式签名需要发布环境证书；Publisher 必须与证书 Subject 一致。
 ./scripts/package.ps1 -Architecture x64 -Publisher 'CN=Oyasmi' -CertificateThumbprint '<thumbprint>'
 ```
@@ -38,10 +41,11 @@ dotnet test tests/Barback.Windows.Tests -c Release
 
 ## 使用
 
-- 主窗口提供程序、执行历史、事件和设置；列表按名称/分组搜索，可单项或批量启停。批量启动/重启只操作已启用服务，停止包括一次性命令与已禁用但仍运行的程序。
+- 主窗口采用[工作台布局](docs/ui-redesign.md)：程序列表与输出详情并排，窄窗口进入可返回的详情页。导航集中为程序、活动和设置；活动中区分执行记录与系统事件。每行只保留当前状态对应的主动作，其余操作收进菜单；批量操作位于页头更多菜单。
+- 列表支持名称/分组搜索、类型筛选和需要处理视图。历史只展示已结束的结果，打开记录查看该次输出；仅一次性命令提供“用当前配置再次运行”，确认时明确历史与当前版本。批量启动/重启只操作已启用服务，停止包括一次性命令与已禁用但仍运行的程序。
 - 普通模式填写绝对 `.exe` 路径及逐行参数；空行是空参数，留空参数区表示无参数。PowerShell 脚本/命令文本和 cmd 模式显式选择，不执行 Profile、不绕过执行策略，也不翻译 POSIX 命令。
 - 控制台停止尝试定向 Ctrl+Break，超时终止 Job；立即终止模式会显示风险。清理未确认时阻止下一次启动，提供重试清理。
-- 编辑器保留原始草稿。环境变量 `KEY=value` 是字面量覆盖，`-KEY` 删除继承值；敏感项使用密码框并以当前用户 DPAPI 加密。设置中可编辑应用级覆盖或刷新用户环境，均只影响新 Run。
+- 内嵌编辑器保留原始草稿，保存区固定可见，离开时检查未保存内容；高级选项按组折叠。环境变量 `KEY=value` 是字面量覆盖，`-KEY` 删除继承值；敏感项使用密码框并以当前用户 DPAPI 加密。设置中可编辑应用级覆盖或刷新用户环境，均只影响新 Run。
 - 保存后当前 Run 保持自己的参数与策略快照；服务可保存并重启，一次性命令不会因保存自动重跑。复制和迁移所得配置默认禁用且不自动启动。
 - 关闭主窗口默认驻留；托盘提供快捷启停，明确退出显示停止进度，可取消退出意图或确认提前强制清理，已停止的程序不会因取消而重启。应用异常结束时 Job 关闭清理进程树，下一次启动标记中断；一次性命令不会自动重跑。
 - 日志分别保存 stdout/stderr 原始字节，轮转由唯一写入者控制。查看器支持跟随、暂停、已加载内容搜索、可取消磁盘搜索、结果上下文定位及原始字节导出。缓存/日志预算耗尽时继续排空输出，记录丢弃量及 `.gaps` 文件。

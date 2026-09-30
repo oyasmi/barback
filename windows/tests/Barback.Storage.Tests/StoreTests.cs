@@ -14,6 +14,8 @@ public sealed class StoreTests : IAsyncLifetime
     }
     public async Task InitializeAsync() => store = await SqliteStore.OpenAsync(root, new TestProtector());
     public async Task DisposeAsync() { await store.DisposeAsync(); Directory.Delete(root, true); }
+    // Windows cannot delete databases while a pooled inspection connection retains its handle.
+    private static SqliteConnection InspectDatabase(string path) => new(new SqliteConnectionStringBuilder { DataSource = path, Pooling = false }.ToString());
     private static ProgramConfig Draft(string name = "test") => new() { Name = name, Enabled = false };
     [Fact]
     public async Task OptimisticVersionAndUniqueNamesAreTransactional()
@@ -45,7 +47,7 @@ public sealed class StoreTests : IAsyncLifetime
     {
         var c = Draft() with { Launch = new() { Environment = [new("TOKEN", "ultra-private", true)] } }; await store.SaveAsync(c, 0);
         Assert.Equal("ultra-private", (await store.LoadProgramsAsync()).Single().Launch.Environment.Single().Value);
-        using var db = new SqliteConnection($"Data Source={Path.Combine(root, "barback.db")}"); await db.OpenAsync(); using var cmd = db.CreateCommand(); cmd.CommandText = "SELECT json FROM programs"; Assert.DoesNotContain("ultra-private", (string)(await cmd.ExecuteScalarAsync())!);
+        using var db = InspectDatabase(Path.Combine(root, "barback.db")); await db.OpenAsync(); using var cmd = db.CreateCommand(); cmd.CommandText = "SELECT json FROM programs"; Assert.DoesNotContain("ultra-private", (string)(await cmd.ExecuteScalarAsync())!);
         var export = Path.Combine(root, "export.json"); await store.ExportPortableAsync(export); Assert.DoesNotContain("ultra-private", await File.ReadAllTextAsync(export));
         Assert.DoesNotContain("ultra-private", await File.ReadAllTextAsync(Directory.GetFiles(Path.Combine(root, "backups"), "config-*.json").Single()));
     }
@@ -53,13 +55,13 @@ public sealed class StoreTests : IAsyncLifetime
     public async Task OnlineBackupIncludesWalWrites()
     {
         await store.SaveAsync(Draft(), 0); var path = Path.Combine(root, "backup.db"); await store.BackupDatabaseAsync(path);
-        using var backup = new SqliteConnection($"Data Source={path}"); await backup.OpenAsync(); using var cmd = backup.CreateCommand(); cmd.CommandText = "SELECT count(*) FROM programs"; Assert.Equal(1L, await cmd.ExecuteScalarAsync());
+        using var backup = InspectDatabase(path); await backup.OpenAsync(); using var cmd = backup.CreateCommand(); cmd.CommandText = "SELECT count(*) FROM programs"; Assert.Equal(1L, await cmd.ExecuteScalarAsync());
     }
     [Fact]
     public async Task UnreadableSecretDisablesConfigurationAndRequiresReentry()
     {
         await store.SaveAsync(Draft() with { Enabled = true, Launch = new() { Environment = [new("TOKEN", "private", true)] } }, 0);
-        using (var db = new SqliteConnection($"Data Source={Path.Combine(root, "barback.db")}"))
+        using (var db = InspectDatabase(Path.Combine(root, "barback.db")))
         {
             await db.OpenAsync(); using var cmd = db.CreateCommand(); cmd.CommandText = "UPDATE programs SET json=json_set(json,'$.Launch.Environment[0].Value','invalid-base64')"; await cmd.ExecuteNonQueryAsync();
         }
@@ -99,7 +101,7 @@ public sealed class StoreTests : IAsyncLifetime
     public async Task HigherSchemaIsRejectedWithoutWriting()
     {
         var newer = Path.Combine(root, "newer"); Directory.CreateDirectory(newer);
-        using (var db = new SqliteConnection($"Data Source={Path.Combine(newer, "barback.db")}")) { db.Open(); using var cmd = db.CreateCommand(); cmd.CommandText = "PRAGMA user_version=999"; cmd.ExecuteNonQuery(); }
+        using (var db = InspectDatabase(Path.Combine(newer, "barback.db"))) { db.Open(); using var cmd = db.CreateCommand(); cmd.CommandText = "PRAGMA user_version=999"; cmd.ExecuteNonQuery(); }
         await Assert.ThrowsAsync<InvalidDataException>(() => SqliteStore.OpenAsync(newer));
     }
     [Fact]
@@ -129,7 +131,7 @@ public sealed class StoreTests : IAsyncLifetime
         }
         var active = Guid.NewGuid(); var activeDir = Path.Combine(root, "logs", "runs", active.ToString("N"), active.ToString("N")); Directory.CreateDirectory(activeDir); await File.WriteAllTextAsync(Path.Combine(activeDir, "stdout.log"), "active"); await store.BeginRunAsync(new(active, c.Id, 6, 1, DateTimeOffset.UtcNow.AddSeconds(6), LogDirectory: activeDir));
         await store.MaintainAsync(); Assert.Equal(3, (await store.RunsAsync()).Count); Assert.True(File.Exists(Path.Combine(activeDir, "stdout.log"))); Assert.False(Directory.Exists(paths[0])); Assert.True(Directory.Exists(paths[4]));
-        using var db = new SqliteConnection($"Data Source={Path.Combine(root, "barback.db")}"); await db.OpenAsync(); using var cmd = db.CreateCommand(); cmd.CommandText = "SELECT total_runs FROM programs"; Assert.Equal(6L, await cmd.ExecuteScalarAsync());
+        using var db = InspectDatabase(Path.Combine(root, "barback.db")); await db.OpenAsync(); using var cmd = db.CreateCommand(); cmd.CommandText = "SELECT total_runs FROM programs"; Assert.Equal(6L, await cmd.ExecuteScalarAsync());
     }
     [Fact]
     public async Task ConfigBackupRetentionKeepsTenSnapshots()

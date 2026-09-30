@@ -19,6 +19,6 @@
     <ProjectReference Include="../Barback.Core/Barback.Core.csproj" />
     <ProjectReference Include="../Barback.Windows/Barback.Windows.csproj" />
     <ProjectReference Include="../Barback.Storage/Barback.Storage.csproj" />
-    <PackageReference Include="Microsoft.WindowsAppSDK" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.Foundation" />
   </ItemGroup>
 </Project>

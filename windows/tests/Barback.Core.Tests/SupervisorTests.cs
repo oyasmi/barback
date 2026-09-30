@@ -53,6 +53,26 @@ public class SupervisorTests
     private static ProgramConfig Config(string root, ProgramKind kind = ProgramKind.Service) => new() { Name = "test", Kind = kind, Launch = new() { Executable = Path.Combine(root, "fixture.exe"), WorkingDirectory = root, StopMode = StopMode.TerminateJob }, Policy = new() { Autostart = false, StartSeconds = 0, Restart = RestartPolicy.Never } };
     private static string Temp() { var root = Path.Combine(Path.GetTempPath(), "barback-actor-" + Guid.NewGuid()); Directory.CreateDirectory(root); File.WriteAllText(Path.Combine(root, "fixture.exe"), ""); return root; }
     [Fact]
+    public async Task PublishedRunConfigurationRemainsOriginalAfterEditing()
+    {
+        var root = Temp(); try
+        {
+            var store = new Store(); var config = Config(root); store.Configs.Add(config); var host = new Host(store);
+            await using var supervisor = new Supervisor(store, host, new Clock(), root);
+            await supervisor.InitializeAsync(); await supervisor.SendAsync(config.Id, Signal.Start);
+            await Until(() => host.Runs.Any(r => r.Activated));
+            await supervisor.SaveAsync(config with { Name = "renamed", Launch = config.Launch with { EncodingCodePage = 1200 } }, 0);
+            var snapshot = supervisor.Snapshot.Single();
+            Assert.Equal(1200, snapshot.Config.Launch.EncodingCodePage);
+            Assert.Equal(65001, snapshot.RunConfig!.Launch.EncodingCodePage);
+            Assert.Equal("test", snapshot.RunConfig.Name);
+            await supervisor.SendAsync(config.Id, Signal.Force);
+            await Until(() => !supervisor.Snapshot.Single().Runtime.Active);
+            Assert.Null(supervisor.Snapshot.Single().RunConfig);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+    [Fact]
     public async Task FailedIdentityCommitAndCleanupExceptionRetainOwnershipForRetry()
     {
         var root = Temp(); try

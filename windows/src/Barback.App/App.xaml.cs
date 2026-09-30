@@ -19,7 +19,8 @@ public partial class App : Application
     protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
-        if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000)) { MessageBox.Show("Barback requires Windows 11.", "Barback"); Shutdown(1); return; }
+        // Match the Windows API baseline and MSIX MinVersion (Windows 10 2004).
+        if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 19041)) { MessageBox.Show("Barback requires Windows 10 version 2004 (build 19041) or later.", "Barback"); Shutdown(1); return; }
         DispatcherUnhandledException += (_, args) => { MessageBox.Show(args.Exception.Message, "Barback", MessageBoxButton.OK, MessageBoxImage.Error); args.Handled = true; };
         using var identity = WindowsIdentity.GetCurrent();
         if (new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator)) { MessageBox.Show("Barback must run as a standard user. Close it and launch without administrator privileges.", "Barback"); Shutdown(1); return; }
@@ -46,6 +47,8 @@ public partial class App : Application
                 store = await SqliteStore.OpenAsync(shell.Root);
             }
             var language = await store.GetSettingAsync("language"); if (language is not null) CultureInfo.CurrentUICulture = new CultureInfo(language);
+            WorkbenchTheme.Initialize();
+            WorkbenchTheme.Set(await store.GetSettingAsync("theme") ?? "System");
             CloseExits = await store.GetSettingAsync("close_exits") == "true";
             shell.NotificationsEnabled = await store.GetSettingAsync("notifications") != "false";
             var logRoot = Path.Combine(shell.Root, "logs"); Directory.CreateDirectory(logRoot);
@@ -84,6 +87,7 @@ public partial class App : Application
     public async Task ExitAsync()
     {
         if (exiting || supervisor is null) return;
+        if (MainWindow is MainWindow workbench && !await workbench.RequestLeaveEditorAsync()) return;
         foreach (var editor in Windows.OfType<Window>().Where(w => w is EditorWindow or EnvironmentWindow).ToArray()) { editor.Close(); if (Windows.OfType<Window>().Contains(editor)) return; }
         if (supervisor.Snapshot.Any(s => s.Runtime.Active) && MessageBox.Show(Text.Get("ExitConfirm"), "Barback", MessageBoxButton.OKCancel, MessageBoxImage.Question, MessageBoxResult.Cancel) != MessageBoxResult.OK) return;
         exiting = true;
@@ -97,5 +101,5 @@ public partial class App : Application
         catch (Exception ex) { exiting = false; MessageBox.Show(ex.Message, "Barback", MessageBoxButton.OK, MessageBoxImage.Error); }
         finally { progress?.Finish(); }
     }
-    protected override void OnExit(ExitEventArgs e) { instance?.Dispose(); tray?.Dispose(); shell?.Dispose(); base.OnExit(e); }
+    protected override void OnExit(ExitEventArgs e) { WorkbenchTheme.Dispose(); instance?.Dispose(); tray?.Dispose(); shell?.Dispose(); base.OnExit(e); }
 }

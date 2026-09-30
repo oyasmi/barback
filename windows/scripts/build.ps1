@@ -4,8 +4,8 @@ $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 Push-Location (Join-Path $PSScriptRoot '..')
 try {
-    & dotnet restore Barback.sln --locked-mode -p:Platform=$Architecture
+    & dotnet restore Barback.sln --locked-mode -p:Platform=$Architecture -p:NuGetAudit=false -m:1
     if ($LASTEXITCODE) { throw 'Locked dependency restore failed.' }
-    & dotnet build Barback.sln -c $Configuration --no-restore -p:Platform=$Architecture
+    & dotnet build Barback.sln -c $Configuration --no-restore -p:Platform=$Architecture -m:1
     if ($LASTEXITCODE) { throw 'Build failed.' }
 } finally { Pop-Location }

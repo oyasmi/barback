@@ -1,8 +1,34 @@
 # Windows 开发验证记录
 
-日期：2026-09-30。环境：Linux x86_64；.NET SDK 10.0.401。当前交付是首版开发候选源码，**不是 Windows 发布验收通过的版本**。没有 Windows 桌面、签名证书或 ARM64 实机，四项 M0 关卡均未获得真实 Windows 证据，M4 不通过；不得据此发布相关首版能力。
+日期：2026-09-30。初始验证环境：Linux x86_64；.NET SDK 10.0.401。随后补充 Windows 10 x64 兼容验证，见下节。当前交付仍是首版开发候选源码，**不是 Windows 发布验收通过的版本**。四项 M0 关卡尚未取得完整证据，签名安装、ARM64 实机和长期运行仍待验证，M4 不通过。
 
-## 已完成的本地验证
+## Windows 10 兼容验证
+
+2026-09-30，在 Windows 10 专业版 22H2（`10.0.19045`）、x64、普通用户会话、.NET SDK `10.0.401` 上验证：
+
+- 将启动检查及 MSIX `MinVersion` 从 Windows 11（22000）统一为 Windows 10 2004（19041），保持现有 `net10.0-windows10.0.19041.0` API 基线。Windows 10 19041 以下仍明确拒绝。
+- `./scripts/build.ps1` 与 `./scripts/build.ps1 -Architecture arm64` 均通过，0 警告、0 错误。ARM64 仅为交叉构建，未实机运行。
+- `./scripts/test.ps1`：Core 51、Storage 13、Windows 12，共 76 通过，0 失败、0 跳过。Windows 用例实际覆盖 Job 树清理、定向 Ctrl+Break、挂起/运行阶段宿主崩溃、DWORD 退出码、中文/空参数和双流输出。
+- 实机暴露并修复测试基础设施问题：临时 SQLite 检查连接禁用池化，关闭后释放 Windows 文件句柄；进程退出测试最多等待五秒，逐一核对整个树的 PID + 创建时间，避免根已退出但后代退出状态尚未稳定时立即断言。
+- 已重新发布 `artifacts/dev/x64/` 的自包含 App / ConsoleHost，使用 Windows 应用窗口接口观察到正常中文主窗口、程序列表和“0 运行中 · 0 停止 / 清理中”，原 Windows 11 拒绝提示消失。未取得可用截图，未验证可视布局、托盘操作或完整编辑/启停 UI 路径。
+- 使用已锁定的 `Microsoft.Windows.SDK.BuildTools` 中 `makeappx.exe` 验证清单并成功生成 x64 未签名 MSIX；读取包内清单确认 `MinVersion=10.0.19041.0`，App 与 ConsoleHost 均已包含。该包使用开发构建，只作为打包验证证据，不表示签名安装已验证。
+
+本地证据（不提交源码）：`TestResults/x64/{Core,Storage,Windows}.trx`；`artifacts/evidence/win10-compatibility/` 下的系统/补丁记录、主窗口可访问性记录、未签名 MSIX、打包日志及包内最低版本/内容/SHA-256 记录。最低版本 19041、LTSC 2021、Windows 11 回归、ARM64 原生运行，以及签名 MSIX 的安装/升级/通知/登录项仍需按[实机操作手册](windows-test-runbook.md)补齐；以下 W01–W40 的完整验收状态仍保留待验收，不能将上述部分自动化覆盖等同于通过全部场景。
+
+## Windows 工作台实现验证
+
+2026-09-30，沿用上述 Windows 10 x64 环境完成工作台替换：
+
+- 原生 WPF Fluent 外壳；程序/活动与侧栏设置；状态主动作、上下文菜单、分组/类型/需要处理筛选；并排列表与详情和窄窗钻取。
+- 内嵌日志、受保护的内嵌编辑草稿、固定保存栏；只读执行历史与明确的当前配置重跑；托盘复用状态动作规则；浅/深色/系统主题与高对比颜色分支。
+- `scripts/test.ps1`：Core 64、Storage 13、Windows 12，共 89 通过，0 失败、0 跳过。新增动作规则、禁用仍持有 Run、停止/清理优先级、历史重跑、元数据变化与不可变运行配置快照的回归。
+- `scripts/test-ui.ps1 -Configuration Release`：28 项真实 WPF 控件与 Dispatcher 回归通过，使用隔离 SQLite 和模拟宿主；未执行用户命令。检查状态刷新保留选择、缺失 stderr 与无 Run 清空旧日志、失败原因、待生效提示、历史操作归属、最小窗口保存栏、托盘状态按钮等。
+- 检查 9 张真实控件 PNG：主工作台浅/深色、失败详情、窄窗列表/详情、活动、设置、窄窗编辑器、托盘。原生验证发现并修复分组 CollectionView 延迟刷新异常与 Fluent 主题重复初始化问题。
+- 完整解决方案 x64 / ARM64 Release 构建通过，0 警告、0 错误；中英 278 个唯一资源键一致，字面量界面资源引用均存在。
+
+本地证据：`TestResults/x64/{Core,Storage,Windows}.trx`；`artifacts/ui-check/20260930-170803/{checks.txt,*.png}`。未完成混合 DPI、Narrator、系统高对比交互、Explorer 重启、Windows 11、ARM64 原生和签名 MSIX 验收，发布状态保持开发候选。界面设计与历史快照边界见 [工作台说明](ui-redesign.md)。
+
+## 初始 Linux 验证记录
 
 - 核心测试：51 通过，0 失败（含取消退出、立即强制清理、失败清理重试）。
 - 存储测试：13 通过，0 失败（含 schema 1→2 备份迁移）。敏感值测试使用测试保护器，不能替代 Windows DPAPI 实测。
@@ -20,7 +46,7 @@ dotnet build Barback.sln -c Release -p:WindowsAppSDKSelfContained=false -p:AppxG
 dotnet build Barback.sln -c Release -p:Platform=ARM64 -p:WindowsAppSDKSelfContained=false -p:AppxGeneratePriEnabled=false
 ```
 
-五个 PowerShell 脚本已通过 PowerShell 7.5.3 语法解析；中英资源均为 130 个唯一键且键集一致。Windows CI 和 PowerShell 发布/测试脚本已加入，但当前会话没有实际运行 GitHub Actions、Windows SDK 打包工具或签名安装。真实测试步骤见 [实机操作手册](windows-test-runbook.md)。
+五个 PowerShell 脚本已通过 PowerShell 7.5.3 语法解析；中英资源均为 130 个唯一键且键集一致。Windows CI 和 PowerShell 发布/测试脚本已加入；初始 Linux 验证没有运行 GitHub Actions、Windows SDK 打包工具或签名安装，后续 Windows 10 构建/测试见上节。真实测试步骤见 [实机操作手册](windows-test-runbook.md)。
 
 ## 实现范围与仍需完成的产品核对
 
