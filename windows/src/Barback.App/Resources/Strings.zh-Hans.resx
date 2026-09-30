@@ -1,0 +1,392 @@
+<root>
+  <data name="Programs" xml:space="preserve">
+    <value>程序</value>
+  </data>
+  <data name="History" xml:space="preserve">
+    <value>执行历史</value>
+  </data>
+  <data name="Events" xml:space="preserve">
+    <value>事件</value>
+  </data>
+  <data name="Settings" xml:space="preserve">
+    <value>设置</value>
+  </data>
+  <data name="Search" xml:space="preserve">
+    <value>搜索程序</value>
+  </data>
+  <data name="AddService" xml:space="preserve">
+    <value>添加服务</value>
+  </data>
+  <data name="AddOneshot" xml:space="preserve">
+    <value>添加一次性命令</value>
+  </data>
+  <data name="Import" xml:space="preserve">
+    <value>迁移 INI 配置</value>
+  </data>
+  <data name="Start" xml:space="preserve">
+    <value>启动 / 运行</value>
+  </data>
+  <data name="Stop" xml:space="preserve">
+    <value>停止 / 中止</value>
+  </data>
+  <data name="Restart" xml:space="preserve">
+    <value>重启服务</value>
+  </data>
+  <data name="Force" xml:space="preserve">
+    <value>立即强制终止…</value>
+  </data>
+  <data name="Edit" xml:space="preserve">
+    <value>编辑配置</value>
+  </data>
+  <data name="Copy" xml:space="preserve">
+    <value>复制配置</value>
+  </data>
+  <data name="Delete" xml:space="preserve">
+    <value>删除…</value>
+  </data>
+  <data name="Logs" xml:space="preserve">
+    <value>日志 / 输出</value>
+  </data>
+  <data name="StartAll" xml:space="preserve">
+    <value>启动全部服务</value>
+  </data>
+  <data name="StopAll" xml:space="preserve">
+    <value>停止全部…</value>
+  </data>
+  <data name="RestartAll" xml:space="preserve">
+    <value>重启全部服务…</value>
+  </data>
+  <data name="Exit" xml:space="preserve">
+    <value>退出 Barback…</value>
+  </data>
+  <data name="Save" xml:space="preserve">
+    <value>保存</value>
+  </data>
+  <data name="SaveRestart" xml:space="preserve">
+    <value>保存并重启</value>
+  </data>
+  <data name="SaveStop" xml:space="preserve">
+    <value>保存并停止</value>
+  </data>
+  <data name="Discard" xml:space="preserve">
+    <value>放弃更改</value>
+  </data>
+  <data name="Name" xml:space="preserve">
+    <value>名称</value>
+  </data>
+  <data name="Group" xml:space="preserve">
+    <value>分组</value>
+  </data>
+  <data name="Notes" xml:space="preserve">
+    <value>备注</value>
+  </data>
+  <data name="Mode" xml:space="preserve">
+    <value>启动方式</value>
+  </data>
+  <data name="Executable" xml:space="preserve">
+    <value>可执行文件（绝对路径 .exe）</value>
+  </data>
+  <data name="Browse" xml:space="preserve">
+    <value>浏览…</value>
+  </data>
+  <data name="Arguments" xml:space="preserve">
+    <value>参数（每行一个参数，空行表示空参数）</value>
+  </data>
+  <data name="Raw" xml:space="preserve">
+    <value>高级原始参数（与参数列表互斥）</value>
+  </data>
+  <data name="WorkingDirectory" xml:space="preserve">
+    <value>工作目录</value>
+  </data>
+  <data name="ScriptPath" xml:space="preserve">
+    <value>PowerShell 脚本路径</value>
+  </data>
+  <data name="ScriptText" xml:space="preserve">
+    <value>显式 Shell 命令文本</value>
+  </data>
+  <data name="Enabled" xml:space="preserve">
+    <value>启用配置</value>
+  </data>
+  <data name="Autostart" xml:space="preserve">
+    <value>此服务随 Barback 启动</value>
+  </data>
+  <data name="Policy" xml:space="preserve">
+    <value>运行规则</value>
+  </data>
+  <data name="StopMode" xml:space="preserve">
+    <value>停止能力</value>
+  </data>
+  <data name="StopWait" xml:space="preserve">
+    <value>停止宽限期（秒）</value>
+  </data>
+  <data name="StartSeconds" xml:space="preserve">
+    <value>稳定运行门槛（秒，不代表业务健康）</value>
+  </data>
+  <data name="Retries" xml:space="preserve">
+    <value>启动重试次数</value>
+  </data>
+  <data name="Timeout" xml:space="preserve">
+    <value>一次性命令超时（0 表示不限）</value>
+  </data>
+  <data name="ExpectedCodes" xml:space="preserve">
+    <value>预期 DWORD 退出码（逗号分隔）</value>
+  </data>
+  <data name="Environment" xml:space="preserve">
+    <value>环境覆盖：KEY=value；-KEY 移除继承变量</value>
+  </data>
+  <data name="Secrets" xml:space="preserve">
+    <value>敏感变量（当前 Windows 账户加密）</value>
+  </data>
+  <data name="AddSecret" xml:space="preserve">
+    <value>添加敏感变量</value>
+  </data>
+  <data name="DirtyPrompt" xml:space="preserve">
+    <value>离开前保存更改？是＝保存，否＝放弃，取消＝继续编辑。</value>
+  </data>
+  <data name="StopConfirm" xml:space="preserve">
+    <value>停止所有活动服务和一次性命令？提交时将重新计算数量。</value>
+  </data>
+  <data name="RestartConfirm" xml:space="preserve">
+    <value>重启全部已启用服务？不会执行一次性命令。</value>
+  </data>
+  <data name="ForceConfirm" xml:space="preserve">
+    <value>立即终止整个进程树，跳过停止宽限期？</value>
+  </data>
+  <data name="ExitConfirm" xml:space="preserve">
+    <value>退出 Barback 并停止所有活动程序？</value>
+  </data>
+  <data name="DeleteConfirm" xml:space="preserve">
+    <value>删除配置及历史？请先停止并确认清理完成。</value>
+  </data>
+  <data name="CopyConfirm" xml:space="preserve">
+    <value>复制配置及加密敏感值？副本将禁用且不会自动启动。</value>
+  </data>
+  <data name="Hidden" xml:space="preserve">
+    <value>窗口关闭后 Barback 会继续运行，可从通知区域或开始菜单再次打开。</value>
+  </data>
+  <data name="Error" xml:space="preserve">
+    <value>操作未完成。请查看详情、修复后重试。</value>
+  </data>
+  <data name="CloseExit" xml:space="preserve">
+    <value>关闭主窗口时退出应用</value>
+  </data>
+  <data name="Notifications" xml:space="preserve">
+    <value>失败时发送通知</value>
+  </data>
+  <data name="LoginEnable" xml:space="preserve">
+    <value>开启登录启动</value>
+  </data>
+  <data name="LoginDisable" xml:space="preserve">
+    <value>关闭登录启动</value>
+  </data>
+  <data name="LoginSettings" xml:space="preserve">
+    <value>Windows 启动应用设置</value>
+  </data>
+  <data name="RefreshEnvironment" xml:space="preserve">
+    <value>刷新用户环境（仅对新运行生效）</value>
+  </data>
+  <data name="OpenData" xml:space="preserve">
+    <value>打开数据目录</value>
+  </data>
+  <data name="Backup" xml:space="preserve">
+    <value>备份数据库</value>
+  </data>
+  <data name="Export" xml:space="preserve">
+    <value>导出便携配置（移除敏感值）</value>
+  </data>
+  <data name="Restore" xml:space="preserve">
+    <value>恢复配置备份…</value>
+  </data>
+  <data name="Diagnostics" xml:space="preserve">
+    <value>导出诊断（不含业务输出和环境值）</value>
+  </data>
+  <data name="Updates" xml:space="preserve">
+    <value>打开发行页面</value>
+  </data>
+  <data name="Follow" xml:space="preserve">
+    <value>跟随输出</value>
+  </data>
+  <data name="Pause" xml:space="preserve">
+    <value>暂停滚动</value>
+  </data>
+  <data name="NoOutput" xml:space="preserve">
+    <value>尚无输出</value>
+  </data>
+  <data name="NotLoaded" xml:space="preserve">
+    <value>输出文件不可用或已清理</value>
+  </data>
+  <data name="Pending" xml:space="preserve">
+    <value>已保存配置在下次启动时生效。</value>
+  </data>
+  <data name="ImportHint" xml:space="preserve">
+    <value>仅解析预览，不执行或翻译命令。导入草稿保持禁用。</value>
+  </data>
+  <data name="ImportSelected" xml:space="preserve">
+    <value>导入禁用草稿</value>
+  </data>
+  <data name="Encoding" xml:space="preserve">
+    <value>日志编码代码页</value>
+  </data>
+  <data name="LogBytes" xml:space="preserve">
+    <value>日志分段大小（字节）</value>
+  </data>
+  <data name="LogSegments" xml:space="preserve">
+    <value>保留轮转段数</value>
+  </data>
+  <data name="Status" xml:space="preserve">
+    <value>状态</value>
+  </data>
+  <data name="Pid" xml:space="preserve">
+    <value>主 PID</value>
+  </data>
+  <data name="ConfigVersion" xml:space="preserve">
+    <value>运行配置版本</value>
+  </data>
+  <data name="Time" xml:space="preserve">
+    <value>时间</value>
+  </data>
+  <data name="Outcome" xml:space="preserve">
+    <value>结果</value>
+  </data>
+  <data name="Code" xml:space="preserve">
+    <value>退出码</value>
+  </data>
+  <data name="Reason" xml:space="preserve">
+    <value>原因</value>
+  </data>
+  <data name="Detail" xml:space="preserve">
+    <value>详情</value>
+  </data>
+  <data name="Language" xml:space="preserve">
+    <value>语言（重启后生效）</value>
+  </data>
+  <data name="Metrics" xml:space="preserve">
+    <value>主进程 CPU / Working Set</value>
+  </data>
+  <data name="Unavailable" xml:space="preserve">
+    <value>不可用</value>
+  </data>
+  <data name="Busy" xml:space="preserve">
+    <value>等待清理完成</value>
+  </data>
+  <data name="InterruptedConfirm" xml:space="preserve">
+    <value>上次一次性命令结果未知，确认使用当前配置重新运行？</value>
+  </data>
+  <data name="NoPrograms" xml:space="preserve">
+    <value>添加服务或一次性命令开始使用。</value>
+  </data>
+  <data name="PhaseStopped" xml:space="preserve">
+    <value>已停止</value>
+  </data>
+  <data name="PhaseStarting" xml:space="preserve">
+    <value>启动中</value>
+  </data>
+  <data name="PhaseRunning" xml:space="preserve">
+    <value>运行中</value>
+  </data>
+  <data name="PhaseBackoff" xml:space="preserve">
+    <value>退避重试中</value>
+  </data>
+  <data name="PhaseStopping" xml:space="preserve">
+    <value>停止 / 清理中</value>
+  </data>
+  <data name="PhaseExited" xml:space="preserve">
+    <value>自行退出</value>
+  </data>
+  <data name="PhaseFatal" xml:space="preserve">
+    <value>失败：自动重试已停止</value>
+  </data>
+  <data name="PhaseSucceeded" xml:space="preserve">
+    <value>成功</value>
+  </data>
+  <data name="PhaseFailed" xml:space="preserve">
+    <value>失败</value>
+  </data>
+  <data name="PhaseCancelled" xml:space="preserve">
+    <value>已取消</value>
+  </data>
+  <data name="PhaseTimeout" xml:space="preserve">
+    <value>超时</value>
+  </data>
+  <data name="PhaseInterrupted" xml:space="preserve">
+    <value>中断（结果未知）</value>
+  </data>
+  <data name="OptionDirect" xml:space="preserve">
+    <value>直接执行</value>
+  </data>
+  <data name="OptionPowerShellFile" xml:space="preserve">
+    <value>PowerShell 脚本文件</value>
+  </data>
+  <data name="OptionPowerShellText" xml:space="preserve">
+    <value>PowerShell 命令文本</value>
+  </data>
+  <data name="OptionCmd" xml:space="preserve">
+    <value>cmd / 批处理命令</value>
+  </data>
+  <data name="OptionConsoleBreakThenTerminate" xml:space="preserve">
+    <value>尝试 Ctrl+Break，超时终止整树</value>
+  </data>
+  <data name="OptionTerminateJob" xml:space="preserve">
+    <value>立即强制终止进程树</value>
+  </data>
+  <data name="OptionNever" xml:space="preserve">
+    <value>不自动重启</value>
+  </data>
+  <data name="OptionUnexpected" xml:space="preserve">
+    <value>仅非预期退出</value>
+  </data>
+  <data name="OptionAlways" xml:space="preserve">
+    <value>总是自动重启</value>
+  </data>
+  <data name="Priority">
+    <value>启停优先级（仅影响发起顺序）</value>
+  </data>
+  <data name="BackoffBase">
+    <value>退避基数（秒）</value>
+  </data>
+  <data name="BackoffMax">
+    <value>退避上限（秒）</value>
+  </data>
+  <data name="StormLimit">
+    <value>自动重启上限次数</value>
+  </data>
+  <data name="StormWindow">
+    <value>重启风暴窗口（活动秒）</value>
+  </data>
+  <data name="HistoryLimit">
+    <value>完成记录保留次数</value>
+  </data>
+  <data name="RerunConfirm">
+    <value>确认使用当前配置重新运行？一次性命令的副作用可能再次发生。</value>
+  </data>
+  <data name="FullSearch">
+    <value>搜索磁盘日志（最多 1,000 项）</value>
+  </data>
+  <data name="CancelSearch">
+    <value>取消搜索</value>
+  </data>
+  <data name="ClearFailure">
+    <value>清除失败状态</value>
+  </data>
+  <data name="All">
+    <value>全部</value>
+  </data>
+  <data name="CleaningChildren">
+    <value>正在清理子进程</value>
+  </data>
+  <data name="CancelExit" xml:space="preserve">
+    <value>取消退出</value>
+  </data>
+  <data name="ForceExit" xml:space="preserve">
+    <value>立即强制退出…</value>
+  </data>
+  <data name="ExitProgress" xml:space="preserve">
+    <value>正在停止 {0} 个程序，强制清理前最多等待 {1} 秒。取消退出不会重新启动已停止的程序。</value>
+  </data>
+  <data name="ExitForceProgress" xml:space="preserve">
+    <value>正在强制清理 {0} 个程序，等待进程树清空。</value>
+  </data>
+  <data name="SearchChanged">
+    <value>日志分段已轮转或清理，请重新搜索以定位输出。</value>
+  </data>
+</root>

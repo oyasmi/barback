@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Package xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10" xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10" xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10" xmlns:desktop6="http://schemas.microsoft.com/appx/manifest/desktop/windows10/6" xmlns:com="http://schemas.microsoft.com/appx/manifest/com/windows10" xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities" IgnorableNamespaces="uap desktop desktop6 com rescap">
+  <Identity Name="Oyasmi.Barback" Publisher="CN=Oyasmi" Version="0.1.0.0" ProcessorArchitecture="x64"/>
+  <Properties><DisplayName>Barback</DisplayName><PublisherDisplayName>Oyasmi</PublisherDisplayName><Logo>Assets\StoreLogo.png</Logo></Properties>
+  <Dependencies><TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.22000.0" MaxVersionTested="10.0.26100.0"/></Dependencies>
+  <Resources><Resource Language="en-US"/><Resource Language="zh-Hans"/></Resources>
+  <Applications>
+    <Application Id="Barback" Executable="Barback.App.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements DisplayName="Barback" Description="Local background process manager" BackgroundColor="transparent" Square150x150Logo="Assets\Square150x150Logo.png" Square44x44Logo="Assets\Square44x44Logo.png"/>
+      <Extensions>
+        <desktop:Extension Category="windows.startupTask" Executable="Barback.App.exe" EntryPoint="Windows.FullTrustApplication">
+          <desktop:StartupTask TaskId="BarbackStartup" Enabled="false" DisplayName="Barback"/>
+        </desktop:Extension>
+        <desktop:Extension Category="windows.toastNotificationActivation"><desktop:ToastNotificationActivation ToastActivatorCLSID="5B20AE99-B086-4E43-A4D1-6BB8F4B86AA1"/></desktop:Extension>
+        <com:Extension Category="windows.comServer"><com:ComServer><com:ExeServer Executable="Barback.App.exe" Arguments="----AppNotificationActivated:" DisplayName="Barback"><com:Class Id="5B20AE99-B086-4E43-A4D1-6BB8F4B86AA1"/></com:ExeServer></com:ComServer></com:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+  <Capabilities><rescap:Capability Name="runFullTrust"/></Capabilities>
+</Package>

@@ -1,6 +1,4 @@
-.build/
-dist/
-.swiftpm/
-*.xcodeproj
+# Platform-specific build outputs are ignored by each platform's .gitignore.
 .DS_Store
-Package.resolved
+Thumbs.db
+Desktop.ini
