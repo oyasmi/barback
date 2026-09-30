@@ -29,6 +29,21 @@ cd windows
 
 未传证书时只生成未签名构建产物，不能作为正式可安装发行包。仓库不保存私钥，也不自行安装或信任证书。发布前必须完成 M0、W01–W40、两架构实机 smoke、升级/卸载与长期运行验证。
 
+### 免安装 portable 版本
+
+```powershell
+./scripts/package-portable.ps1 -Architecture x64
+./scripts/package-portable.ps1 -Architecture arm64
+# 小体积目录版：目标机器需已安装相同架构的 .NET 10 Desktop Runtime。
+./scripts/package-portable.ps1 -Architecture x64 -FrameworkDependent
+```
+
+生成 `dist/Barback-0.3.2.0-<架构>-portable.zip`，内含 Release 自包含构建及 .NET / Windows App SDK 运行时。完整解压后以普通用户双击 `Barback.App.exe`，无需安装 MSIX 或另装 .NET。必须保留同目录的 `Barback.ConsoleHost.exe`、DLL 和 `Assets`，不能只复制主 EXE；当前交付的是免安装目录版，不是单文件 EXE。构建脚本在 `artifacts/portable/` 保留对应的未压缩目录。
+
+portable 的数据仍使用 `%LOCALAPPDATA%\Barback\Dev`，与非打包开发版共享，不会随程序目录移动。跨机器通过设置导出/导入配置，DPAPI 敏感值需重新填写。内置“登录 Windows 时启动”目前要求 MSIX 安装；更新前正常退出并停止任务，再替换程序目录。此版本仍为开发候选，实机验收状态见开发验证记录。
+
+两种目录版均只携带应用支持的英文和简体中文资源，并使用 ZIP 的最高可用压缩级别。`-FrameworkDependent` 生成 `*-portable-framework-dependent.zip`，不携带 .NET 运行时，需要安装 [.NET 10 Desktop Runtime](https://dotnet.microsoft.com/en-us/download/dotnet/10.0)（仅 SDK/Core Runtime 不一定包含桌面运行时），但仍不需要 MSIX 安装。默认自包含版携带 WPF、WinForms 和 .NET 库，因此明显大于默认框架依赖 MSIX；WPF 不支持常规 `PublishTrimmed` 裁剪，此处保持关闭。
+
 在非 Windows 上可以运行核心、存储和协议测试：
 
 ```bash

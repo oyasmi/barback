@@ -41,7 +41,13 @@ jobs:
         with:
           global-json-file: windows/global.json
       - run: ./scripts/package.ps1 -Architecture ${{ matrix.architecture }}
+      - run: ./scripts/package-portable.ps1 -Architecture ${{ matrix.architecture }}
+      - run: ./scripts/package-portable.ps1 -Architecture ${{ matrix.architecture }} -FrameworkDependent
       - uses: actions/upload-artifact@v4
         with:
           name: unsigned-msix-${{ matrix.architecture }}
-          path: windows/dist/**
+          path: windows/dist/*.msix*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: portable-${{ matrix.architecture }}
+          path: windows/dist/*-portable*.zip
