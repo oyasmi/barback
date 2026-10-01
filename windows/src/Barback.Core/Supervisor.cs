@@ -338,7 +338,7 @@ public sealed class Supervisor : IAsyncDisposable
     {
         try
         {
-            await Enqueue(async () => { exiting = true; pendingStarts.Clear(); foreach (var c in configs.Values.OrderByDescending(x => x.Priority).ToArray()) await ApplyAsync(c.Id, new(Signal.Stop)); });
+            await Enqueue(async () => { exiting = true; pendingStarts.Clear(); foreach (var c in configs.Values.OrderByDescending(x => x.Priority).ToArray()) if (states[c.Id].Active || states[c.Id].Phase == Phase.Backoff) await ApplyAsync(c.Id, new(Signal.Stop)); });
             var elapsed = System.Diagnostics.Stopwatch.StartNew();
             while (Snapshot.Any(s => s.Runtime.Active) && elapsed.Elapsed < budget && forceRequested?.IsCompleted != true) await Task.Delay(50, cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();

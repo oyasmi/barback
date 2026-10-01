@@ -48,7 +48,12 @@ public static class Reducer
                 return Return(s with { Phase = Phase.Stopping, StopReason = EndReason.UserStop, RestartRequested = true, Deadline = now.Elapsed + c.Launch.StopWaitSeconds }, c.Launch.StopMode == StopMode.TerminateJob ? Effect.Terminate : Effect.Break, Effect.Schedule);
             case Signal.Stop:
                 if (s.Cleaning && s.StopReason is null) return Return(s with { RestartRequested = false, CancelAutomaticRestart = true });
-                if (!s.Active) return Return(s with { Phase = Phase.Stopped, RestartRequested = false });
+                if (!s.Active)
+                {
+                    // Stop only cancels a pending retry; terminal outcomes such as Fatal survive until cleared or restarted.
+                    if (s.Phase == Phase.Backoff) return Return(s with { Phase = Phase.Stopped, RestartRequested = false });
+                    return s.RestartRequested ? Return(s with { RestartRequested = false }) : Return(s);
+                }
                 if (s.Phase == Phase.Stopping) return Return(s with { RestartRequested = false });
                 return Return(s with { Phase = Phase.Stopping, StopReason = e.Reason ?? EndReason.UserStop, RestartRequested = false, Deadline = now.Elapsed + c.Launch.StopWaitSeconds }, c.Launch.StopMode == StopMode.TerminateJob ? Effect.Terminate : Effect.Break, Effect.Schedule);
             case Signal.Force:

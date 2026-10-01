@@ -157,4 +157,27 @@ public class ReducerTests
         Assert.True(failed.Active); Assert.True(failed.CleanupFailed); Assert.Equal(failed, Reducer.Apply(failed, new(Signal.Start), Config(), Now).State);
     }
     [Fact] public void SameCommandCannotRunConcurrently() { var s = Running(); Assert.Empty(Reducer.Apply(s, new(Signal.Start), Config(ProgramKind.Oneshot), Now).Effects); }
+    [Theory] // F3
+    [InlineData(Phase.Exited)]
+    [InlineData(Phase.Succeeded)]
+    [InlineData(Phase.Failed)]
+    [InlineData(Phase.Timeout)]
+    [InlineData(Phase.Cancelled)]
+    [InlineData(Phase.Interrupted)]
+    [InlineData(Phase.Fatal)]
+    [InlineData(Phase.Stopped)]
+    public void StopKeepsInactiveTerminalPhase(Phase phase)
+    {
+        var s = new RuntimeState { Phase = phase, Error = "kept" };
+        var t = Reducer.Apply(s, new(Signal.Stop), Config(), Now);
+        Assert.Equal(s, t.State); Assert.Empty(t.Effects);
+        Assert.Equal(phase, Reducer.Apply(s with { RestartRequested = true }, new(Signal.Stop), Config(), Now).State.Phase);
+    }
+    [Fact] // F3
+    public void StopCancelsBackoff()
+    {
+        var s = new RuntimeState { Phase = Phase.Backoff, Deadline = 500 };
+        var t = Reducer.Apply(s, new(Signal.Stop), Config(), Now);
+        Assert.Equal(Phase.Stopped, t.State.Phase);
+    }
 }
