@@ -27,6 +27,7 @@ public static class Reducer
             CancelAutomaticRestart = false,
             ExitObservedActive = null,
             RestartRequested = false,
+            ResumeAfterAppExit = false,
             StartedActive = now.Active,
             StartedElapsed = now.Elapsed,
             Deadline = double.PositiveInfinity

@@ -5,7 +5,7 @@ public enum ExecutionMode { Direct, PowerShellFile, PowerShellText, Cmd }
 public enum StopMode { ConsoleBreakThenTerminate, TerminateJob }
 public enum RestartPolicy { Never, Unexpected, Always }
 public enum Phase { Stopped, Starting, Running, Backoff, Stopping, Exited, Fatal, Succeeded, Failed, Cancelled, Timeout, Interrupted }
-public enum EndReason { Natural, UserStop, Timeout, Forced, AppInterrupted, SpawnFailed, HostFailed }
+public enum EndReason { Natural, UserStop, Timeout, Forced, AppInterrupted, SpawnFailed, HostFailed, AppShutdown }
 public sealed record EnvironmentEntry(string Key, string? Value, bool Sensitive = false, bool Remove = false, bool NeedsInput = false);
 public sealed record LaunchSpec
 {
@@ -72,6 +72,8 @@ public sealed record RuntimeState
     public bool CleanupFailed { get; init; }
     public bool Cleaning { get; init; }
     public bool CancelAutomaticRestart { get; init; }
+    /// <summary>Set when the app stopped a running service on exit, so the next start may resume it.</summary>
+    public bool ResumeAfterAppExit { get; init; }
     public uint? ExitCode { get; init; }
     public string? Error { get; init; }
     public bool Active => RunId is not null;

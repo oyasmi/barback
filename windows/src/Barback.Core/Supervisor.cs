@@ -51,7 +51,7 @@ public sealed class Supervisor : IAsyncDisposable
     {
         await foreach (var r in queue.Reader.ReadAllAsync())
         {
-            try { await r.Action(); Publish(); r.Completion?.SetResult(); }
+            try { await r.Action().ConfigureAwait(false); Publish(); r.Completion?.SetResult(); }
             catch (Exception ex) { StorageError = ex.Message; Publish(); r.Completion?.SetException(ex); }
         }
     }
@@ -63,12 +63,14 @@ public sealed class Supervisor : IAsyncDisposable
     }
     public Task InitializeAsync() => Enqueue(async () =>
     {
-        foreach (var c in await store.LoadProgramsAsync()) { configs[c.Id] = c; states[c.Id] = new(); }
-        var saved = await store.LoadRuntimeAsync(); var oldRuns = await store.RunsAsync();
-        bool interrupted = await store.RecoverAsync();
+        foreach (var c in await store.LoadProgramsAsync().ConfigureAwait(false)) { configs[c.Id] = c; states[c.Id] = new(); }
+        var saved = await store.LoadRuntimeAsync().ConfigureAwait(false); var oldRuns = await store.RunsAsync().ConfigureAwait(false);
+        bool interrupted = await store.RecoverAsync().ConfigureAwait(false);
+        var staleResumeFlags = new List<Guid>();
         foreach (var c in configs.Values)
         {
             var previous = saved.GetValueOrDefault(c.Id) ?? new();
+            if (previous.ResumeAfterAppExit) staleResumeFlags.Add(c.Id);
             var restarts = previous.RestartUtc.Where(t => clock.Now.Utc - t < TimeSpan.FromSeconds(c.Policy.StormWindowSeconds) || clock.Now.Utc < t).ToArray();
             // Conservatively retain all recent persisted attempts for a full active-time window.
             states[c.Id] = new()
@@ -81,7 +83,7 @@ public sealed class Supervisor : IAsyncDisposable
             };
             var remaining = oldRuns.FirstOrDefault(r => r.ProgramId == c.Id && r.Ended is null && r.Pid is int pid && r.CreationTime is long time && host.IsSameProcessAlive(pid, time));
             if (remaining is not null) { unresolved[c.Id] = (remaining.Pid!.Value, remaining.CreationTime!.Value); states[c.Id] = states[c.Id] with { Phase = Phase.Fatal, Error = "Previous process still exists; verify before retrying." }; continue; }
-            bool recover = !interrupted || (previous.Phase is Phase.Starting or Phase.Running or Phase.Backoff && previous.StopReason is null);
+            bool recover = !interrupted || previous.ResumeAfterAppExit || (previous.Phase is Phase.Starting or Phase.Running or Phase.Backoff && previous.StopReason is null);
             if (c.Enabled && c.Policy.Autostart && c.Kind == ProgramKind.Service && recover && previous.Phase != Phase.Fatal)
             {
                 // Automatic boot must not reset storm history as explicit manual recovery does.
@@ -92,7 +94,9 @@ public sealed class Supervisor : IAsyncDisposable
                 runConfigs[c.Id] = c; QueueLaunch(c.Id);
             }
         }
-        if (interrupted) await RecordAsync("AppInterrupted", null, null, "Previous session ended unexpectedly; one-shot commands were not rerun.", true);
+        // The one-shot resume marker has been consumed; persist the cleared state so it cannot trigger a later recovery.
+        foreach (var id in staleResumeFlags) { var cleared = states[id]; WriteLater(() => store.SaveRuntimeAsync(id, cleared)); }
+        if (interrupted) await RecordAsync("AppInterrupted", null, null, "Previous session ended unexpectedly; one-shot commands were not rerun.", true).ConfigureAwait(false);
     });
     public async Task SaveAsync(ProgramConfig draft, long expectedVersion)
     {
@@ -100,22 +104,22 @@ public sealed class Supervisor : IAsyncDisposable
         if (errors.Count != 0) throw new ArgumentException(string.Join("\n", errors.Select(e => $"{e.Field}: {e.Message}")));
         try
         {
-            var saved = await Task.Run(() => store.SaveAsync(draft, expectedVersion));
+            var saved = await Task.Run(() => store.SaveAsync(draft, expectedVersion)).ConfigureAwait(false);
             await Enqueue(async () =>
             {
                 if (deleting.Contains(saved.Id) || configs.TryGetValue(saved.Id, out var newer) && newer.Version > saved.Version) return;
                 configs[saved.Id] = saved; states.TryAdd(saved.Id, new()); StorageError = null;
-                await RecordAsync("ConfigSaved", saved.Id, null, "Configuration saved; active launch snapshots remain unchanged.");
-            });
+                await RecordAsync("ConfigSaved", saved.Id, null, "Configuration saved; active launch snapshots remain unchanged.").ConfigureAwait(false);
+            }).ConfigureAwait(false);
         }
-        catch (Exception ex) { await Enqueue(() => { StorageError = ex.Message; return Task.CompletedTask; }); throw; }
+        catch (Exception ex) { await Enqueue(() => { StorageError = ex.Message; return Task.CompletedTask; }).ConfigureAwait(false); throw; }
     }
     public async Task ImportAsync(IReadOnlyList<ProgramConfig> drafts)
     {
         var safe = drafts.Select(c => c with { Id = Guid.NewGuid(), Version = 0, Enabled = false, Policy = c.Policy with { Autostart = false } }).ToArray();
         foreach (var c in safe) { var errors = ConfigurationValidator.Validate(c, false); if (errors.Count > 0) throw new ArgumentException(string.Join("\n", errors.Select(e => e.Message))); }
-        var saved = await Task.Run(() => store.ImportAsync(safe));
-        await Enqueue(async () => { foreach (var c in saved) { configs[c.Id] = c; states[c.Id] = new(); } await RecordAsync("ConfigImported", null, null, $"Imported disabled drafts: {saved.Count}"); });
+        var saved = await Task.Run(() => store.ImportAsync(safe)).ConfigureAwait(false);
+        await Enqueue(async () => { foreach (var c in saved) { configs[c.Id] = c; states[c.Id] = new(); } await RecordAsync("ConfigImported", null, null, $"Imported disabled drafts: {saved.Count}").ConfigureAwait(false); }).ConfigureAwait(false);
     }
     public async Task DeleteAsync(Guid id)
     {
@@ -123,16 +127,16 @@ public sealed class Supervisor : IAsyncDisposable
         {
             if (states[id].Active || states[id].Phase == Phase.Backoff) throw new InvalidOperationException("Stop and confirm cleanup before deleting.");
             deleting.Add(id); return Task.CompletedTask;
-        });
-        try { await FlushWritesAsync(); await Task.Run(() => store.DeleteAsync(id)); await Enqueue(() => { configs.Remove(id); states.Remove(id); runConfigs.Remove(id); return Task.CompletedTask; }); }
-        finally { await Enqueue(() => { deleting.Remove(id); return Task.CompletedTask; }); }
+        }).ConfigureAwait(false);
+        try { await FlushWritesAsync().ConfigureAwait(false); await Task.Run(() => store.DeleteAsync(id)).ConfigureAwait(false); await Enqueue(() => { configs.Remove(id); states.Remove(id); runConfigs.Remove(id); return Task.CompletedTask; }).ConfigureAwait(false); }
+        finally { await Enqueue(() => { deleting.Remove(id); return Task.CompletedTask; }).ConfigureAwait(false); }
     }
     public Task SendAsync(Guid id, Signal signal) => Enqueue(() => ApplyAsync(id, new(signal)));
     public Task BatchAsync(Signal signal) => Enqueue(async () =>
     {
         var candidates = configs.Values.Where(c => signal == Signal.Stop ? states[c.Id].Active || states[c.Id].Phase == Phase.Backoff : c.Enabled && c.Kind == ProgramKind.Service);
         var ordered = signal == Signal.Stop ? candidates.OrderByDescending(c => c.Priority).ThenBy(c => c.NameKey) : candidates.OrderBy(c => c.Priority).ThenBy(c => c.NameKey);
-        foreach (var c in ordered.ToArray()) await ApplyAsync(c.Id, new(signal));
+        foreach (var c in ordered.ToArray()) await ApplyAsync(c.Id, new(signal)).ConfigureAwait(false);
     });
     private async Task ApplyAsync(Guid id, MachineEvent e)
     {
@@ -162,14 +166,14 @@ public sealed class Supervisor : IAsyncDisposable
             runs.Remove(id);
             cleaning.Remove(id);
             WriteLater(() => store.MaintainAsync());
-            await RecordAsync("RunEnded", id, finished, $"{outcome}; reason={reason}; code={(e.ExitCode is uint code ? $"0x{code:X8}" : "unknown")}", outcome is Phase.Failed or Phase.Timeout);
+            await RecordAsync("RunEnded", id, finished, $"{outcome}; reason={reason}; code={(e.ExitCode is uint code ? $"0x{code:X8}" : "unknown")}", outcome is Phase.Failed or Phase.Timeout).ConfigureAwait(false);
         }
-        if (states[id].Phase == Phase.Fatal) await RecordAsync("Fatal", id, before.RunId, states[id].Error ?? "Automatic retry stopped.", true);
+        if (states[id].Phase == Phase.Fatal) await RecordAsync("Fatal", id, before.RunId, states[id].Error ?? "Automatic retry stopped.", true).ConfigureAwait(false);
         // A queued handshake may have been cancelled before a process exists.
         if (states[id].Phase == Phase.Stopping && !runs.ContainsKey(id) && !preparing.Contains(id))
         {
             RemovePendingStart(id); // cancelled batch entries never launch; the rest keep their order
-            await ApplyAsync(id, new(Signal.Cleaned, states[id].RunId, states[id].Generation));
+            await ApplyAsync(id, new(Signal.Cleaned, states[id].RunId, states[id].Generation)).ConfigureAwait(false);
         }
         foreach (var effect in transition.Effects)
         {
@@ -185,7 +189,7 @@ public sealed class Supervisor : IAsyncDisposable
                     // A stop received during prepare is applied when the suspended run returns.
                     break;
                 case Effect.Terminate:
-                    if (e.Signal is Signal.Force or Signal.Tick) await RecordAsync("ForcedStop", id, before.RunId, "Grace period was skipped or elapsed; terminating the entire Job.", true);
+                    if (e.Signal is Signal.Force or Signal.Tick) await RecordAsync("ForcedStop", id, before.RunId, "Grace period was skipped or elapsed; terminating the entire Job.", true).ConfigureAwait(false);
                     if (runs.TryGetValue(id, out var kill)) BeginCleanup(id, before.Generation, kill, null, before.StopReason);
                     break;
             }
@@ -221,27 +225,27 @@ public sealed class Supervisor : IAsyncDisposable
         {
             var dir = Path.Combine(logRoot, config.Kind == ProgramKind.Service ? "programs" : "runs", config.Kind == ProgramKind.Service ? id.ToString("N") : state.RunId!.Value.ToString("N"), state.RunId!.Value.ToString("N"));
             // Commit before invoking any native process creation.
-            await ExecuteStorageAsync(async () => { await store.SaveRuntimeAsync(id, state); await store.BeginRunAsync(new(state.RunId.Value, id, state.Generation, config.Version, clock.Now.Utc, LogDirectory: dir)); });
-            native = await host.PrepareAsync(state.RunId.Value, config.Launch, dir, lost => Post(() => RecordAsync("LogIncomplete", id, state.RunId, $"Dropped bytes: {lost}", true)), lifetime.Token);
+            await ExecuteStorageAsync(async () => { await store.SaveRuntimeAsync(id, state).ConfigureAwait(false); await store.BeginRunAsync(new(state.RunId.Value, id, state.Generation, config.Version, clock.Now.Utc, LogDirectory: dir)).ConfigureAwait(false); }).ConfigureAwait(false);
+            native = await host.PrepareAsync(state.RunId.Value, config.Launch, dir, lost => Post(() => RecordAsync("LogIncomplete", id, state.RunId, $"Dropped bytes: {lost}", true)), lifetime.Token).ConfigureAwait(false);
             var prepared = native;
-            await ExecuteStorageAsync(() => store.IdentifyRunAsync(prepared.Id, prepared.Pid, prepared.CreationTime));
+            await ExecuteStorageAsync(() => store.IdentifyRunAsync(prepared.Id, prepared.Pid, prepared.CreationTime)).ConfigureAwait(false);
             await Enqueue(async () =>
             {
                 var current = states[id];
-                if (current.RunId != state.RunId || current.Generation != state.Generation) { await prepared.DisposeAsync(); return; }
+                if (current.RunId != state.RunId || current.Generation != state.Generation) { await prepared.DisposeAsync().ConfigureAwait(false); return; }
                 if (runs.TryGetValue(id, out var existing) && existing.Id != prepared.Id)
                 {
                     // Invariant violation: never replace a run the supervisor already owns.
-                    await prepared.DisposeAsync();
+                    await prepared.DisposeAsync().ConfigureAwait(false);
                     Diagnostic?.Invoke($"invariant violation: duplicate run for program {id}", new InvalidOperationException($"Run {prepared.Id} duplicates {existing.Id}."));
                     return;
                 }
                 runs[id] = prepared;
                 if (current.Phase == Phase.Stopping) { BeginCleanup(id, state.Generation, prepared, null, current.StopReason); return; }
-                await ApplyAsync(id, new(Signal.Prepared, state.RunId, state.Generation, Pid: prepared.Pid, CreationTime: prepared.CreationTime));
-                await prepared.ActivateAsync(lifetime.Token);
+                await ApplyAsync(id, new(Signal.Prepared, state.RunId, state.Generation, Pid: prepared.Pid, CreationTime: prepared.CreationTime)).ConfigureAwait(false);
+                await prepared.ActivateAsync(lifetime.Token).ConfigureAwait(false);
                 Track(ObserveExitAsync(id, state.Generation, prepared));
-            });
+            }).ConfigureAwait(false);
             native = null; // actor owns it now
         }
         catch (Exception ex)
@@ -251,33 +255,33 @@ public sealed class Supervisor : IAsyncDisposable
                 var failedRun = native;
                 bool empty;
                 string cleanupError = "Failed launch cleanup could not be confirmed.";
-                try { empty = await failedRun.CleanAsync(CancellationToken.None); }
+                try { empty = await failedRun.CleanAsync(CancellationToken.None).ConfigureAwait(false); }
                 catch (Exception cleanupException) { empty = false; cleanupError = cleanupException.Message; }
                 if (!empty)
                 {
                     Post(async () =>
                     {
-                        if (states[id].RunId != state.RunId || states[id].Generation != state.Generation) { await failedRun.DisposeAsync(); return; }
+                        if (states[id].RunId != state.RunId || states[id].Generation != state.Generation) { await failedRun.DisposeAsync().ConfigureAwait(false); return; }
                         runs[id] = failedRun;
-                        await ApplyAsync(id, new(Signal.CleanupFailed, state.RunId, state.Generation, Error: cleanupError));
+                        await ApplyAsync(id, new(Signal.CleanupFailed, state.RunId, state.Generation, Error: cleanupError)).ConfigureAwait(false);
                     });
                     return;
                 }
-                await failedRun.DisposeAsync();
+                await failedRun.DisposeAsync().ConfigureAwait(false);
             }
-            Post(async () => { if (states[id].RunId != state.RunId || states[id].Generation != state.Generation) return; if (runs.TryGetValue(id, out var owned) && owned.Id == state.RunId) runs.Remove(id); await ApplyAsync(id, new(Signal.SpawnFailed, state.RunId, state.Generation, Error: ex.Message)); });
+            Post(async () => { if (states[id].RunId != state.RunId || states[id].Generation != state.Generation) return; if (runs.TryGetValue(id, out var owned) && owned.Id == state.RunId) runs.Remove(id); await ApplyAsync(id, new(Signal.SpawnFailed, state.RunId, state.Generation, Error: ex.Message)).ConfigureAwait(false); });
         }
         finally { Post(() => { startupSlots--; preparing.Remove(id); DrainStarts(); return Task.CompletedTask; }); }
     }
     private async Task ObserveExitAsync(Guid id, long generation, IProcessRun run)
     {
         uint? code = null; EndReason? reason = null; string? error = null;
-        try { code = await run.Exit; } catch (Exception ex) { reason = EndReason.HostFailed; error = ex.Message; }
+        try { code = await run.Exit.ConfigureAwait(false); } catch (Exception ex) { reason = EndReason.HostFailed; error = ex.Message; }
         Post(() => { if (states.TryGetValue(id, out var current) && current.RunId == run.Id) BeginCleanup(id, generation, run, code, reason, error); return Task.CompletedTask; });
     }
     private async Task BreakAsync(Guid id, long generation, IProcessRun run)
     {
-        try { await run.RequestBreakAsync(lifetime.Token); }
+        try { await run.RequestBreakAsync(lifetime.Token).ConfigureAwait(false); }
         catch (Exception ex) { Post(() => { BeginCleanup(id, generation, run, null, EndReason.HostFailed, ex.Message); return Task.CompletedTask; }); }
     }
     private void BeginCleanup(Guid id, long generation, IProcessRun run, uint? code, EndReason? reason, string? error = null)
@@ -288,12 +292,12 @@ public sealed class Supervisor : IAsyncDisposable
         Track(Task.Run(async () =>
         {
             bool empty;
-            try { empty = await run.CleanAsync(CancellationToken.None); if (empty) { if (run.Exit.IsCompletedSuccessfully) code ??= await run.Exit; await run.DisposeAsync(); } }
+            try { empty = await run.CleanAsync(CancellationToken.None).ConfigureAwait(false); if (empty) { if (run.Exit.IsCompletedSuccessfully) code ??= await run.Exit.ConfigureAwait(false); await run.DisposeAsync().ConfigureAwait(false); } }
             catch (Exception ex) { empty = false; error = ex.Message; }
             Post(async () =>
             {
                 cleaning.Remove(id);
-                await ApplyAsync(id, new(empty ? Signal.Cleaned : Signal.CleanupFailed, run.Id, generation, code, error ?? (empty ? null : "Process tree cleanup could not be confirmed; retry cleanup."), Reason: reason));
+                await ApplyAsync(id, new(empty ? Signal.Cleaned : Signal.CleanupFailed, run.Id, generation, code, error ?? (empty ? null : "Process tree cleanup could not be confirmed; retry cleanup."), Reason: reason)).ConfigureAwait(false);
             });
         }));
     }
@@ -302,10 +306,10 @@ public sealed class Supervisor : IAsyncDisposable
         try
         {
             using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(250));
-            while (await timer.WaitForNextTickAsync(lifetime.Token))
+            while (await timer.WaitForNextTickAsync(lifetime.Token).ConfigureAwait(false))
                 if (Snapshot.Any(s => s.Runtime.Active || s.Runtime.Phase == Phase.Backoff) && Interlocked.Exchange(ref tickQueued, 1) == 0) Post(async () =>
                 {
-                    try { foreach (var id in states.Keys.ToArray()) await ApplyAsync(id, new(Signal.Tick)); }
+                    try { foreach (var id in states.Keys.ToArray()) await ApplyAsync(id, new(Signal.Tick)).ConfigureAwait(false); }
                     finally { Volatile.Write(ref tickQueued, 0); }
                 });
         }
@@ -315,60 +319,85 @@ public sealed class Supervisor : IAsyncDisposable
     private async Task ConsumeStorageAsync()
     {
         await foreach (var write in storageQueue.Reader.ReadAllAsync())
-            try { await write(); } catch (Exception ex) { Post(() => { StorageError = ex.Message; return Task.CompletedTask; }); }
+            try { await write().ConfigureAwait(false); } catch (Exception ex) { Post(() => { StorageError = ex.Message; return Task.CompletedTask; }); }
     }
     private Task ExecuteStorageAsync(Func<Task> write)
     {
         var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-        WriteLater(async () => { try { await write(); completion.SetResult(); } catch (Exception ex) { completion.SetException(ex); throw; } });
+        WriteLater(async () => { try { await write().ConfigureAwait(false); completion.SetResult(); } catch (Exception ex) { completion.SetException(ex); throw; } });
         return completion.Task;
     }
     private async Task FlushWritesAsync()
     {
-        await Enqueue(() => Task.CompletedTask);
-        await ExecuteStorageAsync(() => Task.CompletedTask);
-        await Enqueue(() => Task.CompletedTask);
+        await Enqueue(() => Task.CompletedTask).ConfigureAwait(false);
+        await ExecuteStorageAsync(() => Task.CompletedTask).ConfigureAwait(false);
+        await Enqueue(() => Task.CompletedTask).ConfigureAwait(false);
     }
     private async Task RecordAsync(string type, Guid? id, Guid? run, string detail, bool attention = false)
     {
         var record = new EventRecord(clock.Now.Utc, type, id, run, detail);
-        WriteLater(() => store.EventAsync(record)); await Task.CompletedTask; if (attention) Attention?.Invoke(record);
+        WriteLater(() => store.EventAsync(record)); await Task.CompletedTask.ConfigureAwait(false); if (attention) Attention?.Invoke(record);
     }
-    public async Task ShutdownAsync(TimeSpan budget, CancellationToken cancellationToken = default, Task? forceRequested = null)
+    public async Task ShutdownAsync(TimeSpan budget, CancellationToken cancellationToken = default, Task? forceRequested = null, TimeSpan? forceBudget = null)
     {
         try
         {
-            await Enqueue(async () => { exiting = true; pendingStarts.Clear(); foreach (var c in configs.Values.OrderByDescending(x => x.Priority).ToArray()) if (states[c.Id].Active || states[c.Id].Phase == Phase.Backoff) await ApplyAsync(c.Id, new(Signal.Stop)); });
+            await Enqueue(async () =>
+            {
+                exiting = true; pendingStarts.Clear();
+                foreach (var c in configs.Values.OrderByDescending(x => x.Priority).ThenBy(x => x.NameKey).ToArray())
+                {
+                    var s = states[c.Id];
+                    if (!s.Active && s.Phase != Phase.Backoff) continue;
+                    if (c.Kind == ProgramKind.Service && (s.Phase == Phase.Backoff || s.StopReason is null))
+                    {
+                        // Marked before the stop so the durable state of an interrupted exit still resumes next start.
+                        s = s with { ResumeAfterAppExit = true }; states[c.Id] = s;
+                        var marked = s; WriteLater(() => store.SaveRuntimeAsync(c.Id, marked));
+                    }
+                    await ApplyAsync(c.Id, new(Signal.Stop, Reason: EndReason.AppShutdown)).ConfigureAwait(false);
+                }
+            }).ConfigureAwait(false);
             var elapsed = System.Diagnostics.Stopwatch.StartNew();
-            while (Snapshot.Any(s => s.Runtime.Active) && elapsed.Elapsed < budget && forceRequested?.IsCompleted != true) await Task.Delay(50, cancellationToken);
+            while (Snapshot.Any(s => s.Runtime.Active) && elapsed.Elapsed < budget && forceRequested?.IsCompleted != true) await Task.Delay(50, cancellationToken).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
-            await Enqueue(async () => { foreach (var id in states.Keys.ToArray()) if (states[id].Active) await ApplyAsync(id, new(Signal.Force)); });
+            await Enqueue(async () => { foreach (var id in states.Keys.ToArray()) if (states[id].Active) await ApplyAsync(id, new(Signal.Force)).ConfigureAwait(false); }).ConfigureAwait(false);
             elapsed.Restart();
-            while (Snapshot.Any(s => s.Runtime.Active) && elapsed.Elapsed < TimeSpan.FromSeconds(5)) await Task.Delay(50, cancellationToken);
+            while (Snapshot.Any(s => s.Runtime.Active) && elapsed.Elapsed < (forceBudget ?? TimeSpan.FromSeconds(5))) await Task.Delay(50, cancellationToken).ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
             if (Snapshot.Any(s => s.Runtime.Active)) throw new InvalidOperationException("Cleanup is not confirmed; retry cleanup before exiting. Run records remain interrupted.");
-            await FlushWritesAsync();
+            await FlushWritesAsync().ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
-            if (StorageError is null && !(await store.RunsAsync()).Any(r => r.Ended is null)) await store.MarkCleanAsync();
+            if (StorageError is null && !(await store.RunsAsync().ConfigureAwait(false)).Any(r => r.Ended is null)) await store.MarkCleanAsync().ConfigureAwait(false);
         }
         catch
         {
-            await Enqueue(() => { exiting = false; return Task.CompletedTask; });
+            await Enqueue(() =>
+            {
+                exiting = false;
+                // A cancelled exit leaves stopped programs stopped; they must not resume on the next start.
+                foreach (var id in states.Where(x => x.Value.ResumeAfterAppExit).Select(x => x.Key).ToArray())
+                {
+                    var cleared = states[id] with { ResumeAfterAppExit = false }; states[id] = cleared;
+                    WriteLater(() => store.SaveRuntimeAsync(id, cleared));
+                }
+                return Task.CompletedTask;
+            }).ConfigureAwait(false);
             throw;
         }
     }
     public async ValueTask DisposeAsync()
     {
         IProcessRun[] owned = [];
-        await Enqueue(() => { exiting = true; pendingStarts.Clear(); owned = runs.Values.ToArray(); return Task.CompletedTask; });
-        lifetime.Cancel(); await ticker;
-        foreach (var run in owned) await run.DisposeAsync();
+        await Enqueue(() => { exiting = true; pendingStarts.Clear(); owned = runs.Values.ToArray(); return Task.CompletedTask; }).ConfigureAwait(false);
+        lifetime.Cancel(); await ticker.ConfigureAwait(false);
+        foreach (var run in owned) await run.DisposeAsync().ConfigureAwait(false);
         Task[] pending = [];
-        await Enqueue(() => { pending = workers.ToArray(); return Task.CompletedTask; });
-        await Task.WhenAll(pending);
-        await FlushWritesAsync();
-        storageQueue.Writer.TryComplete(); await storageLoop;
-        queue.Writer.TryComplete(); await loop;
+        await Enqueue(() => { pending = workers.ToArray(); return Task.CompletedTask; }).ConfigureAwait(false);
+        await Task.WhenAll(pending).ConfigureAwait(false);
+        await FlushWritesAsync().ConfigureAwait(false);
+        storageQueue.Writer.TryComplete(); await storageLoop.ConfigureAwait(false);
+        queue.Writer.TryComplete(); await loop.ConfigureAwait(false);
         lifetime.Dispose();
     }
 }

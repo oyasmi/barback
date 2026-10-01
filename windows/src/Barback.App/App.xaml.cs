@@ -71,7 +71,7 @@ public partial class App : Application
             var main = new MainWindow(supervisor, store, shell, host); MainWindow = main;
             tray = new TrayAdapter(main, supervisor, () => ExitAsync());
             await supervisor.InitializeAsync();
-            SessionEnding += async (_, _) => { try { await supervisor.ShutdownAsync(TimeSpan.FromSeconds(0)); } catch { } };
+            SessionEnding += (_, _) => StopForSessionEnd();
             var startup = e.Args.Any(a => a.Equals("--startup", StringComparison.OrdinalIgnoreCase));
             try { startup |= Microsoft.Windows.AppLifecycle.AppInstance.GetCurrent().GetActivatedEventArgs().Kind == Microsoft.Windows.AppLifecycle.ExtendedActivationKind.StartupTask; }
             catch { /* Failure to query optional Shell activation does not affect supervision. */ }
@@ -82,6 +82,19 @@ public partial class App : Application
             MessageBox.Show("Barback could not open its data. Existing files were preserved.\n" + ex.Message + "\n" + shell.Root, "Barback", MessageBoxButton.OK, MessageBoxImage.Error);
             if (supervisor is not null) await supervisor.DisposeAsync(); if (store is not null) await store.DisposeAsync(); tray?.Dispose(); shell.Dispose(); instance?.Dispose(); instance = null; Shutdown(1);
         }
+    }
+    /// <summary>Synchronous and bounded: WPF shuts the dispatcher down as soon as this handler returns.</summary>
+    private void StopForSessionEnd()
+    {
+        var current = supervisor;
+        if (exiting || current is null) return;
+        exiting = true;
+        try
+        {
+            // Task.Run drops the UI synchronization context; the whole stop stays inside the 5 s local budget.
+            Task.Run(() => current.ShutdownAsync(TimeSpan.FromSeconds(2), forceBudget: TimeSpan.FromSeconds(2.5))).Wait(TimeSpan.FromSeconds(5));
+        }
+        catch (AggregateException) { /* Unconfirmed cleanup leaves run records interrupted; the next start recovers. */ }
     }
     public void OpenMain() { if (MainWindow is null) { pendingActivation = true; return; } pendingActivation = false; MainWindow.Show(); if (MainWindow.WindowState == WindowState.Minimized) MainWindow.WindowState = WindowState.Normal; MainWindow.Activate(); }
     public async Task ExitAsync()

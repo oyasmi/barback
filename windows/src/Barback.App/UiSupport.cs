@@ -88,7 +88,7 @@ public sealed record HistoryRow(RunRecord Run, string ProgramName)
     public Guid ProgramId => Run.ProgramId;
     public DateTimeOffset Started => Run.Started.ToLocalTime();
     public string DisplayTime => Started.ToString("MM-dd HH:mm:ss", CultureInfo.CurrentUICulture);
-    public string DisplayOutcome => Text.Get(ProgramActionPolicy.Outcome(Run));
+    public string DisplayOutcome => Text.Get(Run.Ended is not null && Run.Reason == EndReason.AppShutdown && Run.Outcome is Phase.Stopped or Phase.Cancelled ? "RunStoppedOnExit" : ProgramActionPolicy.Outcome(Run));
     public string DisplayCode => Run.ExitCode is uint code ? $"{code} (0x{code:X8})" : Text.Get("Unknown");
     public string Duration => Run.Ended is DateTimeOffset ended ? ProgramRow.Duration((ended - Run.Started).TotalSeconds) : "—";
     public string Version => $"v{Run.ConfigVersion}";

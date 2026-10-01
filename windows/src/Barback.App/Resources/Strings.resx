@@ -491,6 +491,9 @@
   <data name="RunInterrupted" xml:space="preserve">
     <value>Interrupted · result unknown</value>
   </data>
+  <data name="RunStoppedOnExit" xml:space="preserve">
+    <value>Stopped when Barback exited</value>
+  </data>
   <data name="RunCancelled" xml:space="preserve">
     <value>Stopped by request</value>
   </data>

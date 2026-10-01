@@ -491,6 +491,9 @@
   <data name="RunInterrupted" xml:space="preserve">
     <value>已中断 · 结果未知</value>
   </data>
+  <data name="RunStoppedOnExit" xml:space="preserve">
+    <value>应用退出时停止</value>
+  </data>
   <data name="RunCancelled" xml:space="preserve">
     <value>已中止</value>
   </data>

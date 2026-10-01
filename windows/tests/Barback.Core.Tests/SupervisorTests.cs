@@ -285,4 +285,73 @@ public class SupervisorTests
         }
         finally { Directory.Delete(root, true); }
     }
+
+    [Fact] // F2
+    public async Task AppShutdownStopIsRecordedAsAppShutdownAndMarksResume()
+    {
+        var root = Temp(); try
+        {
+            var store = new Store(); var service = Config(root) with { Policy = new() { Autostart = true, StartSeconds = 0, Restart = RestartPolicy.Never } }; store.Configs.Add(service); var host = new Host(store);
+            await using (var supervisor = new Supervisor(store, host, new Clock(), root)) { await supervisor.InitializeAsync(); await Until(() => host.Runs.Any(r => r.Activated)); await supervisor.ShutdownAsync(TimeSpan.FromSeconds(1)); }
+            Assert.Equal(EndReason.AppShutdown, store.Runs.Single().Reason); Assert.True(store.Runtime[service.Id].ResumeAfterAppExit);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact] // F2
+    public async Task ServiceInBackoffAtExitResumesAfterInterruptedShutdown()
+    {
+        var root = Temp(); try
+        {
+            var store = new Store(); var service = Config(root) with { Policy = new() { Autostart = true, StartSeconds = 0, Restart = RestartPolicy.Unexpected } }; store.Configs.Add(service); var host = new Host(store);
+            await using (var supervisor = new Supervisor(store, host, new Clock(), root))
+            {
+                await supervisor.InitializeAsync(); await Until(() => host.Runs.Any(r => r.Activated));
+                host.Runs[0].End.TrySetResult(1); await Until(() => supervisor.Snapshot.Single().Runtime.Phase == Phase.Backoff);
+                await supervisor.ShutdownAsync(TimeSpan.FromSeconds(1));
+            }
+            store.Interrupted = true;
+            await using var next = new Supervisor(store, host, new Clock(), root); await next.InitializeAsync();
+            await Until(() => host.Runs.Length == 2);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact] // F2
+    public async Task ManuallyStoppedServiceIsNotResumedAfterInterruptedShutdown()
+    {
+        var root = Temp(); try
+        {
+            var store = new Store(); var service = Config(root) with { Policy = new() { Autostart = true, StartSeconds = 0, Restart = RestartPolicy.Never } }; store.Configs.Add(service); var host = new Host(store);
+            await using (var supervisor = new Supervisor(store, host, new Clock(), root))
+            {
+                await supervisor.InitializeAsync(); await Until(() => host.Runs.Any(r => r.Activated));
+                await supervisor.SendAsync(service.Id, Signal.Stop); await Until(() => supervisor.Snapshot.Single().Runtime.Phase == Phase.Stopped);
+            }
+            store.Interrupted = true;
+            await using var next = new Supervisor(store, host, new Clock(), root); await next.InitializeAsync();
+            await Task.Delay(300); Assert.Single(host.Runs); Assert.Equal(Phase.Stopped, next.Snapshot.Single().Runtime.Phase);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact] // F2
+    public async Task CancelledExitClearsResumeMarker()
+    {
+        var root = Temp(); try
+        {
+            var store = new Store(); var service = Config(root) with { Launch = Config(root).Launch with { StopMode = StopMode.ConsoleBreakThenTerminate, StopWaitSeconds = 30 }, Policy = new() { Autostart = true, StartSeconds = 0, Restart = RestartPolicy.Never } }; store.Configs.Add(service); var host = new Host(store);
+            await using (var supervisor = new Supervisor(store, host, new Clock(), root))
+            {
+                await supervisor.InitializeAsync(); await Until(() => host.Runs.Any(r => r.Activated));
+                using var cancellation = new CancellationTokenSource(); var shutdown = supervisor.ShutdownAsync(TimeSpan.FromSeconds(25), cancellation.Token);
+                await Until(() => supervisor.Snapshot.Single().Runtime.Phase == Phase.Stopping); cancellation.Cancel(); await Assert.ThrowsAnyAsync<OperationCanceledException>(() => shutdown);
+            }
+            Assert.False(store.Runtime[service.Id].ResumeAfterAppExit);
+            store.Interrupted = true;
+            await using var next = new Supervisor(store, host, new Clock(), root); await next.InitializeAsync();
+            await Task.Delay(300); Assert.Single(host.Runs);
+        }
+        finally { Directory.Delete(root, true); }
+    }
 }
