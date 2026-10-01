@@ -190,4 +190,99 @@ public class SupervisorTests
         }
         finally { Directory.Delete(root, true); }
     }
+    [Fact] // F1
+    public async Task StoppingQueuedStartDoesNotRelaunchProgramInStartGate()
+    {
+        var root = Temp(); try
+        {
+            var store = new Store();
+            var a = Config(root) with { Name = "a", Policy = new() { Autostart = false, StartSeconds = 5, Restart = RestartPolicy.Never } };
+            var held = Enumerable.Range(0, 4).Select(i => Config(root) with { Name = "held" + i }).ToArray();
+            var queued = Config(root) with { Name = "queued" };
+            store.Configs.Add(a); store.Configs.AddRange(held); store.Configs.Add(queued);
+            var host = new Host(store);
+            await using var supervisor = new Supervisor(store, host, new Clock(), root); await supervisor.InitializeAsync();
+            await supervisor.SendAsync(a.Id, Signal.Start); await Until(() => host.Runs.Length == 1 && host.Runs[0].Activated);
+            Assert.Equal(Phase.Starting, supervisor.Snapshot.Single(s => s.Config.Id == a.Id).Runtime.Phase); // inside startSeconds gate
+            host.Hold = new(TaskCreationOptions.RunContinuationsAsynchronously);
+            foreach (var h in held) await supervisor.SendAsync(h.Id, Signal.Start); // occupy all four startup slots
+            await Until(() => host.Runs.Length == 5);
+            await supervisor.SendAsync(queued.Id, Signal.Start);
+            await supervisor.SendAsync(queued.Id, Signal.Stop);
+            host.Hold.SetResult();
+            await Task.Delay(1000);
+            var aRun = supervisor.Snapshot.Single(s => s.Config.Id == a.Id).Runtime.RunId;
+            var count = host.Runs.Count(r => r.Id == aRun);
+            foreach (var r in host.Runs) await r.DisposeAsync(); // unblock orphaned observers before the supervisor is disposed
+            Assert.Equal(1, count);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact] // F4
+    public async Task InvalidStartDoesNotSetStorageError()
+    {
+        var root = Temp(); try
+        {
+            var store = new Store(); var config = Config(root) with { Launch = new() { Executable = Path.Combine(root, "missing.exe"), WorkingDirectory = root } }; store.Configs.Add(config);
+            await using var supervisor = new Supervisor(store, new Host(store), new Clock(), root); await supervisor.InitializeAsync();
+            await Assert.ThrowsAsync<ArgumentException>(() => supervisor.SendAsync(config.Id, Signal.Start));
+            Assert.Null(supervisor.StorageError);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact] // F3
+    public async Task CleanExitKeepsFatal()
+    {
+        var root = Temp(); try
+        {
+            var store = new Store(); var service = Config(root) with { Policy = new() { Autostart = true } }; store.Configs.Add(service);
+            store.Runtime[service.Id] = new() { Phase = Phase.Fatal, Error = "Startup retries exhausted." }; var host = new Host(store);
+            await using (var supervisor = new Supervisor(store, host, new Clock(), root)) { await supervisor.InitializeAsync(); await supervisor.ShutdownAsync(TimeSpan.FromSeconds(1)); }
+            await using var next = new Supervisor(store, host, new Clock(), root); await next.InitializeAsync();
+            Assert.Empty(host.Runs);
+            Assert.Equal(Phase.Fatal, next.Snapshot.Single().Runtime.Phase);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact] // F2
+    public async Task ShutdownStopInterruptedBeforeMarkCleanStillAutostartsNextBoot()
+    {
+        var root = Temp(); try
+        {
+            var store = new Store(); var service = Config(root) with { Policy = new() { Autostart = true, StartSeconds = 0, Restart = RestartPolicy.Never } }; store.Configs.Add(service);
+            var host = new Host(store);
+            await using (var supervisor = new Supervisor(store, host, new Clock(), root))
+            {
+                await supervisor.InitializeAsync(); await Until(() => host.Runs.Any(r => r.Activated));
+                await supervisor.ShutdownAsync(TimeSpan.FromSeconds(1)); // persisted runtime equals what a session-end stop leaves behind
+            }
+            store.Interrupted = true; // MarkClean never became durable (process ended during WM_ENDSESSION)
+            await using var next = new Supervisor(store, host, new Clock(), root); await next.InitializeAsync();
+            await Until(() => host.Runs.Length == 2);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact] // F1
+    public async Task CancellingOneQueuedStartStartsExactlyTheRemainingPrograms()
+    {
+        var root = Temp(); try
+        {
+            var store = new Store(); var configs = Enumerable.Range(0, 7).Select(i => Config(root) with { Name = "p" + i, Priority = 10 + i }).ToArray(); store.Configs.AddRange(configs);
+            var host = new Host(store) { Hold = new(TaskCreationOptions.RunContinuationsAsynchronously) };
+            await using var supervisor = new Supervisor(store, host, new Clock(), root); await supervisor.InitializeAsync();
+            await supervisor.BatchAsync(Signal.Start); await Until(() => host.Runs.Length == 4);
+            await supervisor.SendAsync(configs[5].Id, Signal.Stop); // queued, never prepared
+            host.Hold.SetResult(); await Until(() => host.Runs.Length == 6 && host.Runs.All(r => r.Activated));
+            await Task.Delay(200);
+            var programs = host.Runs.Select(r => store.Runs.Single(x => x.Id == r.Id).ProgramId).ToArray();
+            Assert.Equal(6, programs.Length); Assert.Equal(6, programs.Distinct().Count()); Assert.DoesNotContain(configs[5].Id, programs);
+            Assert.Equal(configs.Take(4).Select(c => c.Id).Order(), programs.Take(4).Order());
+            Assert.Equal(new[] { configs[4].Id, configs[6].Id }.Order(), programs.Skip(4).Order()); // later starts race for freed slots; only membership is deterministic
+        }
+        finally { Directory.Delete(root, true); }
+    }
 }

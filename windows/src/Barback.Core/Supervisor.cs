@@ -28,12 +28,13 @@ public sealed class Supervisor : IAsyncDisposable
     private string? publishedStorageError;
     private int startupSlots;
     private int tickQueued;
-    private readonly Queue<Guid> pendingStarts = [];
+    private readonly Queue<(Guid Id, Guid RunId)> pendingStarts = [];
     private readonly HashSet<Guid> preparing = [];
     public event Action? Changed;
     public event Action<EventRecord>? Attention;
     public IReadOnlyList<ProgramSnapshot> Snapshot => snapshot;
     public string? StorageError { get; private set; }
+    public Action<string, Exception>? Diagnostic { get; set; }
     public Supervisor(IStore store, IProcessHost host, IClock clock, string logRoot)
     {
         this.store = store; this.host = host; this.clock = clock; this.logRoot = logRoot;
@@ -167,8 +168,7 @@ public sealed class Supervisor : IAsyncDisposable
         // A queued handshake may have been cancelled before a process exists.
         if (states[id].Phase == Phase.Stopping && !runs.ContainsKey(id) && !preparing.Contains(id))
         {
-            pendingStarts.Clear(); // rebuild to exclude this id; cancelled batch entries never launch
-            foreach (var item in states.Where(x => x.Key != id && x.Value.Phase == Phase.Starting && !preparing.Contains(x.Key)).Select(x => x.Key)) pendingStarts.Enqueue(item);
+            RemovePendingStart(id); // cancelled batch entries never launch; the rest keep their order
             await ApplyAsync(id, new(Signal.Cleaned, states[id].RunId, states[id].Generation));
         }
         foreach (var effect in transition.Effects)
@@ -195,14 +195,22 @@ public sealed class Supervisor : IAsyncDisposable
     private void Track(Task task) { workers.RemoveAll(t => t.IsCompleted); workers.Add(task); }
     private void QueueLaunch(Guid id)
     {
-        pendingStarts.Enqueue(id); DrainStarts();
+        pendingStarts.Enqueue((id, states[id].RunId!.Value)); DrainStarts();
+    }
+    private void RemovePendingStart(Guid id)
+    {
+        var kept = pendingStarts.Where(x => x.Id != id).ToArray();
+        pendingStarts.Clear();
+        foreach (var item in kept) pendingStarts.Enqueue(item);
     }
     private void DrainStarts()
     {
-        while (startupSlots < 4 && pendingStarts.TryDequeue(out var id))
+        while (startupSlots < 4 && pendingStarts.TryDequeue(out var item))
         {
-            var state = states[id];
-            if (exiting || state.Phase != Phase.Starting || state.RunId is null) continue;
+            var id = item.Id;
+            // Skip entries whose run was cancelled, replaced, or is already owned (e.g. inside the startSeconds gate).
+            if (exiting || !states.TryGetValue(id, out var state)) continue;
+            if (state.Phase != Phase.Starting || state.RunId != item.RunId || runs.ContainsKey(id) || preparing.Contains(id)) continue;
             startupSlots++; preparing.Add(id); Track(PrepareAsync(id, state, runConfigs[id]));
         }
     }
@@ -221,6 +229,13 @@ public sealed class Supervisor : IAsyncDisposable
             {
                 var current = states[id];
                 if (current.RunId != state.RunId || current.Generation != state.Generation) { await prepared.DisposeAsync(); return; }
+                if (runs.TryGetValue(id, out var existing) && existing.Id != prepared.Id)
+                {
+                    // Invariant violation: never replace a run the supervisor already owns.
+                    await prepared.DisposeAsync();
+                    Diagnostic?.Invoke($"invariant violation: duplicate run for program {id}", new InvalidOperationException($"Run {prepared.Id} duplicates {existing.Id}."));
+                    return;
+                }
                 runs[id] = prepared;
                 if (current.Phase == Phase.Stopping) { BeginCleanup(id, state.Generation, prepared, null, current.StopReason); return; }
                 await ApplyAsync(id, new(Signal.Prepared, state.RunId, state.Generation, Pid: prepared.Pid, CreationTime: prepared.CreationTime));
@@ -250,7 +265,7 @@ public sealed class Supervisor : IAsyncDisposable
                 }
                 await failedRun.DisposeAsync();
             }
-            Post(async () => { if (states[id].RunId != state.RunId || states[id].Generation != state.Generation) return; runs.Remove(id); await ApplyAsync(id, new(Signal.SpawnFailed, state.RunId, state.Generation, Error: ex.Message)); });
+            Post(async () => { if (states[id].RunId != state.RunId || states[id].Generation != state.Generation) return; if (runs.TryGetValue(id, out var owned) && owned.Id == state.RunId) runs.Remove(id); await ApplyAsync(id, new(Signal.SpawnFailed, state.RunId, state.Generation, Error: ex.Message)); });
         }
         finally { Post(() => { startupSlots--; preparing.Remove(id); DrainStarts(); return Task.CompletedTask; }); }
     }
