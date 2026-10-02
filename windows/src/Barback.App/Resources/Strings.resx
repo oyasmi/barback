@@ -164,6 +164,9 @@
   <data name="Hidden" xml:space="preserve">
     <value>Barback continues running after this window closes. Open it from the notification area or Start menu.</value>
   </data>
+  <data name="StorageErrorBanner" xml:space="preserve">
+    <value>Data could not be written. Configuration changes and new starts may be unavailable: {0}</value>
+  </data>
   <data name="Error" xml:space="preserve">
     <value>Action could not be completed. Review the details and retry.</value>
   </data>

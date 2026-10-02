@@ -31,6 +31,8 @@ public partial class MainWindow : Window
     private EventRecord[] loadedEvents = [];
     private ProgramRow? selected;
     private HistoryRow? historical;
+    private string? dismissedStorageError;
+    private bool storageBannerShown;
     private LogView? logView;
     private Guid? displayedRun;
     private EditorView? editor;
@@ -107,8 +109,20 @@ public partial class MainWindow : Window
     public static bool Confirm(string key) => MessageBox.Show(Text.Get(key), "Barback", MessageBoxButton.OKCancel, MessageBoxImage.Question, MessageBoxResult.Cancel) == MessageBoxResult.OK;
     private bool Ask(string message) => MessageBox.Show(this, message, "Barback", MessageBoxButton.OKCancel, MessageBoxImage.Question, MessageBoxResult.Cancel) == MessageBoxResult.OK;
     private async Task GuardAsync(Func<Task> action) { try { await action(); } catch (Exception ex) { ShowError(ex); } }
-    private void ShowError(Exception ex) { Message.Text = Text.Get("Error") + "\n" + ex.Message; MessagePanel.Visibility = Visibility.Visible; }
-    private void DismissMessage(object sender, RoutedEventArgs e) { if (supervisor.StorageError is null) MessagePanel.Visibility = Visibility.Collapsed; }
+    private void ShowError(Exception ex) { if (storageBannerShown) dismissedStorageError = supervisor.StorageError; storageBannerShown = false; Message.Tag = null; Message.Text = Text.Get("Error") + "\n" + ex.Message; MessagePanel.Visibility = Visibility.Visible; }
+    private void DismissMessage(object sender, RoutedEventArgs e)
+    {
+        // A dismissed storage error stays hidden until a different one appears.
+        if (storageBannerShown) dismissedStorageError = supervisor.StorageError;
+        storageBannerShown = false; MessagePanel.Visibility = Visibility.Collapsed;
+    }
+    private void SyncStorageBanner()
+    {
+        var storage = supervisor.StorageError;
+        if (storage is null) { if (storageBannerShown) { storageBannerShown = false; MessagePanel.Visibility = Visibility.Collapsed; } dismissedStorageError = null; return; }
+        if (storage == dismissedStorageError || storageBannerShown && Message.Tag as string == storage) return;
+        Message.Text = Text.Format("StorageErrorBanner", storage); Message.Tag = storage; storageBannerShown = true; MessagePanel.Visibility = Visibility.Visible;
+    }
     private static Brush Brush(string key) => (Brush)Application.Current.FindResource(key);
 
     private void OnSupervisorChanged()
@@ -154,7 +168,7 @@ public partial class MainWindow : Window
         ProgramList.SelectedItem = rows.FirstOrDefault(r => r.Id == selectedId && Matches(r));
         selected = ProgramList.SelectedItem as ProgramRow;
         refreshing = false;
-        if (supervisor.StorageError is string storageError) ShowError(new IOException(storageError));
+        SyncStorageBanner();
         UpdateSummary(); UpdateGroups(); UpdateEmptyState(); UpdateDetails(); ApplyAdaptiveLayout();
     }
     private void RefreshTimedDetails()

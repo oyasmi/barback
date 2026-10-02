@@ -22,9 +22,9 @@ public sealed class StoreTests : IAsyncLifetime
     {
         var first = await store.SaveAsync(Draft(), 0); Assert.Equal(1, first.Version);
         var second = await store.SaveAsync(first with { Name = "renamed" }, 1); Assert.Equal(2, second.Version);
-        await Assert.ThrowsAsync<InvalidOperationException>(() => store.SaveAsync(first with { Name = "stale" }, 1));
+        await Assert.ThrowsAsync<ConfigurationConflictException>(() => store.SaveAsync(first with { Name = "stale" }, 1));
         Assert.Equal("renamed", (await store.LoadProgramsAsync()).Single().Name);
-        await Assert.ThrowsAsync<SqliteException>(() => store.SaveAsync(Draft("RENAMED"), 0)); Assert.Single(await store.LoadProgramsAsync());
+        await Assert.ThrowsAsync<DuplicateProgramNameException>(() => store.SaveAsync(Draft("RENAMED"), 0)); Assert.Single(await store.LoadProgramsAsync());
     }
     [Fact]
     public async Task RunEndIsIdempotentAndPreservesUnsignedCodes()
@@ -116,7 +116,7 @@ public sealed class StoreTests : IAsyncLifetime
     public async Task DuplicateImportRollsBackEntireBatch()
     {
         await store.SaveAsync(Draft("exists"), 0);
-        await Assert.ThrowsAsync<SqliteException>(() => store.ImportAsync([Draft("new"), Draft("EXISTS")]));
+        var duplicate = await Assert.ThrowsAsync<DuplicateProgramNameException>(() => store.ImportAsync([Draft("new"), Draft("EXISTS")])); Assert.Equal(["EXISTS"], duplicate.Names);
         Assert.Equal("exists", (await store.LoadProgramsAsync()).Single().Name);
     }
     [Fact]

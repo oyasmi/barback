@@ -164,6 +164,9 @@
   <data name="Hidden" xml:space="preserve">
     <value>窗口关闭后 Barback 会继续运行，可从通知区域或开始菜单再次打开。</value>
   </data>
+  <data name="StorageErrorBanner" xml:space="preserve">
+    <value>数据写入失败，配置修改和新启动可能不可用：{0}</value>
+  </data>
   <data name="Error" xml:space="preserve">
     <value>操作未完成。请查看详情、修复后重试。</value>
   </data>

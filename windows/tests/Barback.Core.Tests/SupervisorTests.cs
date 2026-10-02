@@ -7,9 +7,9 @@ public class SupervisorTests
     private sealed class Store : IStore
     {
         public List<ProgramConfig> Configs = []; private readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, RunRecord> records = []; public RunRecord[] Runs => records.Values.ToArray(); public Dictionary<Guid, RuntimeState> Runtime = [];
-        public bool FailWrites; public bool FailIdentify; public bool Interrupted; public TaskCompletionSource? SaveHold; public bool SaveEntered;
+        public bool FailWrites; public bool FailIdentify; public Exception? SaveFailure; public bool Interrupted; public TaskCompletionSource? SaveHold; public bool SaveEntered;
         public Task<IReadOnlyList<ProgramConfig>> LoadProgramsAsync() => Task.FromResult<IReadOnlyList<ProgramConfig>>(Configs.ToArray());
-        public async Task<ProgramConfig> SaveAsync(ProgramConfig c, long expected) { SaveEntered = true; if (SaveHold is not null) await SaveHold.Task; if (FailWrites) throw new IOException("disk full"); var current = Configs.SingleOrDefault(x => x.Id == c.Id); if ((current?.Version ?? 0) != expected) throw new IOException("conflict"); var next = c with { Version = expected + 1 }; Configs.RemoveAll(x => x.Id == c.Id); Configs.Add(next); return next; }
+        public async Task<ProgramConfig> SaveAsync(ProgramConfig c, long expected) { SaveEntered = true; if (SaveHold is not null) await SaveHold.Task; if (SaveFailure is not null) throw SaveFailure; if (FailWrites) throw new IOException("disk full"); var current = Configs.SingleOrDefault(x => x.Id == c.Id); if ((current?.Version ?? 0) != expected) throw new IOException("conflict"); var next = c with { Version = expected + 1 }; Configs.RemoveAll(x => x.Id == c.Id); Configs.Add(next); return next; }
         public Task<IReadOnlyList<ProgramConfig>> ImportAsync(IReadOnlyList<ProgramConfig> drafts) { var items = drafts.Select(c => c with { Version = 1 }).ToArray(); Configs.AddRange(items); return Task.FromResult<IReadOnlyList<ProgramConfig>>(items); }
         public Task DeleteAsync(Guid id) { Configs.RemoveAll(x => x.Id == id); return Task.CompletedTask; }
         public Task BeginRunAsync(RunRecord run) { if (FailWrites) throw new IOException("disk full"); records[run.Id] = run; return Task.CompletedTask; }
@@ -29,8 +29,8 @@ public class SupervisorTests
         public Guid Id => id; public int Pid => 42; public long CreationTime => 100;
         public readonly TaskCompletionSource<uint> End = new(TaskCreationOptions.RunContinuationsAsynchronously);
         public Task<uint> Exit => End.Task; public bool Activated, Cleaned, Disposed;
-        public int CleanupFailures;
-        public Task ActivateAsync(CancellationToken token) { Activated = true; return Task.CompletedTask; }
+        public int CleanupFailures; public bool FailActivate;
+        public Task ActivateAsync(CancellationToken token) { if (FailActivate) throw new InvalidOperationException("resume failed"); Activated = true; return Task.CompletedTask; }
         public Task RequestBreakAsync(CancellationToken token) => Task.CompletedTask;
         public Task<bool> CleanAsync(CancellationToken token) { if (CleanupFailures-- > 0) throw new IOException("cleanup unavailable"); Cleaned = true; End.TrySetResult(0xC000013A); return Task.FromResult(true); }
         public ValueTask DisposeAsync() { Disposed = true; End.TrySetResult(0xC000013A); return ValueTask.CompletedTask; }
@@ -39,10 +39,10 @@ public class SupervisorTests
     {
         private readonly System.Collections.Concurrent.ConcurrentQueue<Run> created = []; public Run[] Runs => created.ToArray();
         public TaskCompletionSource? Hold;
-        public int CleanupFailures;
+        public int CleanupFailures; public bool FailActivate;
         public async Task<IProcessRun> PrepareAsync(Guid id, LaunchSpec launch, string path, Action<long> loss, CancellationToken token)
         {
-            Assert.Contains(store.Runs, r => r.Id == id); var run = new Run(id) { CleanupFailures = CleanupFailures }; created.Enqueue(run); if (Hold is not null) await Hold.Task.WaitAsync(token); return run;
+            Assert.Contains(store.Runs, r => r.Id == id); var run = new Run(id) { CleanupFailures = CleanupFailures, FailActivate = FailActivate }; created.Enqueue(run); if (Hold is not null) await Hold.Task.WaitAsync(token); return run;
         }
         public bool IsSameProcessAlive(int pid, long time) => false;
     }
@@ -351,6 +351,50 @@ public class SupervisorTests
             store.Interrupted = true;
             await using var next = new Supervisor(store, host, new Clock(), root); await next.InitializeAsync();
             await Task.Delay(300); Assert.Single(host.Runs);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact] // F4
+    public async Task ConflictAndDuplicateNameAreOperationErrorsNotStorageErrors()
+    {
+        var root = Temp(); try
+        {
+            var store = new Store(); var config = Config(root) with { Version = 1 }; store.Configs.Add(config);
+            await using var supervisor = new Supervisor(store, new Host(store), new Clock(), root); await supervisor.InitializeAsync();
+            store.SaveFailure = new ConfigurationConflictException(); await Assert.ThrowsAsync<ConfigurationConflictException>(() => supervisor.SaveAsync(config with { Name = "x" }, 1)); Assert.Null(supervisor.StorageError);
+            store.SaveFailure = new DuplicateProgramNameException("x"); await Assert.ThrowsAsync<DuplicateProgramNameException>(() => supervisor.SaveAsync(config with { Name = "x" }, 1)); Assert.Null(supervisor.StorageError);
+            store.SaveFailure = new IOException("disk full"); await Assert.ThrowsAsync<IOException>(() => supervisor.SaveAsync(config with { Name = "x" }, 1)); Assert.NotNull(supervisor.StorageError);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact] // F4
+    public async Task StorageErrorClearsAfterNextSuccessfulWrite()
+    {
+        var root = Temp(); try
+        {
+            var store = new Store(); var config = Config(root); store.Configs.Add(config); var host = new Host(store);
+            await using var supervisor = new Supervisor(store, host, new Clock(), root); await supervisor.InitializeAsync();
+            store.FailWrites = true; await supervisor.SendAsync(config.Id, Signal.Start); await Until(() => supervisor.StorageError is not null);
+            store.FailWrites = false; await supervisor.SendAsync(config.Id, Signal.Stop);
+            await Until(() => supervisor.StorageError is null);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Theory] // F4
+    [InlineData(ProgramKind.Service, Phase.Backoff)]
+    [InlineData(ProgramKind.Oneshot, Phase.Failed)]
+    public async Task ActivationFailureCleansRunWithoutStorageError(ProgramKind kind, Phase expected)
+    {
+        var root = Temp(); try
+        {
+            var store = new Store(); var config = Config(root, kind) with { Policy = new() { Autostart = false, StartSeconds = 0, Restart = RestartPolicy.Unexpected } }; store.Configs.Add(config); var host = new Host(store) { FailActivate = true };
+            await using var supervisor = new Supervisor(store, host, new Clock(), root); await supervisor.InitializeAsync(); await supervisor.SendAsync(config.Id, Signal.Start);
+            await Until(() => supervisor.Snapshot.Single().Runtime.Phase == expected);
+            Assert.Null(supervisor.StorageError); Assert.True(host.Runs[0].Cleaned); Assert.True(host.Runs[0].Disposed);
+            await Until(() => store.Runs.Single().Ended is not null); Assert.Equal(EndReason.HostFailed, store.Runs.Single().Reason);
         }
         finally { Directory.Delete(root, true); }
     }

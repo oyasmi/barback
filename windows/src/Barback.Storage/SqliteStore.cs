@@ -88,13 +88,25 @@ public sealed class SqliteStore : IStore
         using var cmd = Command("SELECT json FROM programs ORDER BY name_key"); using var reader = await cmd.ExecuteReaderAsync(); var result = new List<ProgramConfig>();
         while (await reader.ReadAsync()) result.Add(Decode(JsonSerializer.Deserialize<ProgramConfig>(reader.GetString(0))!)); return result;
     });
+    /// <summary>Maps the expected user-facing constraint violations to typed exceptions; anything else stays a storage fault.</summary>
+    private static Exception? ToTypedException(SqliteException ex, IEnumerable<string> names)
+    {
+        if (ex.SqliteErrorCode != 19) return null;
+        if (ex.Message.Contains("programs.name_key", StringComparison.Ordinal)) return new DuplicateProgramNameException(names, ex);
+        if (ex.Message.Contains("programs.id", StringComparison.Ordinal)) return new ConfigurationConflictException(inner: ex);
+        return null;
+    }
     public Task<ProgramConfig> SaveAsync(ProgramConfig c, long expectedVersion) => Locked(async () =>
     {
         var next = c with { Version = expectedVersion + 1 }; var encoded = Encode(next);
         using var tx = db.BeginTransaction();
         using var cmd = expectedVersion == 0 ? Command("INSERT INTO programs(id,name_key,version,json) VALUES($id,$name,$version,$json)", ("$id", c.Id.ToString()), ("$name", c.NameKey), ("$version", next.Version), ("$json", JsonSerializer.Serialize(encoded))) :
             Command("UPDATE programs SET name_key=$name,version=$version,json=$json WHERE id=$id AND version=$expected", ("$id", c.Id.ToString()), ("$name", c.NameKey), ("$version", next.Version), ("$json", JsonSerializer.Serialize(encoded)), ("$expected", expectedVersion));
-        cmd.Transaction = tx; if (await cmd.ExecuteNonQueryAsync() != 1) throw new InvalidOperationException("Configuration version conflict. Preserve your draft and reload before saving.");
+        cmd.Transaction = tx;
+        int changed;
+        try { changed = await cmd.ExecuteNonQueryAsync(); }
+        catch (SqliteException ex) when (ToTypedException(ex, [c.Name]) is { } typed) { throw typed; }
+        if (changed != 1) throw new ConfigurationConflictException();
         tx.Commit();
         // The durable save has succeeded; a backup failure is recorded without reporting a false save failure.
         try { await BackupConfigInternalAsync(); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { using var warn = Command("INSERT INTO events(at,type,detail) VALUES($at,'BackupFailed','Configuration saved; backup could not be written.')", ("$at", DateTimeOffset.UtcNow.ToString("O"))); try { await warn.ExecuteNonQueryAsync(); } catch (SqliteException) { } }
@@ -108,7 +120,10 @@ public sealed class SqliteStore : IStore
         {
             var c = draft with { Version = 1, Enabled = false, Policy = draft.Policy with { Autostart = false } };
             using var cmd = Command("INSERT INTO programs(id,name_key,version,json) VALUES($id,$name,1,$json)", ("$id", c.Id.ToString()), ("$name", c.NameKey), ("$json", JsonSerializer.Serialize(Encode(c))));
-            cmd.Transaction = tx; await cmd.ExecuteNonQueryAsync(); result.Add(c);
+            cmd.Transaction = tx;
+            try { await cmd.ExecuteNonQueryAsync(); }
+            catch (SqliteException ex) when (ToTypedException(ex, [c.Name]) is { } typed) { throw typed; }
+            result.Add(c);
         }
         tx.Commit();
         try { await BackupConfigInternalAsync(); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }

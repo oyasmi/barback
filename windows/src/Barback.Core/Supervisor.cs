@@ -52,8 +52,23 @@ public sealed class Supervisor : IAsyncDisposable
         await foreach (var r in queue.Reader.ReadAllAsync())
         {
             try { await r.Action().ConfigureAwait(false); Publish(); r.Completion?.SetResult(); }
-            catch (Exception ex) { StorageError = ex.Message; Publish(); r.Completion?.SetException(ex); }
+            catch (Exception ex)
+            {
+                // Operation failures belong to the caller. Only the storage paths publish StorageError.
+                if (r.Completion is null) await ReportInternalErrorAsync(ex).ConfigureAwait(false);
+                Publish(); r.Completion?.SetException(ex);
+            }
         }
+    }
+    private async Task ReportInternalErrorAsync(Exception ex)
+    {
+        try { Diagnostic?.Invoke("supervisor request failed", ex); } catch { /* diagnostics must not break the actor */ }
+        try { await RecordAsync("InternalError", null, null, ex.Message).ConfigureAwait(false); } catch { }
+    }
+    private static bool IsStorageFailure(Exception ex) => ex is IOException or UnauthorizedAccessException or System.Data.Common.DbException;
+    private async Task ReportStorageFailureAsync(Exception ex)
+    {
+        if (IsStorageFailure(ex)) await Enqueue(() => { StorageError = ex.Message; return Task.CompletedTask; }).ConfigureAwait(false);
     }
     private void Publish()
     {
@@ -112,13 +127,15 @@ public sealed class Supervisor : IAsyncDisposable
                 await RecordAsync("ConfigSaved", saved.Id, null, "Configuration saved; active launch snapshots remain unchanged.").ConfigureAwait(false);
             }).ConfigureAwait(false);
         }
-        catch (Exception ex) { await Enqueue(() => { StorageError = ex.Message; return Task.CompletedTask; }).ConfigureAwait(false); throw; }
+        catch (Exception ex) { await ReportStorageFailureAsync(ex).ConfigureAwait(false); throw; }
     }
     public async Task ImportAsync(IReadOnlyList<ProgramConfig> drafts)
     {
         var safe = drafts.Select(c => c with { Id = Guid.NewGuid(), Version = 0, Enabled = false, Policy = c.Policy with { Autostart = false } }).ToArray();
         foreach (var c in safe) { var errors = ConfigurationValidator.Validate(c, false); if (errors.Count > 0) throw new ArgumentException(string.Join("\n", errors.Select(e => e.Message))); }
-        var saved = await Task.Run(() => store.ImportAsync(safe)).ConfigureAwait(false);
+        IReadOnlyList<ProgramConfig> saved;
+        try { saved = await Task.Run(() => store.ImportAsync(safe)).ConfigureAwait(false); }
+        catch (Exception ex) { await ReportStorageFailureAsync(ex).ConfigureAwait(false); throw; }
         await Enqueue(async () => { foreach (var c in saved) { configs[c.Id] = c; states[c.Id] = new(); } await RecordAsync("ConfigImported", null, null, $"Imported disabled drafts: {saved.Count}").ConfigureAwait(false); }).ConfigureAwait(false);
     }
     public async Task DeleteAsync(Guid id)
@@ -129,6 +146,7 @@ public sealed class Supervisor : IAsyncDisposable
             deleting.Add(id); return Task.CompletedTask;
         }).ConfigureAwait(false);
         try { await FlushWritesAsync().ConfigureAwait(false); await Task.Run(() => store.DeleteAsync(id)).ConfigureAwait(false); await Enqueue(() => { configs.Remove(id); states.Remove(id); runConfigs.Remove(id); return Task.CompletedTask; }).ConfigureAwait(false); }
+        catch (Exception ex) { await ReportStorageFailureAsync(ex).ConfigureAwait(false); throw; }
         finally { await Enqueue(() => { deleting.Remove(id); return Task.CompletedTask; }).ConfigureAwait(false); }
     }
     public Task SendAsync(Guid id, Signal signal) => Enqueue(() => ApplyAsync(id, new(signal)));
@@ -243,7 +261,13 @@ public sealed class Supervisor : IAsyncDisposable
                 runs[id] = prepared;
                 if (current.Phase == Phase.Stopping) { BeginCleanup(id, state.Generation, prepared, null, current.StopReason); return; }
                 await ApplyAsync(id, new(Signal.Prepared, state.RunId, state.Generation, Pid: prepared.Pid, CreationTime: prepared.CreationTime)).ConfigureAwait(false);
-                await prepared.ActivateAsync(lifetime.Token).ConfigureAwait(false);
+                try { await prepared.ActivateAsync(lifetime.Token).ConfigureAwait(false); }
+                catch (Exception activation)
+                {
+                    // The actor already owns the run: clean it through the normal path so it ends as HostFailed.
+                    BeginCleanup(id, state.Generation, prepared, null, EndReason.HostFailed, activation.Message);
+                    return;
+                }
                 Track(ObserveExitAsync(id, state.Generation, prepared));
             }).ConfigureAwait(false);
             native = null; // actor owns it now
@@ -318,8 +342,17 @@ public sealed class Supervisor : IAsyncDisposable
     private void WriteLater(Func<Task> write) => storageQueue.Writer.TryWrite(write);
     private async Task ConsumeStorageAsync()
     {
+        bool storageFaulted = false;
         await foreach (var write in storageQueue.Reader.ReadAllAsync())
-            try { await write().ConfigureAwait(false); } catch (Exception ex) { Post(() => { StorageError = ex.Message; return Task.CompletedTask; }); }
+        {
+            try
+            {
+                await write().ConfigureAwait(false);
+                // Storage recovered: the banner clears itself on the next successful write.
+                if (storageFaulted) { storageFaulted = false; Post(() => { StorageError = null; return Task.CompletedTask; }); }
+            }
+            catch (Exception ex) { storageFaulted = true; Post(() => { StorageError = ex.Message; return Task.CompletedTask; }); }
+        }
     }
     private Task ExecuteStorageAsync(Func<Task> write)
     {
@@ -388,13 +421,25 @@ public sealed class Supervisor : IAsyncDisposable
     }
     public async ValueTask DisposeAsync()
     {
-        IProcessRun[] owned = [];
-        await Enqueue(() => { exiting = true; pendingStarts.Clear(); owned = runs.Values.ToArray(); return Task.CompletedTask; }).ConfigureAwait(false);
+        await Enqueue(() => { exiting = true; pendingStarts.Clear(); return Task.CompletedTask; }).ConfigureAwait(false);
         lifetime.Cancel(); await ticker.ConfigureAwait(false);
-        foreach (var run in owned) await run.DisposeAsync().ConfigureAwait(false);
-        Task[] pending = [];
-        await Enqueue(() => { pending = workers.ToArray(); return Task.CompletedTask; }).ConfigureAwait(false);
-        await Task.WhenAll(pending).ConfigureAwait(false);
+        // A run can still be registered by an in-flight prepare after the first sweep; keep sweeping until nothing is left,
+        // otherwise its exit observer would wait forever on a run nobody disposes.
+        var disposed = new HashSet<IProcessRun>();
+        while (true)
+        {
+            IProcessRun[] fresh = []; Task[] pending = [];
+            await Enqueue(() =>
+            {
+                fresh = runs.Values.Where(disposed.Add).ToArray();
+                workers.RemoveAll(t => t.IsCompleted);
+                pending = workers.ToArray();
+                return Task.CompletedTask;
+            }).ConfigureAwait(false);
+            foreach (var run in fresh) await run.DisposeAsync().ConfigureAwait(false);
+            if (fresh.Length == 0 && pending.Length == 0) break;
+            await Task.WhenAll(pending).ConfigureAwait(false);
+        }
         await FlushWritesAsync().ConfigureAwait(false);
         storageQueue.Writer.TryComplete(); await storageLoop.ConfigureAwait(false);
         queue.Writer.TryComplete(); await loop.ConfigureAwait(false);
