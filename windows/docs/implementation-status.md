@@ -48,6 +48,47 @@ dotnet build Barback.sln -c Release -p:Platform=ARM64 -p:WindowsAppSDKSelfContai
 
 五个 PowerShell 脚本已通过 PowerShell 7.5.3 语法解析；中英资源均为 130 个唯一键且键集一致。Windows CI 和 PowerShell 发布/测试脚本已加入；初始 Linux 验证没有运行 GitHub Actions、Windows SDK 打包工具或签名安装，后续 Windows 10 构建/测试见上节。真实测试步骤见 [实机操作手册](windows-test-runbook.md)。
 
+## 评审修正（2026-10）
+
+依据 [评审修正方案](review-fix-plan.md) 的实施记录。环境：Linux x86_64，.NET SDK 10.0.401。**以下全部是 Linux 上可运行的单测与编译检查结果；标注“待实机”的行为没有在 Windows 上验证，不得视为通过。**
+
+验证结果：Core 145、Storage 22、Windows 5（9 个 Win32 用例在非 Windows 明确跳过）通过，0 失败；Core 套件连续运行 12 次无失败/挂起。x64 与 ARM64 全解决方案编译 0 警告、0 错误；中英资源键均为 311 个且键集一致。编译检查使用 `-p:WindowsAppSDKSelfContained=false -p:AppxGeneratePriEnabled=false -p:MicrosoftWindowsAppSDKPackageDir=<任意路径>`（后一项绕过 Windows App SDK 对框架依赖运行时包的目标检查，仅用于托管代码编译，不生成可验证产物）。附录 A 的 4 个复现测试在修复前全部失败（A1 在 Linux 上表现为重复创建 Run 而非挂起），修复后通过。
+
+| ID | 实现内容 | 单测 | 待实机 |
+| --- | --- | --- | --- |
+| F1 | 待启动队列元素带 RunId，`DrainStarts` 跳过已持有 Run/准备中/已变更的条目；`RemovePendingStart` 保序；`Enqueue` 回调拒绝覆盖现有 Run | StoppingQueuedStartDoesNotRelaunchProgramInStartGate、CancellingOneQueuedStartStartsExactlyTheRemainingPrograms | — |
+| F3 | `Stop` 对非活动状态只取消 Backoff，其余终态不改写；停机只对活动/退避项发 Stop | CleanExitKeepsFatal、StopKeepsInactiveTerminalPhase、StopCancelsBackoff | — |
+| F2 | `EndReason.AppShutdown`、`RuntimeState.ResumeAfterAppExit`；停机先标记再停止，取消退出清除标记，初始化消耗标记；`SessionEnding` 同步有界（2 s + 2.5 s，总等待 5 s）；Supervisor 全部 `await` 加 `ConfigureAwait(false)`；历史显示“应用退出时停止” | ShutdownStopInterruptedBeforeMarkCleanStillAutostartsNextBoot、AppShutdownStopIsRecordedAsAppShutdownAndMarksResume、ServiceInBackoffAtExitResumesAfterInterruptedShutdown、ManuallyStoppedServiceIsNotResumedAfterInterruptedShutdown、CancelledExitClearsResumeMarker | 注销/重启恢复；方案中核实“WPF 在处理程序返回后自动 Shutdown”的最小程序**未做**（修正设计在两种情形下均成立）；可选的 `ShutdownBlockReasonCreate` 未实现 |
+| F4 | `ConfigurationConflictException`/`DuplicateProgramNameException`；`StorageError` 只来自存储失败，写入成功后自动清除；`ActivateAsync` 失败走 HostFailed 清理；横幅可关闭，存储横幅按值去重；`Diagnostic` 回调 | InvalidStartDoesNotSetStorageError、ConflictAndDuplicateNameAreOperationErrorsNotStorageErrors、StorageErrorClearsAfterNextSuccessfulWrite、ActivationFailureCleansRunWithoutStorageError、StoreTests 类型化异常 | 横幅交互 |
+| F5 | 访问被拒视为非本程序进程；早于开机时间的创建时间直接判定已退出；`ClearFailure` 释放“旧进程待核对”并带 PID 确认；快照暴露 `UnresolvedPid` | ClearFailureReleasesUnverifiableOldProcessSoStartWorks、BootTimeFilterRejectsProcessesFromBeforeBoot | `ProcessIdentityDistinguishesReusedAndOwnedPids`；SYSTEM 进程的实际错误码；Fast Startup 下开机时间判断 |
+| F6 | `ApplicationEnvironment` 统一编解码，解密失败变为 NeedsInput；环境窗口可打开/重新输入/删除行；`ApplicationEnvironmentNeedsInputException` + `EnsureCanLaunch` 让手动启动即时失败并给出本地化提示与“编辑环境变量”按钮；已删除的移除项不再保存明文值 | ApplicationEnvironmentLoadsUndecryptableSecretsAsNeedsInput、ApplicationEnvironmentSaveKeepsNeedsInputAndNeverStoresPlaintext、ManualStartFailsFastWhenHostReportsFixableBlock | 真实 DPAPI 跨账户修复流程 |
+| F7 | `PrepareAsync` 增加 `runOutputLimit`（一次性 50 MiB，服务无限制）；`Reserve` 区分 Run/全局限制；Run 限制截断并在 `.gaps` 标记一次；校验收紧为每段 64 KiB–256 MiB、0–20 段、总计 ≤ 512 MiB；编辑器按 MiB 输入 | ServiceWithoutRunLimitKeepsRotatingPastFiftyMiB…、OneShotRunLimitTruncatesOnceAndMarksGaps、GlobalLimitWithNothingToRotate…、LogBudgetBoundaries、OnlyOneShotRunsGetAnOutputLimit | 大输出实测 |
+| F8 | `LogQuota.Limit`/去抖 `Pressure`；`Supervisor.RequestMaintenance` 合并请求；存储清理阈值为配额 90%；接线到 App | PressureIsDebouncedWithinThirtySeconds、MaintenanceRequestsAreCoalescedUntilThePassFinishes | 全局配额满时的恢复 |
+| F9 | `LogLineBuffer`（行/CR 覆盖/分块/淘汰/ANSI 清理）+ 虚拟化 `ListBox`；每周期读 ≤ 1 MiB、落后 > 8 MiB 跳到尾部；复制/全部复制/导出当前或全部分段；已加载内容搜索改为按行；UI Harness 改读列表项；Debug 构建输出 `LogView refresh` 耗时 | LogLineBufferTests（20 个用例，含跨块转义序列与 UTF-16/UTF-8 拆分） | 5 MB/s × 60 s 性能验收；`test-ui.ps1` 需在 Windows 重新运行（只做了编译检查）；列表模式不支持行内选择字符（已知取舍） |
+| F17 | `LogView.SwitchRun`；同程序服务换 Run 时保留已加载输出并插入分隔行；新 Run 记录未加载时保留旧输出；历史模式与一次性命令保持重建 | 无（纯 UI） | 3 秒崩溃服务的连续显示 |
+| F10 | ConsoleHost 使用 App 自身环境快照（移除 `DOTNET_STARTUP_HOOKS`），目标环境只经协议传递 | Windows：TargetEnvironmentDoesNotLeakIntoConsoleHost | 全部（需 Windows） |
+| F11 | ConsoleHost 等待 Resume 不再受 10 秒期限约束，管道 EOF 仍使其退出 | Windows：SlowResumeAfterReadyDoesNotExpireTheHostHandshake | 全部（需 Windows） |
+| F13 | `AppLog`（5 MiB × 3，线程安全，绝不抛出）；三个全局异常事件、Supervisor 诊断（含握手/清理失败）、存储失败状态变化、通知失败、启动/退出摘要；诊断包含 `logs/app` | AppLogTests、LaunchFailuresAreReportedToTheDiagnosticCallback… | 实际日志位置与诊断包内容 |
+| F14 | 通知含程序名与原因；用户强制停止/宽限期强制终止不通知；`CleanupFailed` 事件；退出期间不通知；RunFailed/RunTimeout 仅作通知用途（不重复持久化）；`NotificationThrottle` 对应交互设计 §7 | UserForceAndGraceExpiry…、OneShotFailureNotifies…、UnconfirmedCleanup…、NoNotificationsWhileExiting、NotificationThrottleTests | 签名包下的实际 toast |
+| F12 | `ConfigurationBackupReader`（设置页恢复与恢复窗口共用，解密失败变为 NeedsInput）；`ProgramNames.MakeUnique` + 本地化“（恢复）/（恢复 2）”后缀；`ImportAsync` 先报告全部重名；导入预览增加状态列并禁用冲突导入 | BackupReader…、ProgramNamesTests、ImportRejectsCollisions… | 导入窗口交互 |
+| S1–S3 | 删除无效的 `outcome<>12`；事件清理移到维护和每 500 次写入；删除输出时一并删除空的所有权父目录（两处删除逻辑合并；残留外部文件视为已处理而不再无限重试） | MaintenanceTreatsEveryEndedOutcome…、EventTableIsTrimmed…、DeletingAProgramAlsoRemoves…、OwnerParentWithOtherContentIsKept | — |
+| S4 S5 | 诊断包先写临时文件再覆盖；启动输出统计移到后台线程、只统计 `logs/programs` 与 `logs/runs` 并容忍文件消失 | — | 覆盖已有 zip；大日志目录启动 |
+| S6 S7 S8 | 清单中的硬编码英文改为资源键（含启动状态文本）；删除不存在的程序为空操作；未修改时 Ctrl+S 不保存 | DeletingAnUnknownProgramIsANoOp | 界面文案 |
+| S9 S10 | INI 导入映射日志大小/备份数/`stopwaitsecs`，`autorestart` 不区分大小写，节名与行内 ` ;` 注释处理；环境变量名首尾空白报错 | ImporterMapsLogRotation…、EnvironmentNamesWithSurroundingWhitespaceAreRejected | — |
+| S11 | “刷新环境”显示“只影响新启动，当前运行中 N 个程序需重启后生效”的文字反馈 | — | 运行中程序的“待重启”标记**未实现**（需新增环境版本快照字段），列为遗留 |
+| S12 | 不改目录布局，design.md §8.1 如实记录 | — | — |
+| S13 | 本轮不改；待 F9 实机性能数据决定是否分页 | — | 需要实机数据 |
+
+### 待维护者决策（实施者未自行决定）
+
+- **F15**：默认 MSIX 仍是框架依赖发布，与设计 §9.2 的“自包含正式包”冲突。建议 `package.ps1` 默认改为自包含并新增 `-FrameworkDependent` 内部开关；或修改设计。已在 design.md、README 中标注“待决策”，未改动脚本。
+- **F16**：MSIX 文件/注册表虚拟化需要签名安装包实机探测；只产出了 [ADR 草案](adr-msix-virtualization.md)（探测步骤与候选方案，无结论），未改任何行为。
+- **S14**：portable 与开发构建共享 `Dev` 数据目录和互斥名；改用独立目录会让现有 portable 用户“丢数据”（需首次启动从 `Dev` 复制）。本轮仅在 README 说明现状。
+
+### 实机必须补做
+
+`scripts/test.ps1`（含新增 `TargetEnvironmentDoesNotLeakIntoConsoleHost`、`SlowResumeAfterReadyDoesNotExpireTheHostHandshake`、`ProcessIdentityDistinguishesReusedAndOwnedPids`）、`scripts/test-ui.ps1`，以及 [实机手册](windows-test-runbook.md)“评审修正的实机项”中的注销/重启恢复、PID 复用、DPAPI 修复、高吞吐日志、MSIX 虚拟化探测。
+
 ## 实现范围与仍需完成的产品核对
 
 实现包含纯 reducer、独立串行监管/存储执行器、每 Run Job、挂起创建和持有句柄确认、ConsoleHost、双流有界采集和轮转、运行配置版本、SQLite/WAL/备份/配置恢复、DPAPI、INI 事务预览导入、主窗口/编辑器/日志/历史/事件/设置、托盘、单实例、通知、自启与 MSIX 构建入口。

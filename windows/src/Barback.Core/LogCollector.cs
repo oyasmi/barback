@@ -101,7 +101,7 @@ public sealed class LogCollector : IAsyncDisposable
                     {
                         // One-shot history is truncated, not rotated: stop writing and leave a single marker.
                         runLimited = true; Drop(bytes.Length);
-                        await File.AppendAllTextAsync(path + ".gaps", $"{DateTimeOffset.UtcNow:O} run-output-limit reached at {runQuota?.UsedBytes}\n");
+                        await File.AppendAllTextAsync(path + ".gaps", $"{DateTimeOffset.UtcNow:O} run-output-limit reached at {runQuota?.UsedBytes}\n").ConfigureAwait(false);
                         continue;
                     }
                     reserved = true;
