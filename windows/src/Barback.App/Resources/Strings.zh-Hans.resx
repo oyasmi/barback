@@ -736,6 +736,27 @@ CPU {1} · 内存 {2} MiB</value>
   <data name="RemoveVariable" xml:space="preserve">
     <value>移除继承值</value>
   </data>
+  <data name="CopySelectedLines" xml:space="preserve">
+    <value>复制选中行</value>
+  </data>
+  <data name="CopyLoadedOutput" xml:space="preserve">
+    <value>复制全部已加载内容</value>
+  </data>
+  <data name="NoMatch" xml:space="preserve">
+    <value>已加载内容中没有匹配项</value>
+  </data>
+  <data name="SkippedOutput" xml:space="preserve">
+    <value>[已跳过 {0} MiB 较早输出，可使用全文搜索或导出]</value>
+  </data>
+  <data name="RunSeparator" xml:space="preserve">
+    <value>新运行 · {0} · v{1}</value>
+  </data>
+  <data name="ExportCurrentSegment" xml:space="preserve">
+    <value>导出当前日志分段</value>
+  </data>
+  <data name="ExportAllSegments" xml:space="preserve">
+    <value>导出全部日志分段</value>
+  </data>
   <data name="RemoveRow" xml:space="preserve">
     <value>删除此行</value>
   </data>

@@ -37,6 +37,8 @@ internal static class Program
         application.Run();
     }
     private static void Check(bool condition, string message) { if (!condition) throw new InvalidOperationException(message); passed.Add(message); }
+    /// <summary>All loaded output lines of the embedded log view (the viewer is a virtualized list, so read items, not visuals).</summary>
+    private static string LogText(AppWindow window) => string.Join("\n", Children<ListBox>(Named<ContentControl>(window, "LogHost")).SelectMany(list => list.Items.Cast<object>()).Select(item => item.ToString()));
     private static async Task PaintAsync(Window window) { await Task.Delay(350); window.UpdateLayout(); }
     private static T Named<T>(AppWindow window, string name) where T : FrameworkElement => (T)window.FindName(name);
     private static IEnumerable<T> Children<T>(DependencyObject root) where T : DependencyObject
@@ -88,7 +90,7 @@ internal static class Program
         application.MainWindow = window; window.Show(); window.SelectProgram(configs[0].Id); await PaintAsync(window);
         Check(Named<ListBox>(window, "ProgramList").Items.Count == 6, "Six stable program rows rendered");
         Check(Named<Border>(window, "DetailPane").IsVisible && Named<Grid>(window, "CollectionPane").IsVisible, "Wide layout shows list and details together");
-        await UntilAsync(() => Children<TextBox>(Named<ContentControl>(window, "LogHost")).Any(t => t.Text.Contains("LISTENING")));
+        await UntilAsync(() => LogText(window).Contains("LISTENING"));
         Check(true, "Live output is loaded into embedded view"); Capture(window, "workbench-light");
         window.SelectProgram(configs[2].Id); await PaintAsync(window);
         Check(Named<Border>(window, "FailurePanel").IsVisible && Named<TextBlock>(window, "AttentionCount").Text == "1", "Failed service exposes reason and attention count"); Capture(window, "failure");
@@ -102,10 +104,10 @@ internal static class Program
         await supervisor.SaveAsync(configNow with { Launch = configNow.Launch with { Arguments = ["--new"] } }, configNow.Version); await PaintAsync(window);
         Check(Named<Border>(window, "PendingPanel").IsVisible, "Changed launch configuration shows pending notice");
         var stream = Children<ComboBox>(Named<ContentControl>(window, "LogHost")).Single(); stream.SelectedIndex = 1; await Task.Delay(700);
-        Check(!Children<TextBox>(Named<ContentControl>(window, "LogHost")).Any(t => t.Text.Contains("LISTENING")), "Missing stderr never shows previous stdout");
+        Check(!LogText(window).Contains("LISTENING"), "Missing stderr never shows previous stdout");
         stream.SelectedIndex = 0; await Task.Delay(700);
         window.SelectProgram(configs[5].Id); await PaintAsync(window);
-        Check(!Children<TextBox>(Named<ContentControl>(window, "LogHost")).Any(t => t.Text.Contains("LISTENING")), "Selecting program with no run clears previous output");
+        Check(!LogText(window).Contains("LISTENING"), "Selecting program with no run clears previous output");
         window.SelectProgram(configs[0].Id); await PaintAsync(window); WorkbenchTheme.Set("Dark"); await PaintAsync(window); Capture(window, "workbench-dark");
         Check(((SolidColorBrush)application.FindResource("SurfaceBrush")).Color.R < 80, "Dark palette is applied to live native resources");
         WorkbenchTheme.Set("Light"); window.Width = 800; window.Height = 560; await PaintAsync(window);

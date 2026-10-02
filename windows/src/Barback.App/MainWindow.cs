@@ -31,6 +31,8 @@ public partial class MainWindow : Window
     private EventRecord[] loadedEvents = [];
     private ProgramRow? selected;
     private HistoryRow? historical;
+    private Guid? displayedProgram;
+    private bool displayedHistorical;
     private string? dismissedStorageError;
     private bool storageBannerShown;
     private LogView? logView;
@@ -341,14 +343,26 @@ public partial class MainWindow : Window
         var run = historical?.Run ?? (snapshot?.Runtime.RunId is Guid runId ? loadedRuns.FirstOrDefault(r => r.Id == runId) : loadedRuns.FirstOrDefault(r => r.ProgramId == snapshot?.Config.Id));
         RunDescription.Text = run is null ? Text.Get(snapshot?.Runtime.Active == true ? "PreparingOutput" : "NoOutput")
             : Text.Format("RunDescription", run.Started.ToLocalTime().ToString("MM-dd HH:mm:ss", CultureInfo.CurrentUICulture), run.ConfigVersion, historical?.DisplayCode ?? (run.Ended is null ? Text.Get("RunInProgress") : new HistoryRow(run, "").DisplayOutcome));
+        // A service that restarts keeps its earlier output on screen (usually the crash that caused the restart).
+        bool sameServiceLive = logView is not null && historical is null && !displayedHistorical && snapshot is not null
+            && snapshot.Config.Kind == ProgramKind.Service && displayedProgram == snapshot.Config.Id;
         if (run?.Id != displayedRun)
         {
-            ClearLog(); displayedRun = run?.Id;
-            if (run?.LogDirectory is string directory)
+            var encoding = (historical is null ? snapshot?.RunConfig : null)?.Launch.EncodingCodePage ?? snapshot?.Config.Launch.EncodingCodePage ?? 65001;
+            if (run is null && sameServiceLive) { /* the new run's record is not loaded yet; keep showing the previous output */ }
+            else if (run?.LogDirectory is string nextDirectory && sameServiceLive)
             {
-                var encoding = (historical is null ? snapshot?.RunConfig : null)?.Launch.EncodingCodePage ?? snapshot?.Config.Launch.EncodingCodePage ?? 65001;
-                logView = new(directory, encoding) { OpenSeparate = () => OpenLogWindow(run, encoding) };
-                LogHost.Content = logView;
+                logView!.SwitchRun(nextDirectory, encoding, Text.Format("RunSeparator", run.Started.ToLocalTime().ToString("MM-dd HH:mm:ss", CultureInfo.CurrentUICulture), run.ConfigVersion));
+                displayedRun = run.Id;
+            }
+            else
+            {
+                ClearLog(); displayedRun = run?.Id; displayedProgram = snapshot?.Config.Id; displayedHistorical = historical is not null;
+                if (run?.LogDirectory is string directory)
+                {
+                    logView = new(directory, encoding) { OpenSeparate = () => OpenLogWindow(run, encoding) };
+                    LogHost.Content = logView;
+                }
             }
         }
         if (logView is null) LogHost.Content = new TextBlock { Text = Text.Get("NoOutput"), Style = (Style)FindResource("Caption"), Margin = new(0, 16, 0, 0) };
@@ -369,7 +383,7 @@ public partial class MainWindow : Window
             + "\n\n" + Text.Get("StopMode") + "\n" + Text.Option(launch.StopMode)
             + (config.Notes.Length == 0 ? "" : "\n\n" + Text.Get("Notes") + "\n" + config.Notes);
     }
-    private void ClearLog() { logView?.Dispose(); logView = null; LogHost.Content = null; displayedRun = null; }
+    private void ClearLog() { logView?.Dispose(); logView = null; LogHost.Content = null; displayedRun = null; displayedProgram = null; displayedHistorical = false; }
     private void Sample()
     {
         if (!IsVisible || page != "programs" || historical is not null || selected is null) return;

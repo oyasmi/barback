@@ -736,6 +736,27 @@ Active processes will stop. Configuration, execution history, and application-ow
   <data name="RemoveVariable" xml:space="preserve">
     <value>Remove inherited value</value>
   </data>
+  <data name="CopySelectedLines" xml:space="preserve">
+    <value>Copy selected lines</value>
+  </data>
+  <data name="CopyLoadedOutput" xml:space="preserve">
+    <value>Copy all loaded output</value>
+  </data>
+  <data name="NoMatch" xml:space="preserve">
+    <value>No match in loaded output</value>
+  </data>
+  <data name="SkippedOutput" xml:space="preserve">
+    <value>[skipped {0} MiB of earlier output; use full-text search or export]</value>
+  </data>
+  <data name="RunSeparator" xml:space="preserve">
+    <value>New run · {0} · v{1}</value>
+  </data>
+  <data name="ExportCurrentSegment" xml:space="preserve">
+    <value>Export current log segment</value>
+  </data>
+  <data name="ExportAllSegments" xml:space="preserve">
+    <value>Export all log segments</value>
+  </data>
   <data name="RemoveRow" xml:space="preserve">
     <value>Delete row</value>
   </data>

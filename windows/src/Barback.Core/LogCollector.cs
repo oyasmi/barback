@@ -140,6 +140,6 @@ public sealed class IncrementalLogDecoder
     public string Decode(ReadOnlySpan<byte> bytes, bool flush = false)
     {
         var chars = new char[bytes.Length * 2 + 8]; decoder.Convert(bytes, chars, flush, out _, out var used, out _);
-        return new string(chars, 0, used).Replace("\u001b", "␛");
+        return new string(chars, 0, used);
     }
 }
