@@ -353,7 +353,7 @@ public partial class MainWindow : Window
             else if (run?.LogDirectory is string nextDirectory && sameServiceLive)
             {
                 logView!.SwitchRun(nextDirectory, encoding, Text.Format("RunSeparator", run.Started.ToLocalTime().ToString("MM-dd HH:mm:ss", CultureInfo.CurrentUICulture), run.ConfigVersion));
-                displayedRun = run.Id;
+                logView.OpenSeparate = () => OpenLogWindow(run, encoding); displayedRun = run.Id;
             }
             else
             {

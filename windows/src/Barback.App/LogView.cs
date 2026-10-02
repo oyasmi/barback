@@ -71,10 +71,10 @@ public sealed class LogView : UserControl, IDisposable
     private bool loading, closed;
     private long appliedAdded, appliedRemoved;
     private LogLineItem? partialItem;
-    private ScrollViewer? scroller;
+    private bool adjusting;
     private (string Directory, int Encoding, string Label)? pendingSwitch;
     private CancellationTokenSource? searching;
-    public Action? OpenSeparate { get; init; }
+    public Action? OpenSeparate { get; set; }
     public LogView(string directory, int encoding)
     {
         this.directory = directory; this.encoding = encoding; decoder = new(encoding);
@@ -94,7 +94,7 @@ public sealed class LogView : UserControl, IDisposable
         DockPanel.SetDock(status, Dock.Bottom); root.Children.Add(status); root.Children.Add(output);
         output.PreviewMouseWheel += (_, e) => { if (e.Delta > 0) follow.IsChecked = false; };
         output.PreviewKeyDown += OutputKeyDown;
-        output.AddHandler(ScrollViewer.ScrollChangedEvent, new ScrollChangedEventHandler((_, e) => { if (e.VerticalChange < 0 && e.ExtentHeightChange == 0) follow.IsChecked = false; }));
+        output.AddHandler(ScrollViewer.ScrollChangedEvent, new ScrollChangedEventHandler((_, e) => { if (!adjusting && e.VerticalChange < 0 && e.ExtentHeightChange == 0) follow.IsChecked = false; }));
         follow.Checked += (_, _) => ScrollToEnd();
         search.KeyDown += (_, e) => { if (e.Key == Key.Enter) { FindNext(); e.Handled = true; } };
         stream.SelectionChanged += async (_, _) => { ResetView(); await RefreshAsync(); };
@@ -138,7 +138,7 @@ public sealed class LogView : UserControl, IDisposable
     }
     private ScrollViewer? FindScroller()
     {
-        if (scroller is not null) return scroller;
+        // Not cached: a theme change re-applies the template and replaces the ScrollViewer.
         static ScrollViewer? Find(DependencyObject root)
         {
             for (int i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
@@ -149,7 +149,7 @@ public sealed class LogView : UserControl, IDisposable
             }
             return null;
         }
-        return scroller = Find(output);
+        return Find(output);
     }
     private void ScrollToEnd() { if (items.Count > 0) output.ScrollIntoView(items[^1]); }
     public void FocusSearch() => search.Focus();
@@ -198,6 +198,8 @@ public sealed class LogView : UserControl, IDisposable
         for (int i = 0; i < fresh; i++) added[i] = new(buffer.Lines[buffer.Count - fresh + i]);
         var newPartial = partialText is null ? null : new LogLineItem(partialText);
         double offset = FindScroller()?.VerticalOffset ?? 0;
+        // Our own list changes and scrolling must not be mistaken for the reader scrolling up and switching Follow off.
+        adjusting = true; Dispatcher.BeginInvoke(() => adjusting = false, DispatcherPriority.ContextIdle);
         items.Apply(remove, added, partialItem, newPartial);
         partialItem = newPartial; appliedAdded = buffer.TotalAdded; appliedRemoved = buffer.TotalRemoved;
         if (follow.IsChecked == true) ScrollToEnd();
