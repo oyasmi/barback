@@ -70,6 +70,8 @@ public sealed class Supervisor : IAsyncDisposable
     {
         if (IsStorageFailure(ex)) await Enqueue(() => { StorageError = ex.Message; return Task.CompletedTask; }).ConfigureAwait(false);
     }
+    /// <summary>History budget of a one-shot run; services are bounded by their rotation settings instead.</summary>
+    public const long OneshotOutputLimit = 50L * 1024 * 1024;
     private static string UnresolvedMessage(int pid) => $"Previous process (PID {pid}) may still be running; verify before retrying.";
     private void Publish()
     {
@@ -186,7 +188,7 @@ public sealed class Supervisor : IAsyncDisposable
             WriteLater(() => store.EndRunAsync(finished, outcome, reason, e.ExitCode));
             runs.Remove(id);
             cleaning.Remove(id);
-            WriteLater(() => store.MaintainAsync());
+            RequestMaintenance();
             await RecordAsync("RunEnded", id, finished, $"{outcome}; reason={reason}; code={(e.ExitCode is uint code ? $"0x{code:X8}" : "unknown")}", outcome is Phase.Failed or Phase.Timeout).ConfigureAwait(false);
         }
         if (states[id].Phase == Phase.Fatal) await RecordAsync("Fatal", id, before.RunId, states[id].Error ?? "Automatic retry stopped.", true).ConfigureAwait(false);
@@ -247,7 +249,7 @@ public sealed class Supervisor : IAsyncDisposable
             var dir = Path.Combine(logRoot, config.Kind == ProgramKind.Service ? "programs" : "runs", config.Kind == ProgramKind.Service ? id.ToString("N") : state.RunId!.Value.ToString("N"), state.RunId!.Value.ToString("N"));
             // Commit before invoking any native process creation.
             await ExecuteStorageAsync(async () => { await store.SaveRuntimeAsync(id, state).ConfigureAwait(false); await store.BeginRunAsync(new(state.RunId.Value, id, state.Generation, config.Version, clock.Now.Utc, LogDirectory: dir)).ConfigureAwait(false); }).ConfigureAwait(false);
-            native = await host.PrepareAsync(state.RunId.Value, config.Launch, dir, lost => Post(() => RecordAsync("LogIncomplete", id, state.RunId, $"Dropped bytes: {lost}", true)), lifetime.Token).ConfigureAwait(false);
+            native = await host.PrepareAsync(state.RunId.Value, config.Launch, dir, lost => Post(() => RecordAsync("LogIncomplete", id, state.RunId, $"Dropped bytes: {lost}", true)), config.Kind == ProgramKind.Oneshot ? OneshotOutputLimit : null, lifetime.Token).ConfigureAwait(false);
             var prepared = native;
             await ExecuteStorageAsync(() => store.IdentifyRunAsync(prepared.Id, prepared.Pid, prepared.CreationTime)).ConfigureAwait(false);
             await Enqueue(async () =>
@@ -341,6 +343,13 @@ public sealed class Supervisor : IAsyncDisposable
                 });
         }
         catch (OperationCanceledException) { }
+    }
+    private int maintenanceQueued;
+    /// <summary>Coalesced: any number of requests while one is pending result in a single maintenance pass.</summary>
+    public void RequestMaintenance()
+    {
+        if (Interlocked.Exchange(ref maintenanceQueued, 1) != 0) return;
+        WriteLater(async () => { try { await store.MaintainAsync().ConfigureAwait(false); } finally { Volatile.Write(ref maintenanceQueued, 0); } });
     }
     private void WriteLater(Func<Task> write) => storageQueue.Writer.TryWrite(write);
     private async Task ConsumeStorageAsync()

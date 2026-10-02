@@ -4,6 +4,8 @@ namespace Barback.Core;
 public sealed record FieldError(string Field, string Message, int? Line = null);
 public static class ConfigurationValidator
 {
+    public const long MinLogSegmentBytes = 64 * 1024, MaxLogSegmentBytes = 256L * 1024 * 1024, MaxLogBudgetBytes = 512L * 1024 * 1024;
+    public const int MaxLogSegments = 20;
     public static IReadOnlyList<FieldError> Validate(ProgramConfig c, bool forLaunch = true)
     {
         var errors = new List<FieldError>();
@@ -21,7 +23,10 @@ public static class ConfigurationValidator
         Check(double.IsFinite(p.BackoffBaseSeconds) && p.BackoffBaseSeconds > 0 && double.IsFinite(p.BackoffMaxSeconds) && p.BackoffMaxSeconds >= p.BackoffBaseSeconds, "Backoff", "Invalid backoff range.");
         Check(p.StormLimit > 0 && double.IsFinite(p.StormWindowSeconds) && p.StormWindowSeconds > 0, "Storm", "Invalid storm limits.");
         Check(p.ExpectedCodes.Length > 0 && p.HistoryLimit is >= 1 and <= 10000, "History", "Invalid exit codes or history limit.");
-        Check(l.LogSegmentBytes is >= 65536 and <= 1073741824 && l.LogSegments is >= 0 and <= 100, "Logs", "Invalid log budget.");
+        bool logRangeOk = l.LogSegmentBytes is >= MinLogSegmentBytes and <= MaxLogSegmentBytes && l.LogSegments is >= 0 and <= MaxLogSegments;
+        Check(logRangeOk, "Logs", "Invalid log budget.");
+        // Both streams may keep every segment; half of the 1 GiB global budget is the most one program may claim.
+        if (logRangeOk) Check(2 * l.LogSegmentBytes * (l.LogSegments + 1L) <= MaxLogBudgetBytes, "Logs", "Log budget too large: reduce the segment size or count.");
         Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
         try { _ = Encoding.GetEncoding(l.EncodingCodePage); } catch (ArgumentException) { errors.Add(new("Encoding", "Unsupported encoding.")); }
         var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);

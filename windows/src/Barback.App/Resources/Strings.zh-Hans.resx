@@ -231,7 +231,7 @@
     <value>日志编码代码页</value>
   </data>
   <data name="LogBytes" xml:space="preserve">
-    <value>日志分段大小（字节）</value>
+    <value>日志分段大小（MiB）</value>
   </data>
   <data name="LogSegments" xml:space="preserve">
     <value>保留轮转段数</value>

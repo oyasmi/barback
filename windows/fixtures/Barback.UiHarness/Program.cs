@@ -174,7 +174,7 @@ internal static class Program
     private sealed class Host : IProcessHost
     {
         public bool IsSameProcessAlive(int pid, long creationTime) => false;
-        public Task<IProcessRun> PrepareAsync(Guid id, LaunchSpec launch, string directory, Action<long> loss, CancellationToken token)
+        public Task<IProcessRun> PrepareAsync(Guid id, LaunchSpec launch, string directory, Action<long> loss, long? runOutputLimit, CancellationToken token)
         {
             if (launch.Arguments.Contains("--fixture-fail")) throw new IOException("无法连接到任务队列；请检查连接配置。");
             Directory.CreateDirectory(directory); File.WriteAllText(Path.Combine(directory, "stdout.log"), "09:41:02 INFO  Starting API server\n09:41:02 INFO  Database connection established\n09:41:03 INFO  LISTENING on http://localhost:8080\n09:41:06 INFO  GET /api/health  200  4ms\n");

@@ -231,6 +231,8 @@ public sealed class SqliteStore : IStore
             using var cmd = Command("DELETE FROM output_cleanup WHERE run_id=$id", ("$id", item.Run.ToString())); await cmd.ExecuteNonQueryAsync();
         }
     }
+    /// <summary>Clean completed output until usage falls to 90 % of the global budget; without a budget nothing is trimmed.</summary>
+    private bool OverQuotaTarget() => LogQuota is { } quota && quota.UsedBytes > (long)(quota.Limit * 0.9);
     public Task MaintainAsync() => Locked(async () =>
     {
         await RetryOutputCleanupAsync();
@@ -241,7 +243,7 @@ public sealed class SqliteStore : IStore
         using (var cmd = Command("SELECT id,program_id,log_directory FROM runs WHERE ended IS NOT NULL AND outcome<>12 ORDER BY started DESC")) using (var r = await cmd.ExecuteReaderAsync())
             while (await r.ReadAsync()) { var program = Guid.Parse(r.GetString(1)); counts[program] = counts.GetValueOrDefault(program) + 1; completed.Add((Guid.Parse(r.GetString(0)), program, r.IsDBNull(2) ? "" : r.GetString(2), counts[program] > limits.GetValueOrDefault(program, 50))); }
         // Delete only directories derivable from immutable ownership IDs; never user-provided external files.
-        foreach (var item in completed.Where(x => x.Prune).Concat(LogQuota?.UsedBytes > 900L * 1024 * 1024 ? completed.Where(x => !x.Prune).Reverse() : []))
+        foreach (var item in completed.Where(x => x.Prune).Concat(OverQuotaTarget() ? completed.Where(x => !x.Prune).Reverse() : []))
         {
             var expectedService = Path.Combine(Root, "logs", "programs", item.Program.ToString("N"), item.Id.ToString("N"));
             var expectedRun = Path.Combine(Root, "logs", "runs", item.Id.ToString("N"), item.Id.ToString("N"));
@@ -265,7 +267,7 @@ public sealed class SqliteStore : IStore
                 catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { continue; }
             }
             using var delete = Command(item.Prune ? "DELETE FROM runs WHERE id=$id AND ended IS NOT NULL" : "UPDATE runs SET log_directory=NULL WHERE id=$id AND ended IS NOT NULL", ("$id", item.Id.ToString())); await delete.ExecuteNonQueryAsync();
-            if (!item.Prune && LogQuota?.UsedBytes <= 900L * 1024 * 1024) break;
+            if (!item.Prune && !OverQuotaTarget()) break;
         }
     });
     public async ValueTask DisposeAsync() { await gate.WaitAsync(); try { await db.DisposeAsync(); } finally { gate.Release(); gate.Dispose(); } }

@@ -60,35 +60,49 @@ public sealed class LogCollector : IAsyncDisposable
     {
         if (!File.Exists(file)) return; long bytes = new FileInfo(file).Length; File.Delete(file); Release(bytes);
     }
-    private bool Reserve(long bytes)
+    private enum ReserveResult { Ok, RunLimit, GlobalLimit }
+    /// <summary>The global budget is only reported as pressured by the caller once it knows rotating its own segments cannot help.</summary>
+    private ReserveResult Reserve(long bytes)
     {
-        if (globalQuota?.TryReserve(bytes) == false) return false;
-        if (runQuota?.TryReserve(bytes) == false) { globalQuota?.Release(bytes); return false; }
-        return true;
+        if (globalQuota?.TryReserve(bytes, reportPressure: false) == false) return ReserveResult.GlobalLimit;
+        if (runQuota?.TryReserve(bytes, reportPressure: false) == false) { globalQuota?.Release(bytes); return ReserveResult.RunLimit; }
+        return ReserveResult.Ok;
     }
     private async Task WriteAsync()
     {
-        FileStream? output = null; var retry = DateTime.MinValue; long marked = 0;
+        FileStream? output = null; var retry = DateTime.MinValue; long marked = 0; bool runLimited = false;
         try
         {
             await foreach (var bytes in queue.Reader.ReadAllAsync())
             {
-                if (DateTime.UtcNow < retry) { Drop(bytes.Length); continue; }
+                if (runLimited || DateTime.UtcNow < retry) { Drop(bytes.Length); continue; }
                 bool reserved = false;
                 try
                 {
                     output ??= Open();
                     if (output.Length + bytes.Length > segmentBytes) { await output.DisposeAsync(); output = null; Rotate(); output = Open(); }
-                    if (!Reserve(bytes.Length))
+                    var reservation = Reserve(bytes.Length);
+                    if (reservation == ReserveResult.GlobalLimit)
                     {
-                        bool room = false;
-                        for (int segment = segments; segment >= 1 && !room; segment--)
+                        // Free this stream's own rotated segments first, oldest first.
+                        for (int segment = segments; segment >= 1 && reservation == ReserveResult.GlobalLimit; segment--)
                         {
                             var old = path + "." + segment;
                             if (!File.Exists(old)) continue;
-                            DeleteSegment(old); room = Reserve(bytes.Length);
+                            DeleteSegment(old); reservation = Reserve(bytes.Length);
                         }
-                        if (!room) { Drop(bytes.Length); continue; }
+                        if (reservation == ReserveResult.GlobalLimit)
+                        {
+                            // Nothing of ours left to free: ask for maintenance and drop this chunk; later chunks retry.
+                            globalQuota?.ReportPressure(); Drop(bytes.Length); continue;
+                        }
+                    }
+                    if (reservation == ReserveResult.RunLimit)
+                    {
+                        // One-shot history is truncated, not rotated: stop writing and leave a single marker.
+                        runLimited = true; Drop(bytes.Length);
+                        await File.AppendAllTextAsync(path + ".gaps", $"{DateTimeOffset.UtcNow:O} run-output-limit reached at {runQuota?.UsedBytes}\n");
+                        continue;
                     }
                     reserved = true;
                     if (DroppedBytes > marked)

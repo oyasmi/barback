@@ -22,6 +22,8 @@ public class SupervisorTests
         public Task EventAsync(EventRecord r) => Task.CompletedTask;
         public Task<bool> RecoverAsync() => Task.FromResult(Interrupted);
         public Task MarkCleanAsync() => Task.CompletedTask;
+        public int Maintained; public TaskCompletionSource? MaintainHold;
+        public async Task MaintainAsync() { Interlocked.Increment(ref Maintained); if (MaintainHold is not null) await MaintainHold.Task; }
         public ValueTask DisposeAsync() => ValueTask.CompletedTask;
     }
     private sealed class Run(Guid id) : IProcessRun
@@ -40,11 +42,11 @@ public class SupervisorTests
         private readonly System.Collections.Concurrent.ConcurrentQueue<Run> created = []; public Run[] Runs => created.ToArray();
         public TaskCompletionSource? Hold;
         public int CleanupFailures; public bool FailActivate;
-        public async Task<IProcessRun> PrepareAsync(Guid id, LaunchSpec launch, string path, Action<long> loss, CancellationToken token)
+        public async Task<IProcessRun> PrepareAsync(Guid id, LaunchSpec launch, string path, Action<long> loss, long? limit, CancellationToken token)
         {
-            Assert.Contains(store.Runs, r => r.Id == id); var run = new Run(id) { CleanupFailures = CleanupFailures, FailActivate = FailActivate }; created.Enqueue(run); if (Hold is not null) await Hold.Task.WaitAsync(token); return run;
+            LastRunOutputLimit = limit; Assert.Contains(store.Runs, r => r.Id == id); var run = new Run(id) { CleanupFailures = CleanupFailures, FailActivate = FailActivate }; created.Enqueue(run); if (Hold is not null) await Hold.Task.WaitAsync(token); return run;
         }
-        public bool Alive; public Exception? LaunchBlocked;
+        public long? LastRunOutputLimit; public bool Alive; public Exception? LaunchBlocked;
         public void EnsureCanLaunch() { if (LaunchBlocked is not null) throw LaunchBlocked; }
         public bool IsSameProcessAlive(int pid, long time) => Alive;
     }
@@ -427,6 +429,35 @@ public class SupervisorTests
             await using var supervisor = new Supervisor(store, host, new Clock(), root); await supervisor.InitializeAsync();
             await Assert.ThrowsAsync<ApplicationEnvironmentNeedsInputException>(() => supervisor.SendAsync(service.Id, Signal.Start));
             Assert.Empty(host.Runs); Assert.Empty(store.Runs); Assert.Null(supervisor.StorageError); Assert.Equal(Phase.Stopped, supervisor.Snapshot.Single().Runtime.Phase);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact] // F8
+    public async Task MaintenanceRequestsAreCoalescedUntilThePassFinishes()
+    {
+        var root = Temp(); try
+        {
+            var store = new Store { MaintainHold = new(TaskCreationOptions.RunContinuationsAsynchronously) };
+            await using var supervisor = new Supervisor(store, new Host(store), new Clock(), root); await supervisor.InitializeAsync();
+            for (int i = 0; i < 10; i++) supervisor.RequestMaintenance();
+            await Until(() => store.Maintained == 1); for (int i = 0; i < 10; i++) supervisor.RequestMaintenance();
+            store.MaintainHold.SetResult(); await Task.Delay(200); Assert.Equal(1, store.Maintained);
+            supervisor.RequestMaintenance(); await Until(() => store.Maintained == 2);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Theory] // F7
+    [InlineData(ProgramKind.Service, null)]
+    [InlineData(ProgramKind.Oneshot, 50L * 1024 * 1024)]
+    public async Task OnlyOneShotRunsGetAnOutputLimit(ProgramKind kind, long? expected)
+    {
+        var root = Temp(); try
+        {
+            var store = new Store(); var config = Config(root, kind); store.Configs.Add(config); var host = new Host(store);
+            await using var supervisor = new Supervisor(store, host, new Clock(), root); await supervisor.InitializeAsync(); await supervisor.SendAsync(config.Id, Signal.Start);
+            await Until(() => host.Runs.Any(r => r.Activated)); Assert.Equal(expected, host.LastRunOutputLimit);
         }
         finally { Directory.Delete(root, true); }
     }

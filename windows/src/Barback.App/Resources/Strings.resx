@@ -231,7 +231,7 @@
     <value>Log encoding code page</value>
   </data>
   <data name="LogBytes" xml:space="preserve">
-    <value>Log segment size (bytes)</value>
+    <value>Log segment size (MiB)</value>
   </data>
   <data name="LogSegments" xml:space="preserve">
     <value>Retained rotated segments</value>

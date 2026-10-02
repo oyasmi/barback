@@ -97,7 +97,7 @@ public interface IProcessRun : IAsyncDisposable
 }
 public interface IProcessHost
 {
-    Task<IProcessRun> PrepareAsync(Guid runId, LaunchSpec launch, string logDirectory, Action<long> logLoss, CancellationToken cancellationToken);
+    Task<IProcessRun> PrepareAsync(Guid runId, LaunchSpec launch, string logDirectory, Action<long> logLoss, long? runOutputLimit, CancellationToken cancellationToken);
     bool IsSameProcessAlive(int pid, long creationTime);
     /// <summary>Throws when launches cannot succeed for a reason the user can fix, so a manual start fails fast with a typed error.</summary>
     void EnsureCanLaunch() { }

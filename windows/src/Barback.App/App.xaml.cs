@@ -58,6 +58,7 @@ public partial class App : Application
             host.SetApplicationEnvironment(await ApplicationEnvironment.LoadAsync(store, new DpapiProtector()));
             supervisor = new(store, host, new WindowsClock(), Path.Combine(shell.Root, "logs"));
             supervisor.Attention += shell.Notify;
+            quota.Pressure += supervisor.RequestMaintenance;
             var main = new MainWindow(supervisor, store, shell, host); MainWindow = main;
             tray = new TrayAdapter(main, supervisor, () => ExitAsync());
             await supervisor.InitializeAsync();

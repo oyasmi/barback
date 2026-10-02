@@ -35,10 +35,10 @@ public sealed class WindowsProcessHost(string consoleHostPath, LogQuota? globalQ
     {
         if (applicationEnvironment.Any(e => e.NeedsInput)) throw new ApplicationEnvironmentNeedsInputException();
     }
-    public async Task<IProcessRun> PrepareAsync(Guid runId, LaunchSpec launch, string logDirectory, Action<long> logLoss, CancellationToken token)
+    public async Task<IProcessRun> PrepareAsync(Guid runId, LaunchSpec launch, string logDirectory, Action<long> logLoss, long? runOutputLimit, CancellationToken token)
     {
         EnsureCanLaunch();
-        var runQuota = new LogQuota(50L * 1024 * 1024);
+        LogQuota? runQuota = runOutputLimit is long limit ? new LogQuota(limit) : null;
         var job = Native.NewJob(); var collectors = new List<LogCollector>(); KernelHandle? process = null, thread = null, target = null; NamedPipeServerStream? pipe = null;
         (FileStream? Read, Microsoft.Win32.SafeHandles.SafeFileHandle? Write) stdout = default, stderr = default;
         Microsoft.Win32.SafeHandles.SafeFileHandle? input = null;

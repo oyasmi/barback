@@ -62,7 +62,7 @@ public sealed class EditorView : UserControl, IDisposable
         else Add("Timeout", config.Policy.TimeoutSeconds.ToString());
         Add("ExpectedCodes", string.Join(',', config.Policy.ExpectedCodes)); Add("HistoryLimit", config.Policy.HistoryLimit.ToString());
         section = NewSection("StopSettings", Text.Option(config.Launch.StopMode)); Choose("StopMode", config.Launch.StopMode); Add("StopWait", config.Launch.StopWaitSeconds.ToString());
-        section = NewSection("LogSettings", Text.Format("LogSummary", config.Launch.EncodingCodePage, config.Launch.LogSegmentBytes / 1048576d, config.Launch.LogSegments)); Add("Encoding", config.Launch.EncodingCodePage.ToString()); Add("LogBytes", config.Launch.LogSegmentBytes.ToString()); Add("LogSegments", config.Launch.LogSegments.ToString());
+        section = NewSection("LogSettings", Text.Format("LogSummary", config.Launch.EncodingCodePage, config.Launch.LogSegmentBytes / 1048576d, config.Launch.LogSegments)); Add("Encoding", config.Launch.EncodingCodePage.ToString()); Add("LogBytes", (config.Launch.LogSegmentBytes / 1048576d).ToString()); Add("LogSegments", config.Launch.LogSegments.ToString());
         section = NewSection("Notes", config.Notes.Length == 0 ? Text.Get("Optional") : config.Notes); Add("Notes", config.Notes, true);
         if (config.Launch.Environment.Any(e => e.NeedsInput)) feedback.Text = Text.Get("SecretsNeedInput");
         options["Mode"].SelectionChanged += (_, _) => UpdateMode(); rawMode.Click += (_, _) => UpdateMode();
@@ -152,7 +152,7 @@ public sealed class EditorView : UserControl, IDisposable
         return saved with
         {
             Name = Get("Name"), Priority = Integer("Priority"), Group = Get("Group"), Notes = Get("Notes"), Enabled = enabled.IsChecked == true,
-            Launch = saved.Launch with { Mode = mode, Executable = Get("Executable"), Arguments = mode is ExecutionMode.PowerShellText or ExecutionMode.Cmd || mode == ExecutionMode.Direct && rawMode.IsChecked == true ? [] : Get("Arguments").Length == 0 ? [] : Get("Arguments").Replace("\r\n", "\n").Split('\n'), RawArguments = mode == ExecutionMode.Direct && rawMode.IsChecked == true ? Get("Raw") : null, ScriptPath = Get("ScriptPath"), ScriptText = Get("ScriptText"), WorkingDirectory = Get("WorkingDirectory"), Environment = all, StopMode = (StopMode)options["StopMode"].SelectedValue, StopWaitSeconds = Number("StopWait"), EncodingCodePage = Integer("Encoding"), LogSegmentBytes = checked((long)Number("LogBytes")), LogSegments = Integer("LogSegments") },
+            Launch = saved.Launch with { Mode = mode, Executable = Get("Executable"), Arguments = mode is ExecutionMode.PowerShellText or ExecutionMode.Cmd || mode == ExecutionMode.Direct && rawMode.IsChecked == true ? [] : Get("Arguments").Length == 0 ? [] : Get("Arguments").Replace("\r\n", "\n").Split('\n'), RawArguments = mode == ExecutionMode.Direct && rawMode.IsChecked == true ? Get("Raw") : null, ScriptPath = Get("ScriptPath"), ScriptText = Get("ScriptText"), WorkingDirectory = Get("WorkingDirectory"), Environment = all, StopMode = (StopMode)options["StopMode"].SelectedValue, StopWaitSeconds = Number("StopWait"), EncodingCodePage = Integer("Encoding"), LogSegmentBytes = checked((long)Math.Round(Number("LogBytes") * 1048576)), LogSegments = Integer("LogSegments") },
             Policy = policy
         };
     }
