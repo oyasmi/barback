@@ -32,7 +32,7 @@ public static class ConfigurationValidator
         var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var e in l.Environment)
         {
-            Check(e.Key.Length > 0 && !e.Key.Contains('=') && !e.Key.Contains('\0'), "Environment", "Invalid variable name.");
+            Check(e.Key.Length > 0 && !e.Key.Contains('=') && !e.Key.Contains('\0') && e.Key == e.Key.Trim(), "Environment", "Invalid variable name.");
             Check(keys.Add(e.Key), "Environment", "Duplicate variable name (case insensitive).");
             Check(!(forLaunch || c.Enabled) || !e.NeedsInput, "Environment", "Sensitive value requires re-entry for this Windows account.");
             Check(e.Value?.Contains('\0') != true, "Environment", "NUL is not allowed.");
@@ -65,6 +65,7 @@ public static class EnvironmentDraft
             var key = remove ? line[1..] : eq > 0 ? line[(secret ? 1 : 0)..eq] : "";
             if (key.Length == 0 || key.Contains('\0') || key.Contains('=') || !keys.Add(key))
             { errors.Add(new("Environment", "Invalid or duplicate variable name.", i + 1)); continue; }
+            if (key != key.Trim()) { errors.Add(new("Environment", "Variable name must not start or end with whitespace.", i + 1)); continue; }
             var value = remove ? null : line[(eq + 1)..];
             if (value?.Contains('\0') == true) { errors.Add(new("Environment", "NUL is not allowed.", i + 1)); continue; }
             entries.Add(new(key, value, secret, remove));

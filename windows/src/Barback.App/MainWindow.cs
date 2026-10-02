@@ -612,7 +612,15 @@ public partial class MainWindow : Window
         foreach (var action in startupActions.Children.OfType<Button>().Take(2)) action.IsEnabled = shell.Packaged;
         Heading("EnvironmentTitle"); Hint("EnvironmentHint");
         panel.Children.Add(Button("EditEnvironment", () => { new EnvironmentWindow(store, host) { Owner = this }.ShowDialog(); return Task.CompletedTask; }));
-        panel.Children.Add(Button("RefreshEnvironment", () => { host.RefreshEnvironment(); return Task.CompletedTask; }));
+        var refreshed = new TextBlock { Style = (Style)FindResource("Caption"), TextWrapping = TextWrapping.Wrap, Margin = new(0, 6, 0, 0) };
+        panel.Children.Add(Button("RefreshEnvironment", () =>
+        {
+            host.RefreshEnvironment();
+            // Running programs keep the environment they started with; say so instead of changing silently.
+            refreshed.Text = Text.Format("EnvironmentRefreshed", supervisor.Snapshot.Count(s => s.Runtime.Active));
+            return Task.CompletedTask;
+        }));
+        panel.Children.Add(refreshed);
         Heading("DataSettings"); panel.Children.Add(new TextBlock { Text = store.Root, Style = (Style)FindResource("Caption"), Margin = new(0, 0, 0, 8) });
         var dataActions = new WrapPanel(); panel.Children.Add(dataActions);
         dataActions.Children.Add(Button("OpenData", () => { ShellIntegration.Open(store.Root); return Task.CompletedTask; }));

@@ -52,4 +52,26 @@ public class InputTests
             foreach (var b in bytes) result += decoder.Decode([b]); Assert.Equal("中文abc", result);
         }
     }
+    [Fact] // S9
+    public void ImporterMapsLogRotationStopWaitAndToleratesCaseWhitespaceAndInlineComments()
+    {
+        var preview = SupervisorImporter.Preview("[ program: web ]  \ncommand=x.exe ; the real command\nautorestart=TRUE\nstdout_logfile_maxbytes = 5MB ; rotate\nstdout_logfile_backups=2\nstopwaitsecs=30\n[program:big]\ncommand=y\nstdout_logfile_maxbytes=1GB\nstdout_logfile_backups=10\nautorestart=maybe\nstopwaitsecs=900\n[program:unlimited]\ncommand=z\nstdout_logfile_maxbytes=0\n");
+        var web = preview[0]; Assert.Equal("web", web.Config.Name); Assert.Equal("x.exe", web.OriginalCommand);
+        Assert.Equal(RestartPolicy.Always, web.Config.Policy.Restart); Assert.Equal(5L * 1024 * 1024, web.Config.Launch.LogSegmentBytes); Assert.Equal(2, web.Config.Launch.LogSegments); Assert.Equal(30, web.Config.Launch.StopWaitSeconds);
+        Assert.Contains(web.Issues, i => i.Field == "stdout_logfile_maxbytes" && i.Status == "Mapped"); Assert.DoesNotContain(web.Issues, i => i.Field.StartsWith("stdout_logfile") && i.Status == "NeedsRepair");
+        var big = preview[1]; var defaults = new LaunchSpec();
+        Assert.Equal(defaults.LogSegmentBytes, big.Config.Launch.LogSegmentBytes); Assert.Equal(defaults.StopWaitSeconds, big.Config.Launch.StopWaitSeconds); Assert.Equal(RestartPolicy.Unexpected, big.Config.Policy.Restart);
+        Assert.Contains(big.Issues, i => i.Field == "stdout_logfile_maxbytes" && i.Status == "NeedsRepair"); Assert.Contains(big.Issues, i => i.Field == "stopwaitsecs" && i.Status == "NeedsRepair"); Assert.Contains(big.Issues, i => i.Field == "autorestart" && i.Status == "NeedsRepair");
+        Assert.Contains(preview[2].Issues, i => i.Field == "stdout_logfile_maxbytes" && i.Status == "NeedsRepair");
+        Assert.All(preview, d => Assert.DoesNotContain(ConfigurationValidator.Validate(d.Config, false), e => e.Field == "Logs"));
+    }
+    [Theory] // S10
+    [InlineData(" FOO=1")]
+    [InlineData("FOO =1")]
+    [InlineData("-FOO ")]
+    public void EnvironmentNamesWithSurroundingWhitespaceAreRejected(string line)
+    {
+        var parsed = EnvironmentDraft.Parse(line); Assert.Single(parsed.Errors); Assert.Contains("whitespace", parsed.Errors[0].Message); Assert.Empty(parsed.Entries);
+        Assert.Contains(ConfigurationValidator.Validate(new() { Name = "x", Enabled = false, Launch = new() { Environment = [new(line.Trim() + " ", "1")] } }, false), e => e.Field == "Environment");
+    }
 }

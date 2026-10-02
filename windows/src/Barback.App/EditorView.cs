@@ -72,7 +72,7 @@ public sealed class EditorView : UserControl, IDisposable
         foreach (var combo in options.Values) combo.SelectionChanged += (_, _) => UpdateDirty();
         UpdateMode(); baseline = DraftFingerprint(); initialized = true; UpdateDirty();
         supervisor.Changed += SupervisorChanged;
-        PreviewKeyDown += async (_, e) => { if (e.Key == Key.S && Keyboard.Modifiers == ModifierKeys.Control) { e.Handled = true; await SaveAsync(null); } };
+        PreviewKeyDown += async (_, e) => { if (e.Key == Key.S && Keyboard.Modifiers == ModifierKeys.Control) { e.Handled = true; if (saveButton.IsEnabled) await SaveAsync(null); } };
         Loaded += (_, _) => { fields["Name"].Focus(); };
     }
 

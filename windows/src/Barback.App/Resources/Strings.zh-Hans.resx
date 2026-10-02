@@ -814,6 +814,9 @@ CPU {1} · 内存 {2} MiB</value>
   <data name="RecoveryConfirm" xml:space="preserve">
     <value>将配置以禁用状态恢复到新数据库，原数据库和 WAL 文件保持不动。</value>
   </data>
+  <data name="EnvironmentRefreshed" xml:space="preserve">
+    <value>已刷新，只影响新启动；当前运行中的 {0} 个程序需重启后才会生效。</value>
+  </data>
   <data name="RemoveRow" xml:space="preserve">
     <value>删除此行</value>
   </data>
