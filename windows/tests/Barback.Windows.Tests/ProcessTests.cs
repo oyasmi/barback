@@ -114,4 +114,31 @@ public sealed class ProcessTests
         Assert.False(host.IsSameProcessAlive(self.Id, creation + 10_000_000));
         Assert.False(host.IsSameProcessAlive(self.Id, 1), "Creation time before this boot cannot match.");
     }
+    [WindowsFact] // F10
+    public async Task TargetEnvironmentDoesNotLeakIntoConsoleHost()
+    {
+        var root = Temp();
+        try
+        {
+            // A 2 MiB GC heap limit would stop a .NET host from starting; cmd itself is unaffected, so the value can only arrive via the Launch message.
+            var spec = new LaunchSpec { Mode = ExecutionMode.Cmd, ScriptText = "echo %DOTNET_GCHeapHardLimit%", WorkingDirectory = root, StopMode = StopMode.ConsoleBreakThenTerminate, Environment = [new("DOTNET_GCHeapHardLimit", "0x200000")] };
+            await using (var run = await new WindowsProcessHost(ConsoleHost).PrepareAsync(Guid.NewGuid(), spec, root, _ => { }, null, CancellationToken.None)) { await run.ActivateAsync(CancellationToken.None); Assert.Equal(0u, await run.Exit.WaitAsync(TimeSpan.FromSeconds(15))); Assert.True(await run.CleanAsync(CancellationToken.None)); }
+            Assert.Contains("0x200000", await File.ReadAllTextAsync(Path.Combine(root, "stdout.log")));
+        }
+        finally { Directory.Delete(root, true); }
+    }
+    [WindowsFact] // F11
+    public async Task SlowResumeAfterReadyDoesNotExpireTheHostHandshake()
+    {
+        var root = Temp();
+        try
+        {
+            await using (var run = await new WindowsProcessHost(ConsoleHost).PrepareAsync(Guid.NewGuid(), Spec(["--mode", "exit", "--code", "7"], StopMode.ConsoleBreakThenTerminate), root, _ => { }, null, CancellationToken.None))
+            {
+                await Task.Delay(TimeSpan.FromSeconds(15)); // longer than the 10 s connect/launch deadline
+                await run.ActivateAsync(CancellationToken.None); Assert.Equal(7u, await run.Exit.WaitAsync(TimeSpan.FromSeconds(15))); Assert.True(await run.CleanAsync(CancellationToken.None));
+            }
+        }
+        finally { Directory.Delete(root, true); }
+    }
 }

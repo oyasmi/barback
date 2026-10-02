@@ -17,7 +17,9 @@ try
     var target = Native.Create(exe, command, s.WorkingDirectory, launch.Environment, null, input, output, error, Native.NewGroup);
     using var process = target.Process; using var thread = target.Thread;
     await protocol.SendAsync(new("Ready", Pid: target.Pid, CreationTime: Native.CreationTime(process)), deadline.Token);
-    var resume = await protocol.ReadAsync(deadline.Token); if (resume.Type != "Resume") return 5;
+    // Waiting for Resume has no deadline: the app may be busy persisting identity. It closes the pipe (EOF) to abandon the run,
+    // and a crashed app takes the whole Job, host included, with it.
+    var resume = await protocol.ReadAsync(CancellationToken.None); if (resume.Type != "Resume") return 5;
     if (Native.ResumeThread(thread) == uint.MaxValue) return 6;
     using var reading = new CancellationTokenSource();
     var exited = Native.WaitExitAsync(process);

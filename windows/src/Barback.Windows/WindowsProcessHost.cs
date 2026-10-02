@@ -31,6 +31,13 @@ public sealed class WindowsProcessHost(string consoleHostPath, LogQuota? globalQ
         if (wait != 258) return true;
         try { return Native.CreationTime(p) == creationTime; } catch (Win32Exception) { return true; }
     }
+    private static Dictionary<string, string> HostEnvironment()
+    {
+        var environment = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (System.Collections.DictionaryEntry entry in Environment.GetEnvironmentVariables()) environment[(string)entry.Key] = (string?)entry.Value ?? "";
+        environment.Remove("DOTNET_STARTUP_HOOKS"); // never inject code into the supervision host
+        return environment;
+    }
     public void EnsureCanLaunch()
     {
         if (applicationEnvironment.Any(e => e.NeedsInput)) throw new ApplicationEnvironmentNeedsInputException();
@@ -60,7 +67,9 @@ public sealed class WindowsProcessHost(string consoleHostPath, LogQuota? globalQ
             var pipeName = "barback-run-" + Guid.NewGuid().ToString("N");
             pipe = Native.LocalPipe(pipeName, PipeDirection.InOut);
             var hostCommand = WindowsCommandLine.Quote(consoleHostPath) + " " + pipeName + " " + Environment.ProcessId;
-            var host = Native.Create(consoleHostPath, hostCommand, launch.WorkingDirectory, env, job, input.DangerousGetHandle(), outputWrite.DangerousGetHandle(), errorWrite.DangerousGetHandle(), Native.NewConsole);
+            // The host is a .NET process: it runs in Barback's own environment so DOTNET_* variables meant for the target cannot break it.
+            // The target's merged environment travels in the Launch message instead.
+            var host = Native.Create(consoleHostPath, hostCommand, launch.WorkingDirectory, HostEnvironment(), job, input.DangerousGetHandle(), outputWrite.DangerousGetHandle(), errorWrite.DangerousGetHandle(), Native.NewConsole);
             process = host.Process; thread = host.Thread;
             if (Native.ResumeThread(thread) == uint.MaxValue) throw new Win32Exception(); thread.Dispose(); thread = null;
             using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token); deadline.CancelAfter(TimeSpan.FromSeconds(10));
