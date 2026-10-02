@@ -137,6 +137,15 @@ public sealed class Supervisor : IAsyncDisposable
     {
         var safe = drafts.Select(c => c with { Id = Guid.NewGuid(), Version = 0, Enabled = false, Policy = c.Policy with { Autostart = false } }).ToArray();
         foreach (var c in safe) { var errors = ConfigurationValidator.Validate(c, false); if (errors.Count > 0) throw new ArgumentException(string.Join("\n", errors.Select(e => e.Message))); }
+        // Fail with the full list of colliding names before anything is written; the store's unique index stays the last line of defence.
+        string[] collisions = [];
+        await Enqueue(() =>
+        {
+            var used = configs.Values.Select(c => c.NameKey).ToHashSet(); var names = new List<string>();
+            foreach (var c in safe) if (!used.Add(c.NameKey)) names.Add(c.Name);
+            collisions = names.ToArray(); return Task.CompletedTask;
+        }).ConfigureAwait(false);
+        if (collisions.Length > 0) throw new DuplicateProgramNameException(collisions);
         IReadOnlyList<ProgramConfig> saved;
         try { saved = await Task.Run(() => store.ImportAsync(safe)).ConfigureAwait(false); }
         catch (Exception ex) { await ReportStorageFailureAsync(ex).ConfigureAwait(false); throw; }
@@ -144,11 +153,14 @@ public sealed class Supervisor : IAsyncDisposable
     }
     public async Task DeleteAsync(Guid id)
     {
+        bool exists = false;
         await Enqueue(() =>
         {
-            if (states[id].Active || states[id].Phase == Phase.Backoff) throw new InvalidOperationException("Stop and confirm cleanup before deleting.");
-            deleting.Add(id); return Task.CompletedTask;
+            if (!states.TryGetValue(id, out var state)) return Task.CompletedTask; // already gone (deleted elsewhere): nothing to do
+            if (state.Active || state.Phase == Phase.Backoff) throw new InvalidOperationException("Stop and confirm cleanup before deleting.");
+            deleting.Add(id); exists = true; return Task.CompletedTask;
         }).ConfigureAwait(false);
+        if (!exists) return;
         try { await FlushWritesAsync().ConfigureAwait(false); await Task.Run(() => store.DeleteAsync(id)).ConfigureAwait(false); await Enqueue(() => { configs.Remove(id); states.Remove(id); runConfigs.Remove(id); return Task.CompletedTask; }).ConfigureAwait(false); }
         catch (Exception ex) { await ReportStorageFailureAsync(ex).ConfigureAwait(false); throw; }
         finally { await Enqueue(() => { deleting.Remove(id); return Task.CompletedTask; }).ConfigureAwait(false); }

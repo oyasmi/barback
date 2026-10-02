@@ -60,7 +60,7 @@ public sealed class EnvironmentWindow : Window
         if (busy || !loaded) return; busy = true;
         try
         {
-            var parsed = EnvironmentDraft.Parse(draft.Text); if (parsed.Errors.Length > 0) throw new ArgumentException(string.Join("\n", parsed.Errors.Select(e => $"Line {e.Line}: {e.Message}")));
+            var parsed = EnvironmentDraft.Parse(draft.Text); if (parsed.Errors.Length > 0) throw new ArgumentException(string.Join("\n", parsed.Errors.Select(e => Text.Format("EnvironmentError", e.Line ?? 0, e.Message))));
             var secrets = secretRows.Where(r => r.Key.Text.Length > 0)
                 .Select(r => new EnvironmentEntry(r.Key.Text, r.Value.Password, true, r.Remove.IsChecked == true, unresolvedSecrets.Contains(r.Value) && r.Remove.IsChecked != true));
             var entries = parsed.Entries.Concat(secrets).ToArray();

@@ -163,7 +163,9 @@ public sealed class SqliteStore : IStore
     });
     public Task EventAsync(EventRecord e) => Locked(async () =>
     {
-        using var cmd = Command("INSERT INTO events(at,type,program_id,run_id,detail) VALUES($at,$type,$p,$r,$d); DELETE FROM events WHERE at<$cut OR id NOT IN (SELECT id FROM events ORDER BY id DESC LIMIT 50000)", ("$at", e.At.ToString("O")), ("$type", e.Type), ("$p", e.ProgramId?.ToString()), ("$r", e.RunId?.ToString()), ("$d", e.Detail), ("$cut", DateTimeOffset.UtcNow.AddDays(-30).ToString("O"))); await cmd.ExecuteNonQueryAsync();
+        using var cmd = Command("INSERT INTO events(at,type,program_id,run_id,detail) VALUES($at,$type,$p,$r,$d)", ("$at", e.At.ToString("O")), ("$type", e.Type), ("$p", e.ProgramId?.ToString()), ("$r", e.RunId?.ToString()), ("$d", e.Detail));
+        await cmd.ExecuteNonQueryAsync();
+        if (++eventsSincePrune >= 500) await PruneEventsAsync();
     });
     public Task<IReadOnlyList<EventRecord>> EventsAsync() => Locked<IReadOnlyList<EventRecord>>(async () =>
     {
@@ -197,28 +199,47 @@ public sealed class SqliteStore : IStore
     public Task<string?> GetSettingAsync(string key) => Locked(async () => { using var cmd = Command("SELECT value FROM settings WHERE key=$key", ("$key", key)); return (string?)await cmd.ExecuteScalarAsync(); });
     public Task SetSettingAsync(string key, string value) => Locked(async () => { using var cmd = Command("INSERT INTO settings VALUES($key,$v) ON CONFLICT(key) DO UPDATE SET value=excluded.value", ("$key", key), ("$v", value)); await cmd.ExecuteNonQueryAsync(); });
 
-    private bool RemoveOwnedOutput(Guid program, Guid run, string directory)
+    private enum OutputRemoval { Removed, Skipped, Retry }
+    private static readonly System.Text.RegularExpressions.Regex OwnedOutputFile = new(@"^(stdout|stderr)\.log(?:\.[0-9]+|\.gaps)?$", System.Text.RegularExpressions.RegexOptions.Compiled);
+    private bool UnderReparsePoint(string path)
     {
-        var expectedService = Path.Combine(Root, "logs", "programs", program.ToString("N"), run.ToString("N"));
-        var expectedRun = Path.Combine(Root, "logs", "runs", run.ToString("N"), run.ToString("N"));
+        for (var parent = new DirectoryInfo(path); parent is not null && parent.FullName.StartsWith(Root, StringComparison.OrdinalIgnoreCase); parent = parent.Parent)
+            if (parent.Attributes.HasFlag(FileAttributes.ReparsePoint)) return true;
+        return false;
+    }
+    /// <summary>
+    /// Deletes the captured output of one run, only for directories derivable from immutable ownership ids (never user-provided paths),
+    /// and removes the per-program / per-run parent directory once it is empty.
+    /// <c>Skipped</c> = not ours or behind a reparse point (left untouched); <c>Retry</c> = locked or otherwise undeletable right now.
+    /// </summary>
+    private OutputRemoval RemoveOwnedOutput(Guid program, Guid run, string directory)
+    {
+        var serviceParent = Path.Combine(Root, "logs", "programs", program.ToString("N"));
+        var runParent = Path.Combine(Root, "logs", "runs", run.ToString("N"));
         var path = Path.GetFullPath(directory);
-        if (!path.Equals(expectedService, StringComparison.OrdinalIgnoreCase) && !path.Equals(expectedRun, StringComparison.OrdinalIgnoreCase)) return true; // External files remain untouched.
-        if (!Directory.Exists(path)) return true;
+        string parentPath;
+        if (path.Equals(Path.Combine(serviceParent, run.ToString("N")), StringComparison.OrdinalIgnoreCase)) parentPath = serviceParent;
+        else if (path.Equals(Path.Combine(runParent, run.ToString("N")), StringComparison.OrdinalIgnoreCase)) parentPath = runParent;
+        else return OutputRemoval.Skipped; // external files remain untouched
         try
         {
-            var parent = new DirectoryInfo(path);
-            while (parent is not null && parent.FullName.StartsWith(Root, StringComparison.OrdinalIgnoreCase)) { if (parent.Attributes.HasFlag(FileAttributes.ReparsePoint)) return true; parent = parent.Parent; }
-            long released = 0;
-            foreach (var file in Directory.GetFiles(path))
+            if (Directory.Exists(path))
             {
-                var name = Path.GetFileName(file); if (!System.Text.RegularExpressions.Regex.IsMatch(name, @"^(stdout|stderr)\.log(?:\.[0-9]+|\.gaps)?$")) continue;
-                var info = new FileInfo(file); if (info.Attributes.HasFlag(FileAttributes.ReparsePoint)) continue; var size = info.Length; File.Delete(file); if (!name.EndsWith(".gaps", StringComparison.Ordinal)) released += size;
+                if (UnderReparsePoint(path)) return OutputRemoval.Skipped;
+                foreach (var file in Directory.GetFiles(path))
+                {
+                    var name = Path.GetFileName(file); if (!OwnedOutputFile.IsMatch(name)) continue;
+                    var info = new FileInfo(file); if (info.Attributes.HasFlag(FileAttributes.ReparsePoint)) continue;
+                    var size = info.Length; File.Delete(file);
+                    if (!name.EndsWith(".gaps", StringComparison.Ordinal)) LogQuota?.Release(size); // sidecars are never counted
+                }
+                if (!Directory.EnumerateFileSystemEntries(path).Any()) Directory.Delete(path);
             }
-            LogQuota?.Release(released);
-            if (!Directory.EnumerateFileSystemEntries(path).Any()) { Directory.Delete(path); return true; }
+            // Empty owner directories are noise: drop the parent too, but only the exact one and never through a reparse point.
+            if (Directory.Exists(parentPath) && !UnderReparsePoint(parentPath) && !Directory.EnumerateFileSystemEntries(parentPath).Any()) Directory.Delete(parentPath);
+            return OutputRemoval.Removed;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
-        return false;
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return OutputRemoval.Retry; }
     }
     private async Task RetryOutputCleanupAsync()
     {
@@ -227,45 +248,34 @@ public sealed class SqliteStore : IStore
             while (await r.ReadAsync()) pending.Add((Guid.Parse(r.GetString(0)), Guid.Parse(r.GetString(1)), r.GetString(2)));
         foreach (var item in pending)
         {
-            if (!RemoveOwnedOutput(item.Program, item.Run, item.Path)) continue;
+            if (RemoveOwnedOutput(item.Program, item.Run, item.Path) == OutputRemoval.Retry) continue;
             using var cmd = Command("DELETE FROM output_cleanup WHERE run_id=$id", ("$id", item.Run.ToString())); await cmd.ExecuteNonQueryAsync();
         }
+    }
+    private int eventsSincePrune;
+    /// <summary>Keeps the newest 50,000 events and drops anything older than 30 days; runs from MaintainAsync and every 500 inserts.</summary>
+    private async Task PruneEventsAsync()
+    {
+        eventsSincePrune = 0;
+        using var cmd = Command("DELETE FROM events WHERE at<$cut OR id <= (SELECT id FROM events ORDER BY id DESC LIMIT 1 OFFSET 50000)", ("$cut", DateTimeOffset.UtcNow.AddDays(-30).ToString("O")));
+        await cmd.ExecuteNonQueryAsync();
     }
     /// <summary>Clean completed output until usage falls to 90 % of the global budget; without a budget nothing is trimmed.</summary>
     private bool OverQuotaTarget() => LogQuota is { } quota && quota.UsedBytes > (long)(quota.Limit * 0.9);
     public Task MaintainAsync() => Locked(async () =>
     {
         await RetryOutputCleanupAsync();
+        await PruneEventsAsync();
         var limits = new Dictionary<Guid, int>();
         using (var cmd = Command("SELECT id,json FROM programs")) using (var r = await cmd.ExecuteReaderAsync())
             while (await r.ReadAsync()) limits[Guid.Parse(r.GetString(0))] = JsonSerializer.Deserialize<ProgramConfig>(r.GetString(1))!.Policy.HistoryLimit;
         var completed = new List<(Guid Id, Guid Program, string Directory, bool Prune)>(); var counts = new Dictionary<Guid, int>();
-        using (var cmd = Command("SELECT id,program_id,log_directory FROM runs WHERE ended IS NOT NULL AND outcome<>12 ORDER BY started DESC")) using (var r = await cmd.ExecuteReaderAsync())
+        using (var cmd = Command("SELECT id,program_id,log_directory FROM runs WHERE ended IS NOT NULL ORDER BY started DESC")) using (var r = await cmd.ExecuteReaderAsync())
             while (await r.ReadAsync()) { var program = Guid.Parse(r.GetString(1)); counts[program] = counts.GetValueOrDefault(program) + 1; completed.Add((Guid.Parse(r.GetString(0)), program, r.IsDBNull(2) ? "" : r.GetString(2), counts[program] > limits.GetValueOrDefault(program, 50))); }
-        // Delete only directories derivable from immutable ownership IDs; never user-provided external files.
         foreach (var item in completed.Where(x => x.Prune).Concat(OverQuotaTarget() ? completed.Where(x => !x.Prune).Reverse() : []))
         {
-            var expectedService = Path.Combine(Root, "logs", "programs", item.Program.ToString("N"), item.Id.ToString("N"));
-            var expectedRun = Path.Combine(Root, "logs", "runs", item.Id.ToString("N"), item.Id.ToString("N"));
-            var path = Path.GetFullPath(item.Directory.Length == 0 ? Root : item.Directory);
-            if (item.Directory.Length > 0 && !path.Equals(expectedService, StringComparison.OrdinalIgnoreCase) && !path.Equals(expectedRun, StringComparison.OrdinalIgnoreCase)) continue;
-            if (item.Directory.Length > 0 && Directory.Exists(path))
-            {
-                var parent = new DirectoryInfo(path); bool linked = false;
-                while (parent is not null && parent.FullName.StartsWith(Root, StringComparison.OrdinalIgnoreCase)) { if (parent.Attributes.HasFlag(FileAttributes.ReparsePoint)) { linked = true; break; } parent = parent.Parent; }
-                if (linked) continue;
-                try
-                {
-                    long released = 0;
-                    foreach (var file in Directory.GetFiles(path))
-                    {
-                        var name = Path.GetFileName(file); if (!name.StartsWith("stdout.log", StringComparison.Ordinal) && !name.StartsWith("stderr.log", StringComparison.Ordinal)) continue;
-                        var info = new FileInfo(file); if (info.Attributes.HasFlag(FileAttributes.ReparsePoint)) continue; var size = info.Length; File.Delete(file); if (!name.EndsWith(".gaps", StringComparison.Ordinal)) released += size;
-                    }
-                    LogQuota?.Release(released); if (!Directory.EnumerateFileSystemEntries(path).Any()) Directory.Delete(path);
-                }
-                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { continue; }
-            }
+            // Runs without a recorded directory have no output to delete; their rows are still pruned by history limit.
+            if (item.Directory.Length > 0 && RemoveOwnedOutput(item.Program, item.Id, item.Directory) != OutputRemoval.Removed) continue;
             using var delete = Command(item.Prune ? "DELETE FROM runs WHERE id=$id AND ended IS NOT NULL" : "UPDATE runs SET log_directory=NULL WHERE id=$id AND ended IS NOT NULL", ("$id", item.Id.ToString())); await delete.ExecuteNonQueryAsync();
             if (!item.Prune && !OverQuotaTarget()) break;
         }

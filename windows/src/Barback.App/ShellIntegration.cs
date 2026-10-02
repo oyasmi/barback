@@ -59,7 +59,8 @@ public sealed class ShellIntegration : IDisposable
         }
         catch (Exception ex) { NotificationError = ex.Message; Log?.Error("notification", "Could not show a notification.", ex); }
     }
-    public async Task<string> StartupStateAsync() => !Packaged ? "MSIX required" : (await StartupTask.GetAsync("BarbackStartup")).State.ToString();
+    /// <summary>A resource-key suffix ("Startup" + value), never display text.</summary>
+    public async Task<string> StartupStateAsync() => !Packaged ? "Unavailable" : (await StartupTask.GetAsync("BarbackStartup")).State.ToString();
     public async Task SetStartupAsync(bool enable)
     {
         if (!Packaged) throw new InvalidOperationException("Login startup requires a signed MSIX installation.");

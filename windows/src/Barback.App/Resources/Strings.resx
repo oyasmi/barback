@@ -781,6 +781,39 @@ Active processes will stop. Configuration, execution history, and application-ow
   <data name="EventInternalError" xml:space="preserve">
     <value>Internal error</value>
   </data>
+  <data name="ImportColumn" xml:space="preserve">
+    <value>Import</value>
+  </data>
+  <data name="ImportRenameHint" xml:space="preserve">
+    <value>Rename colliding names in the preview, or uncheck those rows to skip them.</value>
+  </data>
+  <data name="ImportConflictExisting" xml:space="preserve">
+    <value>Name already exists</value>
+  </data>
+  <data name="ImportConflictBatch" xml:space="preserve">
+    <value>Duplicate name in this import</value>
+  </data>
+  <data name="ImportNameRequired" xml:space="preserve">
+    <value>Name is required</value>
+  </data>
+  <data name="ImportBlocked" xml:space="preserve">
+    <value>{0} row(s) have name problems. Fix or uncheck them to import.</value>
+  </data>
+  <data name="RestoredSuffix" xml:space="preserve">
+    <value> (restored)</value>
+  </data>
+  <data name="RestoredSuffixN" xml:space="preserve">
+    <value> (restored {0})</value>
+  </data>
+  <data name="RecoveryTitle" xml:space="preserve">
+    <value>Barback — Data recovery</value>
+  </data>
+  <data name="RecoveryStatus" xml:space="preserve">
+    <value>Unable to open the database. No programs were started.</value>
+  </data>
+  <data name="RecoveryConfirm" xml:space="preserve">
+    <value>Restore disabled configurations into a new database. The original database and WAL are preserved.</value>
+  </data>
   <data name="RemoveRow" xml:space="preserve">
     <value>Delete row</value>
   </data>

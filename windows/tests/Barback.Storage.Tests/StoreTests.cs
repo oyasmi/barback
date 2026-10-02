@@ -130,7 +130,7 @@ public sealed class StoreTests : IAsyncLifetime
             await store.BeginRunAsync(new(id, c.Id, i, 1, DateTimeOffset.UtcNow.AddSeconds(i), LogDirectory: dir)); await store.EndRunAsync(id, Phase.Succeeded, EndReason.Natural, 0);
         }
         var active = Guid.NewGuid(); var activeDir = Path.Combine(root, "logs", "runs", active.ToString("N"), active.ToString("N")); Directory.CreateDirectory(activeDir); await File.WriteAllTextAsync(Path.Combine(activeDir, "stdout.log"), "active"); await store.BeginRunAsync(new(active, c.Id, 6, 1, DateTimeOffset.UtcNow.AddSeconds(6), LogDirectory: activeDir));
-        await store.MaintainAsync(); Assert.Equal(3, (await store.RunsAsync()).Count); Assert.True(File.Exists(Path.Combine(activeDir, "stdout.log"))); Assert.False(Directory.Exists(paths[0])); Assert.True(Directory.Exists(paths[4]));
+        await store.MaintainAsync(); Assert.Equal(3, (await store.RunsAsync()).Count); Assert.True(File.Exists(Path.Combine(activeDir, "stdout.log"))); Assert.False(Directory.Exists(paths[0])); Assert.False(Directory.Exists(Path.GetDirectoryName(paths[0])), "empty owner parent is removed with the run output"); Assert.True(Directory.Exists(paths[4]));
         using var db = InspectDatabase(Path.Combine(root, "barback.db")); await db.OpenAsync(); using var cmd = db.CreateCommand(); cmd.CommandText = "SELECT total_runs FROM programs"; Assert.Equal(6L, await cmd.ExecuteScalarAsync());
     }
     [Fact]
@@ -168,5 +168,63 @@ public sealed class StoreTests : IAsyncLifetime
         var loaded = await ApplicationEnvironment.LoadAsync(store, protector);
         Assert.True(loaded.Single(e => e.Key == "KEEP").NeedsInput); Assert.Equal("s3cret", loaded.Single(e => e.Key == "NEW").Value);
         Assert.True(loaded.Single(e => e.Key == "GONE").Remove); Assert.Equal("v", loaded.Single(e => e.Key == "PLAIN").Value);
+    }
+    private static string Backup(bool encrypted, string secret, string? platform = "windows", int schema = 2) =>
+        System.Text.Json.JsonSerializer.Serialize(new { schemaVersion = schema, sourcePlatform = platform, encryptedSecrets = encrypted, programs = new[] { new ProgramConfig { Name = "web", Enabled = true, Policy = new() { Autostart = true }, Launch = new() { Environment = [new("TOKEN", secret, true), new("PLAIN", "1")] } } } });
+    [Fact] // F12
+    public void BackupReaderTurnsUndecryptableSecretsIntoReentryPlaceholders()
+    {
+        var protector = new ForeignKeyProtector(); var good = protector.Protect("ok");
+        var restored = ConfigurationBackupReader.Read(Backup(true, good), protector).Single();
+        Assert.False(restored.Enabled); Assert.False(restored.Policy.Autostart); Assert.Equal(0, restored.Version);
+        Assert.Equal("ok", restored.Launch.Environment.Single(e => e.Key == "TOKEN").Value);
+        var foreign = ConfigurationBackupReader.Read(Backup(true, "cipher-from-another-account"), protector).Single().Launch.Environment.Single(e => e.Key == "TOKEN");
+        Assert.True(foreign.NeedsInput); Assert.Null(foreign.Value);
+        var plain = ConfigurationBackupReader.Read(Backup(false, "portable-export"), protector).Single().Launch.Environment.Single(e => e.Key == "TOKEN");
+        Assert.True(plain.NeedsInput); Assert.Null(plain.Value);
+    }
+    [Theory] // F12
+    [InlineData("macos", 2)]
+    [InlineData("windows", 99)]
+    public void BackupReaderRejectsForeignPlatformOrSchema(string platform, int schema) =>
+        Assert.Throws<InvalidDataException>(() => ConfigurationBackupReader.Read(Backup(true, "x", platform, schema), new ForeignKeyProtector()));
+    [Fact] // S3
+    public async Task DeletingAProgramAlsoRemovesItsEmptyServiceOutputDirectory()
+    {
+        var c = await store.SaveAsync(Draft(), 0); var run = Guid.NewGuid();
+        var parent = Path.Combine(root, "logs", "programs", c.Id.ToString("N")); var dir = Path.Combine(parent, run.ToString("N")); Directory.CreateDirectory(dir);
+        await File.WriteAllTextAsync(Path.Combine(dir, "stdout.log"), "x"); await File.WriteAllTextAsync(Path.Combine(dir, "stdout.log.gaps"), "gap");
+        await store.BeginRunAsync(new(run, c.Id, 1, 1, DateTimeOffset.UtcNow, LogDirectory: dir)); await store.EndRunAsync(run, Phase.Exited, EndReason.Natural, 0);
+        await store.DeleteAsync(c.Id); Assert.False(Directory.Exists(dir)); Assert.False(Directory.Exists(parent));
+    }
+    [Fact] // S3
+    public async Task OwnerParentWithOtherContentIsKept()
+    {
+        var c = await store.SaveAsync(Draft(), 0); var run = Guid.NewGuid(); var other = Guid.NewGuid();
+        var parent = Path.Combine(root, "logs", "programs", c.Id.ToString("N")); var dir = Path.Combine(parent, run.ToString("N")); var sibling = Path.Combine(parent, other.ToString("N")); Directory.CreateDirectory(dir); Directory.CreateDirectory(sibling);
+        await File.WriteAllTextAsync(Path.Combine(dir, "stdout.log"), "x"); await store.BeginRunAsync(new(run, c.Id, 1, 1, DateTimeOffset.UtcNow, LogDirectory: dir)); await store.EndRunAsync(run, Phase.Exited, EndReason.Natural, 0);
+        await store.DeleteAsync(c.Id); Assert.False(Directory.Exists(dir)); Assert.True(Directory.Exists(sibling), "foreign content keeps the parent in place");
+    }
+    [Fact] // S2
+    public async Task EventTableIsTrimmedByMaintenanceNotByEveryInsert()
+    {
+        using (var db = InspectDatabase(Path.Combine(root, "barback.db")))
+        {
+            await db.OpenAsync(); using var cmd = db.CreateCommand();
+            cmd.CommandText = "WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<50100) INSERT INTO events(at,type,detail) SELECT $at,'Bulk','x' FROM n";
+            cmd.Parameters.AddWithValue("$at", DateTimeOffset.UtcNow.ToString("O")); await cmd.ExecuteNonQueryAsync();
+            cmd.CommandText = "INSERT INTO events(at,type,detail) VALUES('2000-01-01T00:00:00.0000000+00:00','Ancient','old')"; await cmd.ExecuteNonQueryAsync();
+        }
+        await store.EventAsync(new(DateTimeOffset.UtcNow, "Fresh", null, null, "one")); // a single insert must not scan or trim
+        using (var db = InspectDatabase(Path.Combine(root, "barback.db"))) { await db.OpenAsync(); using var cmd = db.CreateCommand(); cmd.CommandText = "SELECT COUNT(*) FROM events"; Assert.Equal(50102L, await cmd.ExecuteScalarAsync()); }
+        await store.MaintainAsync();
+        using (var db = InspectDatabase(Path.Combine(root, "barback.db"))) { await db.OpenAsync(); using var cmd = db.CreateCommand(); cmd.CommandText = "SELECT COUNT(*) FROM events"; Assert.Equal(49999L, await cmd.ExecuteScalarAsync()); /* newest 50,000 by id, minus the expired row among them */ cmd.CommandText = "SELECT COUNT(*) FROM events WHERE type='Ancient'"; Assert.Equal(0L, await cmd.ExecuteScalarAsync()); cmd.CommandText = "SELECT COUNT(*) FROM events WHERE type='Fresh'"; Assert.Equal(1L, await cmd.ExecuteScalarAsync()); }
+    }
+    [Fact] // S1
+    public async Task MaintenanceTreatsEveryEndedOutcomeAsCompleted()
+    {
+        var c = await store.SaveAsync(Draft() with { Policy = new() { HistoryLimit = 1 } }, 0);
+        for (int i = 0; i < 3; i++) { var id = Guid.NewGuid(); await store.BeginRunAsync(new(id, c.Id, i, 1, DateTimeOffset.UtcNow.AddSeconds(i))); await store.EndRunAsync(id, Phase.Interrupted, EndReason.AppInterrupted, null); }
+        await store.MaintainAsync(); Assert.Single(await store.RunsAsync());
     }
 }

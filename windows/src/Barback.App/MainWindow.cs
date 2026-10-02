@@ -604,10 +604,10 @@ public partial class MainWindow : Window
         notifications.Click += async (_, _) => await GuardAsync(async () => { await store.SetSettingAsync("notifications", notifications.IsChecked == true ? "true" : "false"); shell.NotificationsEnabled = notifications.IsChecked == true; }); panel.Children.Add(notifications);
         Heading("LoginStartup");
         var startup = new TextBlock { Style = (Style)FindResource("Caption"), Margin = new(0, 0, 0, 10) }; panel.Children.Add(startup);
-        startup.Loaded += async (_, _) => await GuardAsync(async () => startup.Text = shell.Packaged ? Text.Get("Startup" + await shell.StartupStateAsync()) : Text.Get("StartupUnavailable"));
+        startup.Loaded += async (_, _) => await GuardAsync(async () => startup.Text = await StartupTextAsync());
         var startupActions = new WrapPanel(); panel.Children.Add(startupActions);
-        startupActions.Children.Add(Button("LoginEnable", async () => { await shell.SetStartupAsync(true); startup.Text = await shell.StartupStateAsync(); }));
-        startupActions.Children.Add(Button("LoginDisable", async () => { await shell.SetStartupAsync(false); startup.Text = await shell.StartupStateAsync(); }));
+        startupActions.Children.Add(Button("LoginEnable", async () => { await shell.SetStartupAsync(true); startup.Text = await StartupTextAsync(); }));
+        startupActions.Children.Add(Button("LoginDisable", async () => { await shell.SetStartupAsync(false); startup.Text = await StartupTextAsync(); }));
         startupActions.Children.Add(Button("LoginSettings", () => { ShellIntegration.Open("ms-settings:startupapps"); return Task.CompletedTask; }));
         foreach (var action in startupActions.Children.OfType<Button>().Take(2)) action.IsEnabled = shell.Packaged;
         Heading("EnvironmentTitle"); Hint("EnvironmentHint");
@@ -625,20 +625,15 @@ public partial class MainWindow : Window
         panel.Children.Add(Button("Exit", () => Application.Current is App app ? app.ExitAsync() : Task.CompletedTask));
         return new ScrollViewer { Content = panel, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
     }
+    private async Task<string> StartupTextAsync() => Text.Get("Startup" + await shell.StartupStateAsync());
     private async Task RestoreAsync()
     {
         var dialog = new OpenFileDialog { Filter = "Barback configuration|*.json" }; if (dialog.ShowDialog(this) != true) return;
-        using var document = JsonDocument.Parse(await File.ReadAllTextAsync(dialog.FileName));
-        if (!SqliteStore.AcceptsConfigurationSchema(document.RootElement.GetProperty("schemaVersion").GetInt32()) || document.RootElement.GetProperty("sourcePlatform").GetString() != "windows") throw new InvalidDataException("Unsupported backup format.");
-        var encrypted = document.RootElement.TryGetProperty("encryptedSecrets", out var flag) && flag.GetBoolean(); var decrypt = new DpapiProtector();
-        var restored = new List<ProgramConfig>();
-        foreach (var item in document.RootElement.GetProperty("programs").EnumerateArray())
-        {
-            var config = item.Deserialize<ProgramConfig>()!;
-            var environment = config.Launch.Environment.Select(entry => entry.Sensitive && !entry.Remove ? entry with { Value = encrypted ? decrypt.Unprotect(entry.Value ?? "") : null, NeedsInput = !encrypted || entry.NeedsInput } : entry).ToArray();
-            restored.Add(config with { Id = Guid.NewGuid(), Version = 0, Enabled = false, Name = config.Name + " restored", Policy = config.Policy with { Autostart = false }, Launch = config.Launch with { Environment = environment } });
-        }
-        await supervisor.ImportAsync(restored);
+        var restored = ConfigurationBackupReader.Read(await File.ReadAllTextAsync(dialog.FileName), new DpapiProtector());
+        // Restored programs never overwrite existing ones: collisions get a localized "(restored)" / "(restored 2)" suffix.
+        var used = supervisor.Snapshot.Select(s => s.Config.NameKey).ToHashSet();
+        string Suffix(int attempt) => attempt == 1 ? Text.Get("RestoredSuffix") : Text.Format("RestoredSuffixN", attempt);
+        await supervisor.ImportAsync(restored.Select(c => c with { Name = ProgramNames.MakeUnique(c.Name, Suffix, used) }).ToArray());
     }
     private async void OnKey(object sender, KeyEventArgs e)
     {

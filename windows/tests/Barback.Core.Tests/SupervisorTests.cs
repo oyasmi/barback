@@ -535,4 +535,29 @@ public class SupervisorTests
         }
         finally { Directory.Delete(root, true); }
     }
+
+    [Fact] // F12
+    public async Task ImportRejectsCollisionsWithExistingAndWithinBatchBeforeWriting()
+    {
+        var root = Temp(); try
+        {
+            var store = new Store(); var existing = Config(root) with { Name = "Web", Version = 1 }; store.Configs.Add(existing);
+            await using var supervisor = new Supervisor(store, new Host(store), new Clock(), root); await supervisor.InitializeAsync();
+            var thrown = await Assert.ThrowsAsync<DuplicateProgramNameException>(() => supervisor.ImportAsync([Config(root) with { Name = " web " }, Config(root) with { Name = "Api" }, Config(root) with { Name = "API" }]));
+            Assert.Equal([" web ", "API"], thrown.Names); Assert.Single(store.Configs); Assert.Null(supervisor.StorageError);
+            await supervisor.ImportAsync([Config(root) with { Name = "Api" }]); Assert.Equal(2, store.Configs.Count);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact] // S7
+    public async Task DeletingAnUnknownProgramIsANoOp()
+    {
+        var root = Temp(); try
+        {
+            var store = new Store(); await using var supervisor = new Supervisor(store, new Host(store), new Clock(), root); await supervisor.InitializeAsync();
+            await supervisor.DeleteAsync(Guid.NewGuid());
+        }
+        finally { Directory.Delete(root, true); }
+    }
 }
