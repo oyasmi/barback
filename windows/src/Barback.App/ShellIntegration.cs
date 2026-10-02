@@ -12,10 +12,11 @@ namespace Barback.App;
 public sealed class ShellIntegration : IDisposable
 {
     private bool registered;
-    private readonly Dictionary<string, DateTimeOffset> sent = [];
     public bool Packaged { get; }
     public string Root { get; }
     public string? NotificationError { get; private set; }
+    public AppLog? Log { get; set; }
+    private readonly NotificationThrottle throttle = new();
     public bool NotificationsEnabled { get; set; } = true;
     public ShellIntegration()
     {
@@ -34,20 +35,29 @@ public sealed class ShellIntegration : IDisposable
             };
             AppNotificationManager.Default.Register(); registered = true;
         }
-        catch (Exception ex) { NotificationError = ex.Message; }
+        catch (Exception ex) { NotificationError = ex.Message; Log?.Error("notification", "Notification registration failed.", ex); }
     }
-    public void Notify(EventRecord e)
+    private static string Body(EventRecord e) => e.Type switch
     {
-        if (!registered || !NotificationsEnabled) return;
-        var key = $"{e.ProgramId}:{e.Type}"; if (sent.TryGetValue(key, out var at) && DateTimeOffset.UtcNow - at < TimeSpan.FromMinutes(10)) return;
-        sent[key] = DateTimeOffset.UtcNow;
+        "Fatal" => Text.Format("NotifyFatal", Summary(e.Detail)),
+        "RunFailed" => e.ExitCode is uint code ? Text.Format("NotifyRunFailed", code, $"0x{code:X8}") : Text.Get("NotifyRunFailedUnknown"),
+        "RunTimeout" => Text.Get("NotifyRunTimeout"),
+        "CleanupFailed" => Text.Get("NotifyCleanupFailed"),
+        "LogIncomplete" => Text.Get("NotifyLogIncomplete"),
+        "AppInterrupted" => Text.Get("NotifyAppInterrupted"),
+        _ => Text.Get("Error")
+    };
+    private static string Summary(string detail) { var line = detail.Split('\n')[0].Trim(); return line.Length <= 160 ? line : line[..160] + "…"; }
+    public void Notify(EventRecord e, string? programName)
+    {
+        if (!registered || !NotificationsEnabled || !throttle.ShouldNotify(e)) return;
         try
         {
-            var builder = new AppNotificationBuilder().AddText("Barback").AddText(Text.Get("Error"));
+            var builder = new AppNotificationBuilder().AddText(programName ?? "Barback").AddText(Body(e));
             if (e.ProgramId is Guid id) builder.AddArgument("program", id.ToString());
             AppNotificationManager.Default.Show(builder.BuildNotification());
         }
-        catch (Exception ex) { NotificationError = ex.Message; }
+        catch (Exception ex) { NotificationError = ex.Message; Log?.Error("notification", "Could not show a notification.", ex); }
     }
     public async Task<string> StartupStateAsync() => !Packaged ? "MSIX required" : (await StartupTask.GetAsync("BarbackStartup")).State.ToString();
     public async Task SetStartupAsync(bool enable)
@@ -69,7 +79,26 @@ public sealed class ShellIntegration : IDisposable
             await File.WriteAllTextAsync(Path.Combine(temp, "config-structure.json"), JsonSerializer.Serialize(configs));
             // Event details may contain OS-generated command paths; export stable fields only.
             await File.WriteAllTextAsync(Path.Combine(temp, "events.json"), JsonSerializer.Serialize((await store.EventsAsync()).Select(e => new { e.At, e.Type, e.ProgramId, e.RunId })));
-            ZipFile.CreateFromDirectory(temp, destination);
+            // Barback's own log (never program output); opened with shared access because it is still being written.
+            var appLogs = Path.Combine(Root, "logs", "app");
+            if (Directory.Exists(appLogs))
+            {
+                var target = Path.Combine(temp, "app-log"); Directory.CreateDirectory(target);
+                foreach (var file in Directory.GetFiles(appLogs, "barback.log*"))
+                {
+                    try
+                    {
+                        await using var source = new FileStream(file, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+                        await using var copy = new FileStream(Path.Combine(target, Path.GetFileName(file)), FileMode.Create, FileAccess.Write);
+                        await source.CopyToAsync(copy);
+                    }
+                    catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+                }
+            }
+            // A confirmed overwrite must replace the existing file, so build the archive beside it and move it into place.
+            var staging = destination + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            try { ZipFile.CreateFromDirectory(temp, staging); File.Move(staging, destination, overwrite: true); }
+            finally { if (File.Exists(staging)) File.Delete(staging); }
         }
         finally { Directory.Delete(temp, true); }
     }

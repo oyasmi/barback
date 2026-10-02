@@ -60,9 +60,10 @@ public sealed class Supervisor : IAsyncDisposable
             }
         }
     }
+    private void Report(string message, Exception ex) { try { Diagnostic?.Invoke(message, ex); } catch { /* diagnostics must not break supervision */ } }
     private async Task ReportInternalErrorAsync(Exception ex)
     {
-        try { Diagnostic?.Invoke("supervisor request failed", ex); } catch { /* diagnostics must not break the actor */ }
+        Report("supervisor request failed", ex);
         try { await RecordAsync("InternalError", null, null, ex.Message).ConfigureAwait(false); } catch { }
     }
     private static bool IsStorageFailure(Exception ex) => ex is IOException or UnauthorizedAccessException or System.Data.Common.DbException;
@@ -189,8 +190,13 @@ public sealed class Supervisor : IAsyncDisposable
             runs.Remove(id);
             cleaning.Remove(id);
             RequestMaintenance();
-            await RecordAsync("RunEnded", id, finished, $"{outcome}; reason={reason}; code={(e.ExitCode is uint code ? $"0x{code:X8}" : "unknown")}", outcome is Phase.Failed or Phase.Timeout).ConfigureAwait(false);
+            var runDetail = $"{outcome}; reason={reason}; code={(e.ExitCode is uint code ? $"0x{code:X8}" : "unknown")}";
+            await RecordAsync("RunEnded", id, finished, runDetail).ConfigureAwait(false);
+            // One-shot failures need the user's attention; a service that fails to start is retried and reports Fatal when it gives up.
+            if (config.Kind == ProgramKind.Oneshot && outcome is Phase.Failed or Phase.Timeout)
+                await RecordAsync(outcome == Phase.Timeout ? "RunTimeout" : "RunFailed", id, finished, runDetail, attention: true, exitCode: e.ExitCode, persist: false).ConfigureAwait(false);
         }
+        if (!before.CleanupFailed && states[id].CleanupFailed) await RecordAsync("CleanupFailed", id, before.RunId, states[id].Error ?? "Process tree cleanup could not be confirmed.", true).ConfigureAwait(false);
         if (states[id].Phase == Phase.Fatal) await RecordAsync("Fatal", id, before.RunId, states[id].Error ?? "Automatic retry stopped.", true).ConfigureAwait(false);
         // A queued handshake may have been cancelled before a process exists.
         if (states[id].Phase == Phase.Stopping && !runs.ContainsKey(id) && !preparing.Contains(id))
@@ -212,7 +218,7 @@ public sealed class Supervisor : IAsyncDisposable
                     // A stop received during prepare is applied when the suspended run returns.
                     break;
                 case Effect.Terminate:
-                    if (e.Signal is Signal.Force or Signal.Tick) await RecordAsync("ForcedStop", id, before.RunId, "Grace period was skipped or elapsed; terminating the entire Job.", true).ConfigureAwait(false);
+                    if (e.Signal is Signal.Force or Signal.Tick) await RecordAsync("ForcedStop", id, before.RunId, "Grace period was skipped or elapsed; terminating the entire Job.").ConfigureAwait(false);
                     if (runs.TryGetValue(id, out var kill)) BeginCleanup(id, before.Generation, kill, null, before.StopReason);
                     break;
             }
@@ -260,7 +266,7 @@ public sealed class Supervisor : IAsyncDisposable
                 {
                     // Invariant violation: never replace a run the supervisor already owns.
                     await prepared.DisposeAsync().ConfigureAwait(false);
-                    Diagnostic?.Invoke($"invariant violation: duplicate run for program {id}", new InvalidOperationException($"Run {prepared.Id} duplicates {existing.Id}."));
+                    Report($"invariant violation: duplicate run for program {id}", new InvalidOperationException($"Run {prepared.Id} duplicates {existing.Id}."));
                     return;
                 }
                 runs[id] = prepared;
@@ -279,13 +285,14 @@ public sealed class Supervisor : IAsyncDisposable
         }
         catch (Exception ex)
         {
+            Report($"launch failed for program {id} (run {state.RunId})", ex);
             if (native is not null)
             {
                 var failedRun = native;
                 bool empty;
                 string cleanupError = "Failed launch cleanup could not be confirmed.";
                 try { empty = await failedRun.CleanAsync(CancellationToken.None).ConfigureAwait(false); }
-                catch (Exception cleanupException) { empty = false; cleanupError = cleanupException.Message; }
+                catch (Exception cleanupException) { empty = false; cleanupError = cleanupException.Message; Report($"launch cleanup failed for program {id}", cleanupException); }
                 if (!empty)
                 {
                     Post(async () =>
@@ -322,7 +329,7 @@ public sealed class Supervisor : IAsyncDisposable
         {
             bool empty;
             try { empty = await run.CleanAsync(CancellationToken.None).ConfigureAwait(false); if (empty) { if (run.Exit.IsCompletedSuccessfully) code ??= await run.Exit.ConfigureAwait(false); await run.DisposeAsync().ConfigureAwait(false); } }
-            catch (Exception ex) { empty = false; error = ex.Message; }
+            catch (Exception ex) { empty = false; error = ex.Message; Report($"process tree cleanup failed for program {id} (run {run.Id})", ex); }
             Post(async () =>
             {
                 cleaning.Remove(id);
@@ -378,10 +385,13 @@ public sealed class Supervisor : IAsyncDisposable
         await ExecuteStorageAsync(() => Task.CompletedTask).ConfigureAwait(false);
         await Enqueue(() => Task.CompletedTask).ConfigureAwait(false);
     }
-    private async Task RecordAsync(string type, Guid? id, Guid? run, string detail, bool attention = false)
+    /// <summary>Notifications are suppressed while the app is exiting; <paramref name="persist"/> false is for notification-only records whose facts are already stored.</summary>
+    private async Task RecordAsync(string type, Guid? id, Guid? run, string detail, bool attention = false, uint? exitCode = null, bool persist = true)
     {
-        var record = new EventRecord(clock.Now.Utc, type, id, run, detail);
-        WriteLater(() => store.EventAsync(record)); await Task.CompletedTask.ConfigureAwait(false); if (attention) Attention?.Invoke(record);
+        var record = new EventRecord(clock.Now.Utc, type, id, run, detail, exitCode);
+        if (persist) WriteLater(() => store.EventAsync(record));
+        await Task.CompletedTask.ConfigureAwait(false);
+        if (attention && !exiting) Attention?.Invoke(record);
     }
     public async Task ShutdownAsync(TimeSpan budget, CancellationToken cancellationToken = default, Task? forceRequested = null, TimeSpan? forceBudget = null)
     {

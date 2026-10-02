@@ -82,7 +82,8 @@ public sealed record ProgramSnapshot(ProgramConfig Config, RuntimeState Runtime,
 public sealed record RunRecord(Guid Id, Guid ProgramId, long Generation, long ConfigVersion, DateTimeOffset Started,
     DateTimeOffset? Ended = null, int? Pid = null, long? CreationTime = null, Phase Outcome = Phase.Starting,
     EndReason? Reason = null, uint? ExitCode = null, string? LogDirectory = null);
-public sealed record EventRecord(DateTimeOffset At, string Type, Guid? ProgramId, Guid? RunId, string Detail);
+/// <summary><paramref name="ExitCode"/> is carried for notifications only and is not persisted.</summary>
+public sealed record EventRecord(DateTimeOffset At, string Type, Guid? ProgramId, Guid? RunId, string Detail, uint? ExitCode = null);
 public readonly record struct ClockReading(double Active, double Elapsed, DateTimeOffset Utc);
 public interface IClock { ClockReading Now { get; } }
 public interface IProcessRun : IAsyncDisposable

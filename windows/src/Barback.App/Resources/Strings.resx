@@ -757,6 +757,30 @@ Active processes will stop. Configuration, execution history, and application-ow
   <data name="ExportAllSegments" xml:space="preserve">
     <value>Export all log segments</value>
   </data>
+  <data name="NotifyFatal" xml:space="preserve">
+    <value>Automatic restart stopped: {0}</value>
+  </data>
+  <data name="NotifyRunFailed" xml:space="preserve">
+    <value>Command failed with exit code {0} ({1})</value>
+  </data>
+  <data name="NotifyRunFailedUnknown" xml:space="preserve">
+    <value>Command failed; the exit code is unknown</value>
+  </data>
+  <data name="NotifyRunTimeout" xml:space="preserve">
+    <value>Command timed out and was stopped</value>
+  </data>
+  <data name="NotifyCleanupFailed" xml:space="preserve">
+    <value>Could not confirm that the child processes were cleaned up; action needed</value>
+  </data>
+  <data name="NotifyLogIncomplete" xml:space="preserve">
+    <value>Some output could not be written to disk</value>
+  </data>
+  <data name="NotifyAppInterrupted" xml:space="preserve">
+    <value>Barback did not exit cleanly last time; one-shot commands were not rerun</value>
+  </data>
+  <data name="EventInternalError" xml:space="preserve">
+    <value>Internal error</value>
+  </data>
   <data name="RemoveRow" xml:space="preserve">
     <value>Delete row</value>
   </data>

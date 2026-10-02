@@ -18,8 +18,10 @@ public class SupervisorTests
         public Task SaveRuntimeAsync(Guid id, RuntimeState runtime) { if (FailWrites) throw new IOException("disk full"); Runtime[id] = runtime; return Task.CompletedTask; }
         public Task<IReadOnlyDictionary<Guid, RuntimeState>> LoadRuntimeAsync() => Task.FromResult<IReadOnlyDictionary<Guid, RuntimeState>>(new Dictionary<Guid, RuntimeState>(Runtime));
         public Task<IReadOnlyList<RunRecord>> RunsAsync() => Task.FromResult<IReadOnlyList<RunRecord>>(Runs.ToArray());
-        public Task<IReadOnlyList<EventRecord>> EventsAsync() => Task.FromResult<IReadOnlyList<EventRecord>>([]);
-        public Task EventAsync(EventRecord r) => Task.CompletedTask;
+        public readonly List<EventRecord> Events = [];
+        public Task<IReadOnlyList<EventRecord>> EventsAsync() { lock (Events) return Task.FromResult<IReadOnlyList<EventRecord>>(Events.ToArray()); }
+        public Task EventAsync(EventRecord r) { lock (Events) Events.Add(r); return Task.CompletedTask; }
+        public string[] EventTypes { get { lock (Events) return Events.Select(e => e.Type).ToArray(); } }
         public Task<bool> RecoverAsync() => Task.FromResult(Interrupted);
         public Task MarkCleanAsync() => Task.CompletedTask;
         public int Maintained; public TaskCompletionSource? MaintainHold;
@@ -458,6 +460,78 @@ public class SupervisorTests
             var store = new Store(); var config = Config(root, kind); store.Configs.Add(config); var host = new Host(store);
             await using var supervisor = new Supervisor(store, host, new Clock(), root); await supervisor.InitializeAsync(); await supervisor.SendAsync(config.Id, Signal.Start);
             await Until(() => host.Runs.Any(r => r.Activated)); Assert.Equal(expected, host.LastRunOutputLimit);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact] // F14
+    public async Task UserForceAndGraceExpiryAreRecordedWithoutNotification()
+    {
+        var root = Temp(); try
+        {
+            var store = new Store(); var service = Config(root); store.Configs.Add(service); var host = new Host(store); var attention = new List<EventRecord>();
+            await using var supervisor = new Supervisor(store, host, new Clock(), root); supervisor.Attention += e => { lock (attention) attention.Add(e); };
+            await supervisor.InitializeAsync(); await supervisor.SendAsync(service.Id, Signal.Start); await Until(() => host.Runs.Any(r => r.Activated));
+            await supervisor.SendAsync(service.Id, Signal.Force); await Until(() => supervisor.Snapshot.Single().Runtime.Phase == Phase.Stopped);
+            await Until(() => store.EventTypes.Contains("ForcedStop")); Assert.Empty(attention);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact] // F14
+    public async Task OneShotFailureNotifiesWithCodeWhileRunEndedStaysTheOnlyStoredRecord()
+    {
+        var root = Temp(); try
+        {
+            var store = new Store(); var job = Config(root, ProgramKind.Oneshot); store.Configs.Add(job); var host = new Host(store); var attention = new List<EventRecord>();
+            await using var supervisor = new Supervisor(store, host, new Clock(), root); supervisor.Attention += e => { lock (attention) attention.Add(e); };
+            await supervisor.InitializeAsync(); await supervisor.SendAsync(job.Id, Signal.Start); await Until(() => host.Runs.Any(r => r.Activated));
+            host.Runs[0].End.TrySetResult(7); await Until(() => supervisor.Snapshot.Single().Runtime.Phase == Phase.Failed);
+            await Until(() => store.EventTypes.Contains("RunEnded"));
+            lock (attention) { var notice = Assert.Single(attention); Assert.Equal("RunFailed", notice.Type); Assert.Equal(7u, notice.ExitCode); Assert.Equal(job.Id, notice.ProgramId); }
+            Assert.DoesNotContain("RunFailed", store.EventTypes);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact] // F14
+    public async Task UnconfirmedCleanupIsRecordedAndNotifies()
+    {
+        var root = Temp(); try
+        {
+            var store = new Store(); var service = Config(root); store.Configs.Add(service); var host = new Host(store) { CleanupFailures = 1 }; var attention = new List<EventRecord>();
+            await using var supervisor = new Supervisor(store, host, new Clock(), root); supervisor.Attention += e => { lock (attention) attention.Add(e); };
+            await supervisor.InitializeAsync(); await supervisor.SendAsync(service.Id, Signal.Start); await Until(() => host.Runs.Any(r => r.Activated));
+            await supervisor.SendAsync(service.Id, Signal.Stop); await Until(() => supervisor.Snapshot.Single().Runtime.CleanupFailed);
+            await Until(() => store.EventTypes.Contains("CleanupFailed")); lock (attention) Assert.Contains(attention, e => e.Type == "CleanupFailed");
+            await supervisor.SendAsync(service.Id, Signal.Force); await Until(() => supervisor.Snapshot.Single().Runtime.Phase == Phase.Stopped);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact] // F14
+    public async Task NoNotificationsWhileExiting()
+    {
+        var root = Temp(); try
+        {
+            var store = new Store(); var service = Config(root); store.Configs.Add(service); var host = new Host(store) { CleanupFailures = 1 }; var attention = new List<EventRecord>();
+            await using var supervisor = new Supervisor(store, host, new Clock(), root); supervisor.Attention += e => { lock (attention) attention.Add(e); };
+            await supervisor.InitializeAsync(); await supervisor.SendAsync(service.Id, Signal.Start); await Until(() => host.Runs.Any(r => r.Activated));
+            await supervisor.ShutdownAsync(TimeSpan.FromSeconds(1)); await Until(() => store.EventTypes.Contains("CleanupFailed"));
+            lock (attention) Assert.Empty(attention);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact] // F13
+    public async Task LaunchFailuresAreReportedToTheDiagnosticCallbackWithoutSecrets()
+    {
+        var root = Temp(); try
+        {
+            var store = new Store { FailIdentify = true }; var config = Config(root); store.Configs.Add(config); var host = new Host(store); var messages = new List<string>();
+            await using var supervisor = new Supervisor(store, host, new Clock(), root) { Diagnostic = (message, error) => { lock (messages) messages.Add(message + " | " + error.GetType().Name); } };
+            await supervisor.InitializeAsync(); await supervisor.SendAsync(config.Id, Signal.Start);
+            await Until(() => { lock (messages) return messages.Any(m => m.StartsWith("launch failed for program " + config.Id)); });
         }
         finally { Directory.Delete(root, true); }
     }
