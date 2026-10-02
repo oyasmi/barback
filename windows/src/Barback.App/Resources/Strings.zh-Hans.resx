@@ -734,7 +734,16 @@ CPU {1} · 内存 {2} MiB</value>
     <value>敏感值需要重新输入，此配置保持禁用。</value>
   </data>
   <data name="RemoveVariable" xml:space="preserve">
-    <value>移除</value>
+    <value>移除继承值</value>
+  </data>
+  <data name="RemoveRow" xml:space="preserve">
+    <value>删除此行</value>
+  </data>
+  <data name="NeedsReentry" xml:space="preserve">
+    <value>需要重新输入</value>
+  </data>
+  <data name="ApplicationEnvironmentNeedsInput" xml:space="preserve">
+    <value>部分应用级敏感值无法解密。在“设置 / 环境”中重新输入或删除它们之前，程序无法启动。</value>
   </data>
   <data name="VariableName" xml:space="preserve">
     <value>变量名称</value>

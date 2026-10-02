@@ -4,6 +4,10 @@ namespace Barback.Core;
 public sealed class ConfigurationConflictException(string? message = null, Exception? inner = null)
     : Exception(message ?? "Configuration version conflict. Preserve your draft and reload before saving.", inner);
 
+/// <summary>Application-level sensitive variables cannot be decrypted, so no program can start until they are re-entered or removed.</summary>
+public sealed class ApplicationEnvironmentNeedsInputException()
+    : InvalidOperationException("Application environment contains sensitive values requiring re-entry. Open Settings / Environment.");
+
 /// <summary>A program name collides (case-insensitively) with an existing one. Not a storage fault.</summary>
 public sealed class DuplicateProgramNameException : Exception
 {

@@ -31,9 +31,13 @@ public sealed class WindowsProcessHost(string consoleHostPath, LogQuota? globalQ
         if (wait != 258) return true;
         try { return Native.CreationTime(p) == creationTime; } catch (Win32Exception) { return true; }
     }
+    public void EnsureCanLaunch()
+    {
+        if (applicationEnvironment.Any(e => e.NeedsInput)) throw new ApplicationEnvironmentNeedsInputException();
+    }
     public async Task<IProcessRun> PrepareAsync(Guid runId, LaunchSpec launch, string logDirectory, Action<long> logLoss, CancellationToken token)
     {
-        if (applicationEnvironment.Any(e => e.NeedsInput)) throw new InvalidOperationException("Application environment contains sensitive values requiring re-entry. Open Settings / Environment.");
+        EnsureCanLaunch();
         var runQuota = new LogQuota(50L * 1024 * 1024);
         var job = Native.NewJob(); var collectors = new List<LogCollector>(); KernelHandle? process = null, thread = null, target = null; NamedPipeServerStream? pipe = null;
         (FileStream? Read, Microsoft.Win32.SafeHandles.SafeFileHandle? Write) stdout = default, stderr = default;

@@ -734,7 +734,16 @@ Active processes will stop. Configuration, execution history, and application-ow
     <value>Sensitive values require re-entry. The configuration remains disabled.</value>
   </data>
   <data name="RemoveVariable" xml:space="preserve">
-    <value>Remove</value>
+    <value>Remove inherited value</value>
+  </data>
+  <data name="RemoveRow" xml:space="preserve">
+    <value>Delete row</value>
+  </data>
+  <data name="NeedsReentry" xml:space="preserve">
+    <value>Needs re-entry</value>
+  </data>
+  <data name="ApplicationEnvironmentNeedsInput" xml:space="preserve">
+    <value>Some application-level sensitive values cannot be decrypted. Programs cannot start until they are re-entered or deleted in Settings / Environment.</value>
   </data>
   <data name="VariableName" xml:space="preserve">
     <value>Variable name</value>

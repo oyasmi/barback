@@ -174,6 +174,7 @@ public sealed class Supervisor : IAsyncDisposable
         {
             var errors = ConfigurationValidator.Validate(config);
             if (errors.Count > 0) throw new ArgumentException(string.Join("\n", errors.Select(x => x.Message)));
+            host.EnsureCanLaunch();
         }
         var transition = Reducer.Apply(before, e, basis, clock.Now);
         states[id] = transition.State;

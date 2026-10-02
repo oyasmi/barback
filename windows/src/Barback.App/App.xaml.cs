@@ -55,17 +55,7 @@ public partial class App : Application
             var quota = new LogQuota(1024L * 1024 * 1024, Directory.EnumerateFiles(logRoot, "*", SearchOption.AllDirectories).Where(path => !path.EndsWith(".gaps", StringComparison.Ordinal)).Sum(path => new FileInfo(path).Length));
             store.LogQuota = quota;
             var host = new WindowsProcessHost(Path.Combine(AppContext.BaseDirectory, "Barback.ConsoleHost.exe"), quota);
-            var applicationEnv = await store.GetSettingAsync("application_environment");
-            if (applicationEnv is not null)
-            {
-                EnvironmentEntry DecodeAppEnvironment(EnvironmentEntry v)
-                {
-                    if (!v.Sensitive || v.Remove || v.NeedsInput) return v;
-                    try { return v with { Value = new DpapiProtector().Unprotect(v.Value ?? "") }; }
-                    catch (Exception ex) when (ex is InvalidOperationException or FormatException) { return v with { Value = null, NeedsInput = true }; }
-                }
-                host.SetApplicationEnvironment(System.Text.Json.JsonSerializer.Deserialize<EnvironmentEntry[]>(applicationEnv)!.Select(DecodeAppEnvironment).ToArray());
-            }
+            host.SetApplicationEnvironment(await ApplicationEnvironment.LoadAsync(store, new DpapiProtector()));
             supervisor = new(store, host, new WindowsClock(), Path.Combine(shell.Root, "logs"));
             supervisor.Attention += shell.Notify;
             var main = new MainWindow(supervisor, store, shell, host); MainWindow = main;

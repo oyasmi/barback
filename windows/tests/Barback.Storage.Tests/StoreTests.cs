@@ -139,4 +139,34 @@ public sealed class StoreTests : IAsyncLifetime
         var c = await store.SaveAsync(Draft(), 0); for (int i = 0; i < 12; i++) c = await store.SaveAsync(c, c.Version);
         Assert.Equal(10, Directory.GetFiles(Path.Combine(root, "backups"), "config-*.json").Length);
     }
+    private sealed class ForeignKeyProtector : ISecretProtector
+    {
+        // Mimics DPAPI after a restore on another account: only values written by this protector decrypt.
+        public string Protect(string s) => "mine:" + Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(s));
+        public string Unprotect(string s) => s.StartsWith("mine:", StringComparison.Ordinal) ? System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(s[5..])) : throw new InvalidOperationException("Sensitive value cannot be decrypted.");
+    }
+    [Fact] // F6
+    public async Task ApplicationEnvironmentLoadsUndecryptableSecretsAsNeedsInput()
+    {
+        var protector = new ForeignKeyProtector();
+        await store.SetSettingAsync(ApplicationEnvironment.SettingKey, System.Text.Json.JsonSerializer.Serialize(new[]
+        {
+            new EnvironmentEntry("PLAIN", "1"), new EnvironmentEntry("GOOD", new ForeignKeyProtector().Protect("ok"), true), new EnvironmentEntry("BAD", "foreign-cipher", true), new EnvironmentEntry("DROP", null, false, true)
+        }));
+        var loaded = await ApplicationEnvironment.LoadAsync(store, protector);
+        Assert.Equal("ok", loaded.Single(e => e.Key == "GOOD").Value); Assert.False(loaded.Single(e => e.Key == "GOOD").NeedsInput);
+        var bad = loaded.Single(e => e.Key == "BAD"); Assert.True(bad.NeedsInput); Assert.Null(bad.Value);
+        Assert.False(loaded.Single(e => e.Key == "PLAIN").NeedsInput);
+    }
+    [Fact] // F6
+    public async Task ApplicationEnvironmentSaveKeepsNeedsInputAndNeverStoresPlaintext()
+    {
+        var protector = new ForeignKeyProtector();
+        await ApplicationEnvironment.SaveAsync(store, protector, [new("KEEP", null, true, false, true), new("NEW", "s3cret", true), new("GONE", "leftover", true, true), new("PLAIN", "v")]);
+        var raw = (await store.GetSettingAsync(ApplicationEnvironment.SettingKey))!;
+        Assert.DoesNotContain("s3cret", raw); Assert.DoesNotContain("leftover", raw);
+        var loaded = await ApplicationEnvironment.LoadAsync(store, protector);
+        Assert.True(loaded.Single(e => e.Key == "KEEP").NeedsInput); Assert.Equal("s3cret", loaded.Single(e => e.Key == "NEW").Value);
+        Assert.True(loaded.Single(e => e.Key == "GONE").Remove); Assert.Equal("v", loaded.Single(e => e.Key == "PLAIN").Value);
+    }
 }

@@ -44,7 +44,8 @@ public class SupervisorTests
         {
             Assert.Contains(store.Runs, r => r.Id == id); var run = new Run(id) { CleanupFailures = CleanupFailures, FailActivate = FailActivate }; created.Enqueue(run); if (Hold is not null) await Hold.Task.WaitAsync(token); return run;
         }
-        public bool Alive;
+        public bool Alive; public Exception? LaunchBlocked;
+        public void EnsureCanLaunch() { if (LaunchBlocked is not null) throw LaunchBlocked; }
         public bool IsSameProcessAlive(int pid, long time) => Alive;
     }
     private static async Task Until(Func<bool> condition)
@@ -413,6 +414,19 @@ public class SupervisorTests
             var blocked = await Assert.ThrowsAsync<InvalidOperationException>(() => supervisor.SendAsync(service.Id, Signal.Start)); Assert.Contains("4321", blocked.Message);
             await supervisor.SendAsync(service.Id, Signal.ClearFailure); Assert.Null(supervisor.Snapshot.Single().UnresolvedPid);
             await supervisor.SendAsync(service.Id, Signal.Start); await Until(() => host.Runs.Length == 1 && host.Runs[0].Activated);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact] // F6
+    public async Task ManualStartFailsFastWhenHostReportsFixableBlock()
+    {
+        var root = Temp(); try
+        {
+            var store = new Store(); var service = Config(root); store.Configs.Add(service); var host = new Host(store) { LaunchBlocked = new ApplicationEnvironmentNeedsInputException() };
+            await using var supervisor = new Supervisor(store, host, new Clock(), root); await supervisor.InitializeAsync();
+            await Assert.ThrowsAsync<ApplicationEnvironmentNeedsInputException>(() => supervisor.SendAsync(service.Id, Signal.Start));
+            Assert.Empty(host.Runs); Assert.Empty(store.Runs); Assert.Null(supervisor.StorageError); Assert.Equal(Phase.Stopped, supervisor.Snapshot.Single().Runtime.Phase);
         }
         finally { Directory.Delete(root, true); }
     }

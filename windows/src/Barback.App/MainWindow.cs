@@ -109,19 +109,29 @@ public partial class MainWindow : Window
     public static bool Confirm(string key) => MessageBox.Show(Text.Get(key), "Barback", MessageBoxButton.OKCancel, MessageBoxImage.Question, MessageBoxResult.Cancel) == MessageBoxResult.OK;
     private bool Ask(string message) => MessageBox.Show(this, message, "Barback", MessageBoxButton.OKCancel, MessageBoxImage.Question, MessageBoxResult.Cancel) == MessageBoxResult.OK;
     private async Task GuardAsync(Func<Task> action) { try { await action(); } catch (Exception ex) { ShowError(ex); } }
-    private void ShowError(Exception ex) { if (storageBannerShown) dismissedStorageError = supervisor.StorageError; storageBannerShown = false; Message.Tag = null; Message.Text = Text.Get("Error") + "\n" + ex.Message; MessagePanel.Visibility = Visibility.Visible; }
+    private void ShowError(Exception ex)
+    {
+        if (storageBannerShown) dismissedStorageError = supervisor.StorageError;
+        storageBannerShown = false; Message.Tag = null;
+        // A fixable launch block gets its own wording and a shortcut to the place that fixes it.
+        bool environmentBlocked = ex is ApplicationEnvironmentNeedsInputException;
+        Message.Text = environmentBlocked ? Text.Get("ApplicationEnvironmentNeedsInput") : Text.Get("Error") + "\n" + ex.Message;
+        MessageAction.Visibility = environmentBlocked ? Visibility.Visible : Visibility.Collapsed;
+        MessagePanel.Visibility = Visibility.Visible;
+    }
+    private void OpenEnvironmentFromMessage(object sender, RoutedEventArgs e) => new EnvironmentWindow(store, host) { Owner = this }.ShowDialog();
     private void DismissMessage(object sender, RoutedEventArgs e)
     {
         // A dismissed storage error stays hidden until a different one appears.
         if (storageBannerShown) dismissedStorageError = supervisor.StorageError;
-        storageBannerShown = false; MessagePanel.Visibility = Visibility.Collapsed;
+        storageBannerShown = false; MessageAction.Visibility = Visibility.Collapsed; MessagePanel.Visibility = Visibility.Collapsed;
     }
     private void SyncStorageBanner()
     {
         var storage = supervisor.StorageError;
         if (storage is null) { if (storageBannerShown) { storageBannerShown = false; MessagePanel.Visibility = Visibility.Collapsed; } dismissedStorageError = null; return; }
         if (storage == dismissedStorageError || storageBannerShown && Message.Tag as string == storage) return;
-        Message.Text = Text.Format("StorageErrorBanner", storage); Message.Tag = storage; storageBannerShown = true; MessagePanel.Visibility = Visibility.Visible;
+        Message.Text = Text.Format("StorageErrorBanner", storage); Message.Tag = storage; storageBannerShown = true; MessageAction.Visibility = Visibility.Collapsed; MessagePanel.Visibility = Visibility.Visible;
     }
     private static Brush Brush(string key) => (Brush)Application.Current.FindResource(key);
 

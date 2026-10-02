@@ -29,7 +29,7 @@
           </StackPanel>
         </Grid>
         <Border x:Name="MessagePanel" Grid.Row="1" Margin="24,0,24,12" Padding="12" CornerRadius="6" Background="{DynamicResource ErrorSurfaceBrush}" Visibility="Collapsed">
-          <DockPanel><Button DockPanel.Dock="Right" Content="×" Style="{StaticResource QuietButton}" Click="DismissMessage" AutomationProperties.Name="{local:Loc Dismiss}"/><TextBlock x:Name="Message" TextWrapping="Wrap" Foreground="{DynamicResource DangerBrush}"/></DockPanel>
+          <DockPanel><Button DockPanel.Dock="Right" Content="×" Style="{StaticResource QuietButton}" Click="DismissMessage" AutomationProperties.Name="{local:Loc Dismiss}"/><Button x:Name="MessageAction" DockPanel.Dock="Right" Content="{local:Loc EditEnvironment}" Style="{StaticResource QuietButton}" Margin="0,0,8,0" Visibility="Collapsed" Click="OpenEnvironmentFromMessage"/><TextBlock x:Name="Message" TextWrapping="Wrap" Foreground="{DynamicResource DangerBrush}"/></DockPanel>
         </Border>
         <Grid Grid.Row="2">
           <Grid x:Name="Workbench" Background="{DynamicResource SurfaceBrush}">
