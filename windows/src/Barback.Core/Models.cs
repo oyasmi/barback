@@ -78,7 +78,7 @@ public sealed record RuntimeState
     public string? Error { get; init; }
     public bool Active => RunId is not null;
 }
-public sealed record ProgramSnapshot(ProgramConfig Config, RuntimeState Runtime, ProgramConfig? RunConfig = null);
+public sealed record ProgramSnapshot(ProgramConfig Config, RuntimeState Runtime, ProgramConfig? RunConfig = null, int? UnresolvedPid = null);
 public sealed record RunRecord(Guid Id, Guid ProgramId, long Generation, long ConfigVersion, DateTimeOffset Started,
     DateTimeOffset? Ended = null, int? Pid = null, long? CreationTime = null, Phase Outcome = Phase.Starting,
     EndReason? Reason = null, uint? ExitCode = null, string? LogDirectory = null);

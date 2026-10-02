@@ -10,10 +10,22 @@ public sealed class WindowsProcessHost(string consoleHostPath, LogQuota? globalQ
     private EnvironmentEntry[] applicationEnvironment = [];
     public void SetApplicationEnvironment(EnvironmentEntry[] entries) => applicationEnvironment = entries;
     public void RefreshEnvironment() => baseline = Native.UserEnvironment();
+    /// <summary>Whole-boot tolerance for coarse clocks; a process created before this window cannot survive a reboot.</summary>
+    private const long BootToleranceTicks = 60L * 10_000_000;
+    /// <summary>True when a process created at <paramref name="creationTime"/> (FILETIME) must predate the current boot.</summary>
+    public static bool PredatesBoot(long creationTime, long nowFileTime, ulong uptimeMilliseconds) =>
+        creationTime < nowFileTime - (long)uptimeMilliseconds * 10_000 - BootToleranceTicks;
     public bool IsSameProcessAlive(int pid, long creationTime)
     {
+        if (PredatesBoot(creationTime, DateTime.UtcNow.ToFileTimeUtc(), Native.GetTickCount64())) return false;
         using var p = Native.OpenProcess(0x101000, false, pid);
-        if (p.IsInvalid) return System.Runtime.InteropServices.Marshal.GetLastWin32Error() != 87; // Unknown/access-denied blocks recovery conservatively.
+        if (p.IsInvalid)
+        {
+            // Barback only tracks processes it created as the current user, which that user can always open.
+            // Not-found and access-denied therefore mean the PID was reused by someone else; anything else stays conservative.
+            var error = System.Runtime.InteropServices.Marshal.GetLastWin32Error();
+            return error is not (87 or 5);
+        }
         var wait = Native.WaitForSingleObject(p, 0);
         if (wait == 0) return false;
         if (wait != 258) return true;

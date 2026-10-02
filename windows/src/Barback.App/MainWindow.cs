@@ -404,7 +404,12 @@ public partial class MainWindow : Window
         AddMenu(menu, "ProgramRecords", async () => { SelectProgram(id); DetailTabs.SelectedIndex = 2; narrowDetail = true; ApplyAdaptiveLayout(); await RefreshRecordsAsync(); });
         if (ProgramActionPolicy.CanRestart(snapshot)) AddMenu(menu, "Restart", () => SendAsync(id, Signal.Restart));
         if (snapshot.Runtime.Active) AddMenu(menu, "Force", async () => { if (Ask(Text.Get("ForceConfirm") + "\n\n" + snapshot.Config.Name)) { var latest = supervisor.Snapshot.FirstOrDefault(s => s.Config.Id == id); if (latest?.Runtime.RunId == snapshot.Runtime.RunId) await supervisor.SendAsync(id, Signal.Force); } });
-        if (snapshot.Runtime.Phase == Phase.Fatal) AddMenu(menu, "ClearFailure", () => supervisor.SendAsync(id, Signal.ClearFailure));
+        if (snapshot.Runtime.Phase == Phase.Fatal) AddMenu(menu, "ClearFailure", async () =>
+        {
+            // An unconfirmed previous process may still be running; clearing it risks a duplicate instance.
+            if (snapshot.UnresolvedPid is int pid && !Ask(Text.Format("ClearUnresolvedConfirm", pid, snapshot.Config.Name))) return;
+            await supervisor.SendAsync(id, Signal.ClearFailure);
+        });
         menu.Items.Add(new Separator()); AddMenu(menu, "Delete", () => DeleteAsync(id)); menu.IsOpen = true;
     }
     private void AddMenu(ContextMenu menu, string key, Func<Task> action, bool enabled = true)

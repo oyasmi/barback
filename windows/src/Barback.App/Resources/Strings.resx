@@ -368,6 +368,9 @@
   <data name="CancelSearch">
     <value>Cancel search</value>
   </data>
+  <data name="ClearUnresolvedConfirm" xml:space="preserve">
+    <value>Barback recorded process {0} for "{1}" before it last stopped, and it may still be running. Check in Task Manager that this process has ended; continuing can cause a duplicate instance. Clear the failure anyway?</value>
+  </data>
   <data name="ClearFailure">
     <value>Clear failure</value>
   </data>

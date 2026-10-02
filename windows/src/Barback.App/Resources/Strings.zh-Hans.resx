@@ -368,6 +368,9 @@
   <data name="CancelSearch">
     <value>取消搜索</value>
   </data>
+  <data name="ClearUnresolvedConfirm" xml:space="preserve">
+    <value>Barback 记录了“{1}”上次停止前的进程 {0}，它可能仍在运行。请在任务管理器中确认该进程已结束；继续可能导致重复运行。仍要清除失败状态吗？</value>
+  </data>
   <data name="ClearFailure">
     <value>清除失败状态</value>
   </data>

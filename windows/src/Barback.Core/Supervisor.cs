@@ -70,10 +70,11 @@ public sealed class Supervisor : IAsyncDisposable
     {
         if (IsStorageFailure(ex)) await Enqueue(() => { StorageError = ex.Message; return Task.CompletedTask; }).ConfigureAwait(false);
     }
+    private static string UnresolvedMessage(int pid) => $"Previous process (PID {pid}) may still be running; verify before retrying.";
     private void Publish()
     {
         var next = configs.Values.OrderBy(c => c.Priority).ThenBy(c => c.NameKey).ThenBy(c => c.Id)
-            .Select(c => new ProgramSnapshot(c, states.GetValueOrDefault(c.Id) ?? new(), states.GetValueOrDefault(c.Id)?.Active == true ? runConfigs.GetValueOrDefault(c.Id) : null)).ToArray();
+            .Select(c => new ProgramSnapshot(c, states.GetValueOrDefault(c.Id) ?? new(), states.GetValueOrDefault(c.Id)?.Active == true ? runConfigs.GetValueOrDefault(c.Id) : null, unresolved.TryGetValue(c.Id, out var identity) ? identity.Pid : null)).ToArray();
         if (!snapshot.SequenceEqual(next) || publishedStorageError != StorageError) { snapshot = next; publishedStorageError = StorageError; Changed?.Invoke(); }
     }
     public Task InitializeAsync() => Enqueue(async () =>
@@ -97,7 +98,7 @@ public sealed class Supervisor : IAsyncDisposable
                 RestartUtc = restarts
             };
             var remaining = oldRuns.FirstOrDefault(r => r.ProgramId == c.Id && r.Ended is null && r.Pid is int pid && r.CreationTime is long time && host.IsSameProcessAlive(pid, time));
-            if (remaining is not null) { unresolved[c.Id] = (remaining.Pid!.Value, remaining.CreationTime!.Value); states[c.Id] = states[c.Id] with { Phase = Phase.Fatal, Error = "Previous process still exists; verify before retrying." }; continue; }
+            if (remaining is not null) { unresolved[c.Id] = (remaining.Pid!.Value, remaining.CreationTime!.Value); states[c.Id] = states[c.Id] with { Phase = Phase.Fatal, Error = UnresolvedMessage(remaining.Pid!.Value) }; continue; }
             bool recover = !interrupted || previous.ResumeAfterAppExit || (previous.Phase is Phase.Starting or Phase.Running or Phase.Backoff && previous.StopReason is null);
             if (c.Enabled && c.Policy.Autostart && c.Kind == ProgramKind.Service && recover && previous.Phase != Phase.Fatal)
             {
@@ -162,9 +163,10 @@ public sealed class Supervisor : IAsyncDisposable
         if (exiting && e.Signal is Signal.Start or Signal.Restart) return;
         if (e.Signal is Signal.Start or Signal.Restart && unresolved.TryGetValue(id, out var previousIdentity))
         {
-            if (host.IsSameProcessAlive(previousIdentity.Pid, previousIdentity.Time)) throw new InvalidOperationException("Previous process identity is still live or cannot be verified. Retry after it has ended.");
+            if (host.IsSameProcessAlive(previousIdentity.Pid, previousIdentity.Time)) throw new InvalidOperationException(UnresolvedMessage(previousIdentity.Pid));
             unresolved.Remove(id);
         }
+        if (e.Signal == Signal.ClearFailure) unresolved.Remove(id); // explicit user confirmation that the old process is gone
         var before = states[id];
         // Policies of an active run remain immutable; a fresh manual start uses latest config.
         var basis = before.Active ? runConfigs.GetValueOrDefault(id) ?? config : config;

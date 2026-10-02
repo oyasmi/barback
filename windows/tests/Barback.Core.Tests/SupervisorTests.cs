@@ -44,7 +44,8 @@ public class SupervisorTests
         {
             Assert.Contains(store.Runs, r => r.Id == id); var run = new Run(id) { CleanupFailures = CleanupFailures, FailActivate = FailActivate }; created.Enqueue(run); if (Hold is not null) await Hold.Task.WaitAsync(token); return run;
         }
-        public bool IsSameProcessAlive(int pid, long time) => false;
+        public bool Alive;
+        public bool IsSameProcessAlive(int pid, long time) => Alive;
     }
     private static async Task Until(Func<bool> condition)
     {
@@ -395,6 +396,23 @@ public class SupervisorTests
             await Until(() => supervisor.Snapshot.Single().Runtime.Phase == expected);
             Assert.Null(supervisor.StorageError); Assert.True(host.Runs[0].Cleaned); Assert.True(host.Runs[0].Disposed);
             await Until(() => store.Runs.Single().Ended is not null); Assert.Equal(EndReason.HostFailed, store.Runs.Single().Reason);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+
+    [Fact] // F5
+    public async Task ClearFailureReleasesUnverifiableOldProcessSoStartWorks()
+    {
+        var root = Temp(); try
+        {
+            var store = new Store { Interrupted = true }; var service = Config(root); store.Configs.Add(service); var host = new Host(store) { Alive = true };
+            var old = new RunRecord(Guid.NewGuid(), service.Id, 1, 1, DateTimeOffset.UtcNow, Pid: 4321, CreationTime: 77); await store.BeginRunAsync(old with { Pid = null, CreationTime = null }); await store.IdentifyRunAsync(old.Id, 4321, 77);
+            await using var supervisor = new Supervisor(store, host, new Clock(), root); await supervisor.InitializeAsync();
+            // RecoverAsync of the fake store does not end old runs, mirroring a crash before the recorder ran.
+            var snapshot = supervisor.Snapshot.Single(); Assert.Equal(Phase.Fatal, snapshot.Runtime.Phase); Assert.Equal(4321, snapshot.UnresolvedPid); Assert.Contains("4321", snapshot.Runtime.Error);
+            var blocked = await Assert.ThrowsAsync<InvalidOperationException>(() => supervisor.SendAsync(service.Id, Signal.Start)); Assert.Contains("4321", blocked.Message);
+            await supervisor.SendAsync(service.Id, Signal.ClearFailure); Assert.Null(supervisor.Snapshot.Single().UnresolvedPid);
+            await supervisor.SendAsync(service.Id, Signal.Start); await Until(() => host.Runs.Length == 1 && host.Runs[0].Activated);
         }
         finally { Directory.Delete(root, true); }
     }

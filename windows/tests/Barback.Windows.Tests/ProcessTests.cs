@@ -105,4 +105,13 @@ public sealed class ProcessTests
         }
         finally { Directory.Delete(root, true); }
     }
+    [WindowsFact] // F5
+    public void ProcessIdentityDistinguishesReusedAndOwnedPids()
+    {
+        var host = new WindowsProcessHost(ConsoleHost); using var self = Process.GetCurrentProcess(); var creation = self.StartTime.ToFileTimeUtc();
+        Assert.False(host.IsSameProcessAlive(4, creation), "System process (access denied for standard users) must not lock a program.");
+        Assert.True(host.IsSameProcessAlive(self.Id, creation));
+        Assert.False(host.IsSameProcessAlive(self.Id, creation + 10_000_000));
+        Assert.False(host.IsSameProcessAlive(self.Id, 1), "Creation time before this boot cannot match.");
+    }
 }
