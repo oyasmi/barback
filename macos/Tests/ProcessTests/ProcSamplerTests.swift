@@ -2,12 +2,50 @@ import Foundation
 import Testing
 @testable import BarbackCore
 
-/// The panel's CPU readout is a difference between two samples, so it only exists once a
-/// pid has been sampled twice. Sampling once per panel open (and clearing history on close)
-/// therefore pinned every program at "0.0%" no matter how busy it was — these tests hold the
-/// two halves of the fix: the baseline reports "unknown", and a spinning child reports a
-/// real figure on the next sample.
+/// Services read lifetime CPU time from a single sample, while running one-shots still
+/// need two samples to measure CPU%. Exercise both against real processes.
 struct ProcSamplerTests {
+    @Test func cumulativeCPUIncludesWorkBeforeFirstSampleAndSurvivesClearingHistory() async throws {
+        let devNull = open("/dev/null", O_WRONLY)
+        defer { close(devNull) }
+        let spawned = try ProcessHost.spawn(command: "/bin/sh -c 'while :; do :; done'", useShell: false, directory: nil, environment: [:], outFD: devNull, errFD: devNull)
+        defer {
+            ProcessHost.sendKill(pid: spawned.pid, pgid: spawned.pgid, asGroup: true)
+            ProcSampler.clearHistory(pid: spawned.pid)
+            var status: Int32 = 0
+            _ = waitpid(spawned.pid, &status, 0)
+        }
+
+        // Burn CPU before the sampler has ever seen this PID, then stop the child so it
+        // consumes no more CPU even though wall time continues to pass.
+        try await Task.sleep(nanoseconds: 800_000_000)
+        try #require(kill(spawned.pid, SIGSTOP) == 0)
+        var stoppedStatus: Int32 = 0
+        try #require(waitpid(spawned.pid, &stoppedStatus, WUNTRACED) == spawned.pid)
+        let first = try #require(ProcSampler.sample(pid: spawned.pid))
+        #expect(first.cpuPercent == nil)
+        #expect(first.totalCPUSeconds > 0.3)
+        #expect(first.totalCPUSeconds < 1.6)
+
+        try await Task.sleep(nanoseconds: 200_000_000)
+        ProcSampler.clearHistory(pid: spawned.pid) // Closing and reopening the panel.
+        let reopened = try #require(ProcSampler.sample(pid: spawned.pid))
+        #expect(reopened.cpuPercent == nil)
+        #expect(abs(reopened.totalCPUSeconds - first.totalCPUSeconds) < 0.01)
+
+        // A fresh process starts its own CPU total rather than inheriting the old run.
+        let restarted = try ProcessHost.spawn(command: "/bin/sleep 5", useShell: false, directory: nil, environment: [:], outFD: devNull, errFD: devNull)
+        defer {
+            ProcessHost.sendKill(pid: restarted.pid, pgid: restarted.pgid, asGroup: true)
+            ProcSampler.clearHistory(pid: restarted.pid)
+            var status: Int32 = 0
+            _ = waitpid(restarted.pid, &status, 0)
+        }
+        let fresh = try #require(ProcSampler.sample(pid: restarted.pid))
+        #expect(fresh.totalCPUSeconds >= 0)
+        #expect(fresh.totalCPUSeconds < first.totalCPUSeconds)
+    }
+
     @Test func firstSampleHasNoCPUFigureYet() throws {
         let devNull = open("/dev/null", O_WRONLY)
         defer { close(devNull) }

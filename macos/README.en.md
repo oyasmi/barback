@@ -50,7 +50,7 @@ Left-click is the most-used surface in the app, so every routine action sits dir
 ├────────────────────────────────────────────────────────────┤
 │ Services 4                                                 │
 │ ▎● nslocal        running          [■ Stop ] [↻] [📄] [⌄] │
-│    PID 4821 · up 2d3h · CPU 0.3% · 48.0 MB                 │
+│    PID 4821 · up 2d3h · CPU total 12.3s · 48.0 MB        │
 │ ▎◑ api-server     retry 2/3        [■ Stop ] [↻] [📄] [⌄] │
 │    retrying in 12s · last exit today 22:26 · code 1        │
 │    ▁▁▁▁▁▁▁▁▃▃▃▃▃▃▃▃▃▃▃▃                                   │
@@ -66,6 +66,7 @@ Left-click is the most-used surface in the app, so every routine action sits dir
 ```
 
 - The primary button follows the state: **Stop** while running, **Start** while stopped, **Force kill** (with confirmation) while a stop is in flight.
+- Service CPU shows the cumulative user + system CPU time consumed since the current process started, resetting on restart. It uses `ms` / `s` / `min` / `h` / `d` and is available as soon as the panel opens.
 - Click anywhere on a row to expand a drawer with the command, working directory, log path, config summary, and *Reveal in Finder* / *Copy PID* / *Edit configuration*.
 - State is carried by shape and wording as well as colour, never colour alone; failure states offer the remedy as a button you can press right there.
 - **Right-click** (or Control-click) opens Barback's own menu — configuration window, run history, event log, preferences, paste-import, quit — with no overlap with the left-click panel.

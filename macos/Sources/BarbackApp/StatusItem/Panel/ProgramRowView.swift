@@ -181,7 +181,7 @@ struct ProgramRowView: View {
                 parts.append("up \(StatusStyle.uptimeShort(model.now.timeIntervalSince(startedAt)))")
             }
             if let sample = model.sample(for: snap) {
-                parts.append("CPU \(StatusStyle.cpu(sample.cpuPercent))")
+                parts.append("CPU 累计 \(StatusStyle.cpuTime(sample.totalCPUSeconds))")
                 parts.append(StatusStyle.memory(sample.rssBytes))
             }
             if serviceState == .stopping { parts.append("等待退出") }

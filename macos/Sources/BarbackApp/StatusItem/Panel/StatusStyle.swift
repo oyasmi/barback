@@ -205,6 +205,19 @@ enum StatusStyle {
         return percent < 10 ? String(format: "%.1f%%", percent) : String(format: "%.0f%%", percent)
     }
 
+    /// Cumulative CPU time uses duration units rather than a percentage. Keep sub-second
+    /// work visible for services that spend most of their lifetime idle.
+    static func cpuTime(_ seconds: TimeInterval) -> String {
+        let seconds = max(0, seconds)
+        if seconds < 1 { return String(format: "%.0fms", seconds * 1000) }
+        if seconds < 60 { return String(format: "%.1fs", seconds) }
+        if seconds < 3600 {
+            let total = Int(seconds)
+            return "\(total / 60)min\(total % 60)s"
+        }
+        return uptimeShort(seconds)
+    }
+
     /// Times from today read as a clock; older ones carry the date.
     static func timestamp(_ date: Date) -> String {
         let calendar = Calendar.current

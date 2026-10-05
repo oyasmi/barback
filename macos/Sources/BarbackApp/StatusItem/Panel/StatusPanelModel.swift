@@ -5,7 +5,7 @@ import BarbackCore
 
 /// View state for the left-click panel, and the single place the panel's actions are
 /// spelled out. Created when the panel opens and torn down when it closes, so the
-/// once-a-second sampling it drives exists only while someone is looking (design.md §6.2
+/// clock it drives exists only while someone is looking (design.md §6.2
 /// 常态零开销).
 @MainActor
 final class StatusPanelModel: ObservableObject {
@@ -58,17 +58,17 @@ final class StatusPanelModel: ObservableObject {
     /// needs second-by-second precision on these figures, and skipping the timer means zero
     /// sampling while the panel just sits open.
     ///
-    /// It has to be *two* samples, not one: CPU% is a difference in consumed CPU time over
-    /// a wall-clock window, so a single sample per open has nothing to subtract and could
-    /// only ever render 0.0% — which is what the panel did for every program regardless of
-    /// load. The follow-up sample supplies the other end of the window and then stops; the
-    /// row shows "CPU —" in between.
+    /// Services display cumulative CPU time, available immediately from the first sample.
+    /// Running one-shots still display CPU%, which needs a second sample over a wall-clock
+    /// window; their row shows "CPU —" until the follow-up sample lands.
     func startTicking() {
         tick()
-        cpuSampleTask = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: Self.cpuWindowNanoseconds)
-            guard !Task.isCancelled else { return }
-            self?.tick()
+        if appState.snapshot.programs.contains(where: { $0.program.kind == .oneshot && $0.pid != nil }) {
+            cpuSampleTask = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: Self.cpuWindowNanoseconds)
+                guard !Task.isCancelled else { return }
+                self?.tick()
+            }
         }
         startClock()
     }
@@ -80,7 +80,7 @@ final class StatusPanelModel: ObservableObject {
     /// countdown and a progress hairline that both sat perfectly still for as long as anyone
     /// looked at them, which design.md §6.3 explicitly says they shouldn't ("面板按本地时钟
     /// 推进，不必等定时器到点才更新"). This is a `Date()` assignment, not a resample: CPU/RSS
-    /// still cost exactly the two samples per open they always did, and the tick is skipped
+    /// are sampled only on open (plus a follow-up for one-shots), and the clock is skipped
     /// entirely when nothing is running, so an all-stopped panel is as free as before.
     private func startClock() {
         clockTask = Task { [weak self] in
