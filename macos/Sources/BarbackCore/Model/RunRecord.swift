@@ -5,6 +5,7 @@ public enum RunTrigger: String, Codable, Sendable {
     case autostart
     case autorestart
     case retry
+    case cron
 
     public var displayText: String {
         switch self {
@@ -12,6 +13,7 @@ public enum RunTrigger: String, Codable, Sendable {
         case .autostart: return "开机自启"
         case .autorestart: return "自动重启"
         case .retry: return "重试"
+        case .cron: return "CRON 定时"
         }
     }
 }

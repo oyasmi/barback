@@ -43,6 +43,11 @@ public final class Supervisor: @unchecked Sendable {
     private var pendingDeletions: [Int64: () -> Void] = [:]
     private var logRotationTimer: DispatchSourceTimer?
     private var livenessTimer: DispatchSourceTimer?
+    lazy var cronScheduler = CronScheduler(queue: queue) { [weak self] id in
+        guard let self, self.pendingDeletions[id] == nil,
+              let program = self.programs[id], program.kind == .oneshot, program.enabled else { return }
+        self.dispatchOneshotEvent(programId: id, event: .run, trigger: .cron)
+    }
     /// The newest `run` row per program, kept in memory so building a snapshot costs no
     /// queries at all. It used to be one `fetchRuns(limit: 1)` per program *per publish*,
     /// and a batch command like 「全部停止」 publishes once per program — N programs cost
@@ -82,6 +87,7 @@ public final class Supervisor: @unchecked Sendable {
             recoverFromCrashIfNeeded()
             try? store.insertEvent(EventRecord(level: .info, type: .appStarted))
             autostartServices()
+            refreshCronSchedules()
             publishSnapshot()
             scheduleLogRotationCheck()
             scheduleLivenessReconcile()
@@ -388,6 +394,7 @@ public final class Supervisor: @unchecked Sendable {
                 }
                 try? backupConfig()
                 try? store.insertEvent(EventRecord(level: .info, programId: saved.id, type: .configChanged))
+                refreshCronSchedules()
                 completion(.success(saved))
                 publishSnapshot()
             } catch {
@@ -432,6 +439,7 @@ public final class Supervisor: @unchecked Sendable {
                 return
             }
             pendingDeletions[id] = completion
+            refreshCronSchedules()
             if serviceActive {
                 dispatchServiceEvent(programId: id, event: .stop)
             }
@@ -463,6 +471,7 @@ public final class Supervisor: @unchecked Sendable {
             LogManager.removeServiceLogs(name: deletedName, logsDir: logsDir)
         }
         programs.removeValue(forKey: id)
+        refreshCronSchedules()
         lastRuns.removeValue(forKey: id)
         serviceRuntimes.removeValue(forKey: id)
         oneshotRuntimes.removeValue(forKey: id)
@@ -545,6 +554,7 @@ public final class Supervisor: @unchecked Sendable {
             // zero config backups — the one mechanism that survives a corrupt/lost database
             // (design.md §8.1, R15).
             if !saved.isEmpty { try? backupConfig() }
+            refreshCronSchedules()
             publishSnapshot()
             completion(saved)
         }
@@ -793,8 +803,8 @@ public final class Supervisor: @unchecked Sendable {
 
     // MARK: - Oneshot state machine wiring
 
-    private func dispatchOneshotEvent(programId: Int64, event: OneshotEvent) {
-        guard let program = programs[programId] else { return }
+    private func dispatchOneshotEvent(programId: Int64, event: OneshotEvent, trigger: RunTrigger = .manual) {
+        guard let program = programs[programId], program.kind == .oneshot else { return }
         let runtime = oneshotRuntimes[programId] ?? OneshotRuntime()
         // A second run while one is already in flight was only ever safe on paper: the
         // runtime/currentRunId bookkeeping is single-slot, so a concurrent run silently
@@ -803,14 +813,14 @@ public final class Supervisor: @unchecked Sendable {
         let (newRuntime, actions) = OneshotStateMachine.reduce(runtime: runtime, event: event, config: program)
         oneshotRuntimes[programId] = newRuntime
         for action in actions {
-            perform(action, programId: programId, program: program)
+            perform(action, programId: programId, program: program, trigger: trigger)
         }
     }
 
-    private func perform(_ action: OneshotAction, programId: Int64, program: Program) {
+    private func perform(_ action: OneshotAction, programId: Int64, program: Program, trigger: RunTrigger) {
         switch action {
         case .spawn:
-            spawnOneshot(program: program)
+            spawnOneshot(program: program, trigger: trigger)
         case .sendSignal(let name, let group):
             if let runtime = oneshotRuntimes[programId], let pid = runtime.pid {
                 ProcessHost.signal(pid: pid, pgid: runtime.pgid, name: name, asGroup: group)
@@ -873,13 +883,13 @@ public final class Supervisor: @unchecked Sendable {
         }
     }
 
-    private func spawnOneshot(program: Program) {
+    private func spawnOneshot(program: Program, trigger: RunTrigger) {
         needsRestartIds.remove(program.id)
         // Same fd-leak/early-clear hazards as `spawnService` — see the comments there (ex-F30).
         var logFDs: LogFDs?
         defer { if let logFDs { LogManager.closeFDs(logFDs) } }
         do {
-            var run = RunRecord(programId: program.id, trigger: .manual)
+            var run = RunRecord(programId: program.id, trigger: trigger)
             run.id = try store.insertRun(run)
             // Set as soon as the row exists, not after `openRunLog` below also succeeds — a
             // log-open failure (unwritable runs dir, out of fds) used to throw before this ran,
@@ -1053,6 +1063,18 @@ public final class Supervisor: @unchecked Sendable {
 
     // MARK: - Sleep/wake reconciliation (design.md §3.8)
 
+    private func refreshCronSchedules() {
+        cronScheduler.update(programs: programs.values.filter { pendingDeletions[$0.id] == nil })
+    }
+
+    public func suspendCronForSleep() {
+        queue.async { [self] in cronScheduler.suspend() }
+    }
+
+    public func recalculateCronSchedules() {
+        queue.async { [self] in cronScheduler.recalculate() }
+    }
+
     /// Shared by wake, the periodic safety-net timer, and panel-open: re-verifies every
     /// active pid against kqueue's view of the world. kqueue's `NOTE_EXIT` almost never
     /// misses, but `adoptSurvivingProcess` has a real (if narrow) window where a crash-adopted
@@ -1091,6 +1113,7 @@ public final class Supervisor: @unchecked Sendable {
     /// a moment to actually come back before `verifyAlive`'s `proc_pidinfo` call runs against
     /// a system that only just resumed.
     public func reconcileAfterWake() {
+        queue.async { [self] in cronScheduler.resume() }
         queue.asyncAfter(deadline: .now() + 3) { [self] in
             reconcileLiveness()
             try? store.insertEvent(EventRecord(level: .info, type: .wakeReconcile))
@@ -1195,6 +1218,7 @@ public final class Supervisor: @unchecked Sendable {
 
     public func stopAllForTermination(completion: @escaping @MainActor @Sendable () -> Void) {
         queue.async { [self] in
+            cronScheduler.stop()
             pendingTerminationHandlers.append(completion)
             // The app is quitting — no pending restart should survive to spawn a new
             // instance while everything else is being torn down (design.md §3.5, R08).

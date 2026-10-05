@@ -70,6 +70,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSWorkspace.shared.notificationCenter.addObserver(
             self, selector: #selector(handleWake), name: NSWorkspace.didWakeNotification, object: nil
         )
+        NSWorkspace.shared.notificationCenter.addObserver(
+            self, selector: #selector(handleSleep), name: NSWorkspace.willSleepNotification, object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleClockChange), name: .NSSystemClockDidChange, object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleClockChange), name: .NSSystemTimeZoneDidChange, object: nil
+        )
 
         supervisor.bootstrap()
 
@@ -116,6 +125,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc private func handleWake() {
         supervisor.reconcileAfterWake()
+    }
+
+    @objc private func handleSleep() {
+        supervisor.suspendCronForSleep()
+    }
+
+    @objc private func handleClockChange() {
+        supervisor.recalculateCronSchedules()
     }
 
     // MARK: - Notifications (design.md APP-4)

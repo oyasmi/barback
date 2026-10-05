@@ -24,10 +24,13 @@ Barback is a menu-bar-resident process manager. Hand it the local services, tunn
 - Crash adoption: if Barback itself is `kill -9`'d, the next launch reclaims child processes that are still running (verified by PID *and* process start time, so a recycled PID is never mistaken for the original)
 - Reconciles real process liveness after the machine wakes from sleep
 
-**One-shot commands** (triggered by hand, run to completion)
+**One-shot commands** (manual or CRON triggers, run to completion)
 
 - Timeout kill, confirmation prompt for dangerous commands
 - Every run keeps its output and a record (time / duration / exit code / outcome), trimmed to a per-command limit
+- Optional five-field CRON in the configuration's run rules: minute, hour, day of month, month, weekday. Leave blank to disable. Supports numbers, `*`, lists, ranges and `/steps`; Sunday is `0` or `7`. Examples: `0 9 * * 1-5` for weekdays at 9 AM, `*/15 * * * *` for every 15 minutes
+- Uses the system's local time zone while Barback is running and the computer is awake. Missed occurrences during sleep, shutdown or app exit are skipped; an occurrence is also skipped if the command is still running. Scheduled runs bypass manual confirmation and are marked in history
+- Restricted day-of-month and weekday fields use OR. Missing DST times are skipped; repeated local times use the first occurrence only. All schedules share one timer armed for the next occurrence, with no background polling
 
 **Everything else**
 

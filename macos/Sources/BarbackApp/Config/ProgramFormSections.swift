@@ -177,6 +177,15 @@ struct ProgramFormBody: View {
                     .configScrollAnchor("restart")
             } else {
                 Toggle("执行前确认", isOn: $program.confirmBeforeRun)
+                FormRow(label: "CRON 定时", messages: index.messages(.cronExpression)) {
+                    TextField("留空关闭，例如：0 9 * * 1-5", text: optionalText($program.cronExpression))
+                        .font(.system(.body, design: .monospaced))
+                        .configField(.cronExpression)
+                    Text("分 时 日 月 星期；支持 *、逗号、范围和 /步长。星期 0 或 7 为周日。")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Text("按系统本地时区，仅在 Barback 运行且电脑清醒时触发；休眠或退出期间不补跑，正在执行时跳过。定时执行无需确认，「执行前确认」仅用于手动运行。")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
                 FormRow(label: "执行超时", messages: index.messages(.number("timeoutSeconds"))) {
                     HStack(spacing: 6) {
                         IntField(value: $program.timeoutSeconds)
@@ -254,6 +263,7 @@ struct ProgramFormBody: View {
         case .name: return "identity"
         case .command, .directory: return "command"
         case .environment: return "environment"
+        case .cronExpression: return "lifecycle"
         case .logPath, .stderrPath: return "log"
         case .number(let name):
             if ["logMaxBytes", "logBackups", "historyLimit"].contains(name) { return "log" }

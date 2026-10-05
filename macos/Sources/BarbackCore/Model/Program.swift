@@ -57,6 +57,7 @@ public struct Program: Codable, Sendable, Equatable, Identifiable {
     public var timeoutSeconds: Int
     public var confirmBeforeRun: Bool
     public var historyLimit: Int
+    public var cronExpression: String?
 
     // stop (shared)
     public var stopSignal: String
@@ -104,6 +105,7 @@ public struct Program: Codable, Sendable, Equatable, Identifiable {
         timeoutSeconds: Int = 0,
         confirmBeforeRun: Bool = false,
         historyLimit: Int = 50,
+        cronExpression: String? = nil,
         stopSignal: String = "TERM",
         stopWaitSeconds: Int = 10,
         stopAsGroup: Bool = true,
@@ -141,6 +143,7 @@ public struct Program: Codable, Sendable, Equatable, Identifiable {
         self.timeoutSeconds = timeoutSeconds
         self.confirmBeforeRun = confirmBeforeRun
         self.historyLimit = historyLimit
+        self.cronExpression = cronExpression
         self.stopSignal = stopSignal
         self.stopWaitSeconds = stopWaitSeconds
         self.stopAsGroup = stopAsGroup
@@ -204,6 +207,7 @@ public enum ProgramValidationError: Error, LocalizedError, Sendable, Equatable {
     case directoryNotFound(String)
     case invalidLogPath(String)
     case invalidNumber(String)
+    case invalidCronExpression
 
     public var errorDescription: String? {
         switch self {
@@ -214,6 +218,7 @@ public enum ProgramValidationError: Error, LocalizedError, Sendable, Equatable {
         case .directoryNotFound(let p): return "工作目录不存在：\(p)"
         case .invalidLogPath(let p): return "日志路径无效：\(p)"
         case .invalidNumber(let field): return "数值字段非法：\(field)"
+        case .invalidCronExpression: return CronExpression.ParseError.invalid.errorDescription
         }
     }
 }
@@ -277,6 +282,10 @@ public enum ProgramValidator {
         if program.stopWaitSeconds < 0 { errors.append(.invalidNumber("stopWaitSeconds")) }
         if program.timeoutSeconds < 0 { errors.append(.invalidNumber("timeoutSeconds")) }
         if program.historyLimit < 1 { errors.append(.invalidNumber("historyLimit")) }
+        if program.kind == .oneshot, let expression = program.cronExpression,
+           (try? CronExpression(expression)) == nil {
+            errors.append(.invalidCronExpression)
+        }
         if program.logMaxBytes < 0 { errors.append(.invalidNumber("logMaxBytes")) }
         if program.logBackups < 0 { errors.append(.invalidNumber("logBackups")) }
         return errors

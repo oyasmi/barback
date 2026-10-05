@@ -13,7 +13,7 @@
 所有取舍服从以下四条，冲突时按顺序仲裁：
 
 1. **简单优先**——单进程、单数据库、无守护进程、无 IPC、无外部配置文件。能少一个活动部件就少一个。
-2. **常态零开销**——无事件、无界面打开时 CPU 为零。进程退出靠 kqueue 事件、日志不经过主程序、菜单关闭即停止采样；全系统仅有的周期性任务是两个 300 s（leeway 30 s）定时器——日志尺寸检查、以及 §3.2/§3.7 提到的存活兜底校对——都足够宽松，内核可以自由合并唤醒。
+2. **常态零开销**——无事件、无界面打开时 CPU 为零。进程退出靠 kqueue 事件、日志不经过主程序、菜单关闭即停止采样；全系统仅有的周期性检查是两个 300 s（leeway 30 s）定时器——日志尺寸检查、以及 §3.2/§3.7 提到的存活兜底校对——都足够宽松，内核可以自由合并唤醒。CRON 只对下次实际触发设置一个共享的单次定时器，不增加周期性检查。
 3. **语义可预期**——与 supervisor 同名的字段必须同义。
 4. **故障不扩散**——单个被管进程的任何异常不得波及 Barback 或其他被管进程。
 
@@ -178,9 +178,18 @@ IDLE ──[运行]──► RUNNING ──┬─ 退出码 ∈ exitCodes ─►
 
 - **无** autostart / autorestart / startSeconds / startRetries / 退避——一次性命令永不自动重试。
 - 禁止并发：RUNNING 时菜单「运行」置灰，`Supervisor.dispatchOneshotEvent` 无条件拒绝重复触发。曾经计划过 `allowConcurrent=true` 放开多实例，但 `OneshotRuntime`/`currentRunId` 只有单槽位记账，两个并发实例会互相踩踏对方的运行记录，故已放弃该方向并移除相关字段（ex-F12）。
-- `confirmBeforeRun=true` 的命令在触发前弹确认框。
+- `confirmBeforeRun=true` 的命令在手动触发前弹确认框；配置 CRON 即启用无人值守执行，界面明确说明定时触发不弹确认。
 - 每次执行写一条 `runs` 记录并分配独立输出文件 `runs/<name>-<runId>.log`——文件名取决于 run id，所以路径只能在插入记录之后回写（`Store.setRunLogPath`）；超出保留条数（默认 50）时按 FIFO 删记录与文件。
 - 终态触发系统通知（结果 + 耗时），点击通知打开该次输出。
+
+#### CRON 定时（v0.3.3）
+
+- `Program.cronExpression: String?` / `program.cron_expression TEXT`，空值关闭，仅对启用的一次性命令生效。数据库 v3 原子迁移加列，迁移前备份配置；旧 JSON 备份缺少该可选字段时仍可恢复。
+- 五段数字表达式：分（0–59）、时（0–23）、日（1–31）、月（1–12）、星期（0–7，0/7 为周日），支持 `*`、列表、范围、步长；不支持秒、名称、`@daily`、Quartz 扩展。日或星期以 `*` 开头时两者都须匹配，否则采用 CRON 的 OR 语义。保存时拒绝非法表达式和永不存在的日期。
+- `CronExpression` 无 I/O，使用本地时区的公历：跳过不匹配的日期，再直接选择允许的时/分，不逐分钟扫描。搜索上限为 8 年（覆盖 2100 年等非闰世纪造成的闰日间隔）；夏令时缺失时间跳过、重复本地时间只取第一次。
+- `CronScheduler` 在 core 串行队列缓存解析结果和下一次时间，所有条目共用一个 `DispatchSourceTimer`，按最早的墙钟时间单次唤醒，固定 1 s leeway；没有有效计划、休眠或退出时没有调度定时器。回调只重新计算到期条目的下次时间，不添加后台轮询、外部 cron/launchd 作业或调度记录表。
+- 启动、配置保存/删除、唤醒、系统时间/时区变更后，从当前时间严格向后计算；休眠前取消定时器，代次标记拒绝取消前已排队的回调。错过的时间不补跑；正常回调允许在指定分钟内的系统调度延迟，迟到整分钟后跳过。计划不持久化，也不保存待补跑队列。
+- 触发复用一次性命令的状态机、超时、日志和历史，`run.trigger = 'cron'`。正在执行（含停止中）的命令跳过当次触发、不并发、不排队；禁用或删除中的条目不触发。修改计划立即生效，不影响已启动的命令，退出清理前关闭调度。
 
 ### 3.5 停止序列（两类通用）
 
@@ -226,7 +235,9 @@ applicationShouldTerminate:
 
 ### 3.8 睡眠 / 唤醒
 
-订阅 `NSWorkspace.didWakeNotification`，唤醒后延迟 3 秒对所有活动 PID 做一次 §3.7 的双因子校验，修正睡眠期间的状态漂移。所有 `DispatchSourceTimer` 基于 mach 单调时钟调度（`.now() + N`），系统睡眠期间该时钟本身暂停，故定时器天然按"清醒时长"到期，无需显式重算——`backoffEndDates`（面板倒计时用的墙钟时间戳）是当前唯一的例外，一次长睡眠后可能短暂显示与实际到期时间不符的倒计时，下一次快照发布即会更正。
+订阅 `NSWorkspace.didWakeNotification`，唤醒后延迟 3 秒对所有活动 PID 做一次 §3.7 的双因子校验，修正睡眠期间的状态漂移。生命周期定时器基于 mach 单调时钟调度（`.now() + N`），系统睡眠期间该时钟本身暂停，故定时器天然按"清醒时长"到期，无需显式重算——`backoffEndDates`（面板倒计时用的墙钟时间戳）在一次长睡眠后可能短暂显示与实际到期时间不符的倒计时，下一次快照发布即会更正。
+
+CRON 使用墙钟时间，另订阅 `NSWorkspace.willSleepNotification`：休眠前取消 CRON 定时器，唤醒时立即从当前时间重新计算，只安排未来时间，不等待上述 3 秒存活核对。系统时间和时区变化也通过通知重算，不靠定期检查。
 
 ---
 
@@ -296,6 +307,7 @@ CREATE TABLE program (
   confirm_before_run INTEGER NOT NULL DEFAULT 0,
   allow_concurrent INTEGER NOT NULL DEFAULT 0,
   history_limit INTEGER NOT NULL DEFAULT 50,
+  cron_expression TEXT,                       -- NULL = 关闭，五段 CRON（v3）
   -- 停止（两类通用）
   stop_signal TEXT NOT NULL DEFAULT 'TERM',
   stop_wait_seconds INTEGER NOT NULL DEFAULT 10,
@@ -327,7 +339,7 @@ CREATE TABLE live (
 CREATE TABLE run (
   id INTEGER PRIMARY KEY,
   program_id INTEGER NOT NULL REFERENCES program(id) ON DELETE CASCADE,
-  trigger TEXT NOT NULL,                      -- manual|autostart|autorestart|retry
+  trigger TEXT NOT NULL,                      -- manual|autostart|autorestart|retry|cron
   pid INTEGER, started_at REAL NOT NULL, ended_at REAL,
   exit_code INTEGER, term_signal INTEGER,
   outcome TEXT,                               -- succeeded|failed|timeout|cancelled|unknown

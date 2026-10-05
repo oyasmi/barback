@@ -10,6 +10,7 @@ enum FormField: Hashable {
     case logPath
     case stderrPath
     case environment
+    case cronExpression
     case number(String)
 }
 
@@ -26,6 +27,7 @@ struct FieldErrorIndex {
             case .directoryNotFound: field = .directory
             case .invalidLogPath(let path): field = path == program?.logStderrPath && path != program?.logPath ? .stderrPath : .logPath
             case .invalidNumber(let name): field = .number(name)
+            case .invalidCronExpression: field = .cronExpression
             }
             byField[field, default: []].append(error.errorDescription ?? "")
         }
@@ -34,7 +36,7 @@ struct FieldErrorIndex {
 
     var firstField: FormField? {
         let order: [FormField] = [
-            .name, .command, .directory, .environment, .number("timeoutSeconds"),
+            .name, .command, .directory, .environment, .cronExpression, .number("timeoutSeconds"),
             .number("startSeconds"), .number("startRetries"), .number("backoffBase"),
             .number("backoffMax"), .number("stormWindowSec"), .number("stormMaxRestarts"),
             .number("stopWaitSeconds"), .logPath, .stderrPath, .number("logMaxBytes"),
