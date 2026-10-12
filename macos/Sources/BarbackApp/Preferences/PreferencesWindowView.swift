@@ -6,6 +6,8 @@ import BarbackCore
 /// are stacked as sections of one grouped form.
 struct PreferencesWindowView: View {
     @ObservedObject var appState: AppState
+    /// 「立即重启」 after a language change; quits through the normal termination path.
+    let onRelaunch: () -> Void
     @AppStorage(Preferences.Key.menuDensity) private var menuDensity = MenuDensity.normal.rawValue
     @AppStorage(Preferences.Key.notifyFatal) private var notifyFatal = true
     @AppStorage(Preferences.Key.notifyRestart) private var notifyRestart = true
@@ -14,12 +16,39 @@ struct PreferencesWindowView: View {
     @AppStorage(Preferences.Key.logFontSize) private var logFontSize = 11.0
     @State private var loginItemEnabled = LoginItemManager.isRegistered
     @State private var snapshotRefreshedAt: Date?
+    @State private var language = AppLanguage.stored
+    /// The choice resolves to a language other than the one this process launched with.
+    @State private var languageRestartPending = AppLanguage.stored.resolved != AppLanguage.current
 
     private var notificationsOff: Bool { !notifyFatal && !notifyRestart && !notifyOneshot }
 
     var body: some View {
         Form {
             Section {
+                LabeledContent("语言") {
+                    Picker("", selection: $language) {
+                        ForEach(AppLanguage.allCases) { option in
+                            Text(option.title).tag(option)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 160)
+                }
+                .onChange(of: language) { _, newValue in
+                    AppLanguage.store(newValue)
+                    languageRestartPending = newValue.resolved != AppLanguage.current
+                }
+                // A bare `make run` binary has no localizations to switch to and cannot be
+                // relaunched, so the hint would only mislead there.
+                if languageRestartPending && AppRelauncher.isAvailable {
+                    HStack(spacing: 8) {
+                        Text("语言将在 Barback 重新启动后生效。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                        Button("立即重启", action: onRelaunch)
+                    }
+                }
                 Toggle("开机自动启动 Barback", isOn: $loginItemEnabled)
                     .onChange(of: loginItemEnabled) { _, newValue in LoginItemManager.setEnabled(newValue) }
                 LabeledContent("面板密度") {

@@ -112,7 +112,11 @@ UI text is written in Chinese in the sources and that Chinese text is the lookup
 straight to SwiftUI initializers localize automatically; strings that travel as `String` (custom view
 parameters, `NSAlert`, menus, model display text) must use `String(localized:)`. When adding or editing a
 string, add or update its `.strings` entry with the interpolation written as a format specifier (`%@`,
-`%lld` for `Int`, `%d` for `Int32`). See design.md §6.7.
+`%lld` for `Int`, `%d` for `Int32`). `make check-strings` (`Scripts/check-strings.py`, also run in CI) reports
+Chinese literals without an English entry and entries whose format specifiers disagree with their key; mark
+text that is deliberately not translated with a trailing `// l10n: ignore`. The interface language is chosen in
+preferences (`Preferences/AppLanguage.swift`) and stored as `AppleLanguages` in Barback's defaults domain; it
+applies on the next launch (`AppRelauncher`), never live. See design.md §6.7.
 
 ## Git
 

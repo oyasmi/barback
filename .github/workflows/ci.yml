@@ -20,6 +20,10 @@ jobs:
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode.app
 
+      - name: Check localized strings
+        # Every Chinese UI string needs its en.lproj entry (macos/docs/design.md §6.7).
+        run: Scripts/check-strings.py
+
       - name: swift build
         run: swift build
 

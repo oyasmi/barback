@@ -143,6 +143,7 @@
 "在访达中打开" = "Open in Finder";
 "在配置窗口新建服务或一次性命令，\n也可以从 supervisor 配置粘贴导入。" = "Create a service or one-shot command in the configuration window,\nor paste a supervisor configuration to import it.";
 "基本信息" = "Basics";
+"备份 %@.1 失败：%@" = "Backing up %@.1 failed: %@";
 "备注" = "Notes";
 "复制" = "Copy";
 "复制 PID %d" = "Copy PID %d";
@@ -203,6 +204,7 @@
 "恢复本节默认值" = "Restore Section Defaults";
 "成功" = "Succeeded";
 "成功退出码" = "Success exit codes";
+"截断 %@ 失败：errno=%d" = "Truncating %@ failed: errno=%d";
 "手动" = "Manual";
 "打开事件日志" = "Open event log";
 "打开日志目录" = "Open Logs Folder";
@@ -245,6 +247,7 @@
 "新建程序或导入" = "Create or import a program";
 "无 RPC 接口" = "There is no RPC interface";
 "无法初始化数据库" = "Cannot initialize the database";
+"无法打开 %@ 进行截断" = "Cannot open %@ to truncate it";
 "无法打开日志文件：%@" = "Cannot open log file: %@";
 "无法映射：" = "Not mapped: ";
 "无输出文件" = "No output file";
@@ -362,10 +365,13 @@
 "该命令已标记为需要确认。" = "This command is marked as needing confirmation.";
 "该程序正在运行，删除前会先停止它。" = "The program is running; it is stopped before it is deleted.";
 "详情" = "Details";
+"语言" = "Language";
+"语言将在 Barback 重新启动后生效。" = "The new language takes effect after Barback restarts.";
 "请使用 KEY=VALUE 格式" = "use the KEY=VALUE format";
 "超时" = "Timed out";
 "超时时间" = "Timeout";
 "跟随" = "Follow";
+"跟随系统" = "System Language";
 "轮转策略" = "Rotation";
 "输出" = "Output";
 "输出与历史" = "Output and history";
@@ -405,10 +411,12 @@
 "重做" = "Redo";
 "重启 (⌘R)" = "Restart (⌘R)";
 "重启" = "Restart";
+"重启将停止 %lld 个正在运行的程序，开启了自动启动的服务会在重启后重新拉起。" = "%lld running programs will be stopped. Services with autostart turned on start again after the restart.";
 "重启时" = "On restart";
 "重启时轮转，保留 %lld 份" = "rotate on restart, keep %lld";
 "重启间隔" = "Restart interval";
 "重启风暴" = "Restart storm";
+"重新启动 Barback？" = "Restart Barback?";
 "重新抓取" = "Capture Again";
 "重试" = "Retry";
 "重试 %lld/%lld" = "Retry %lld/%lld";

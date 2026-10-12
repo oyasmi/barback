@@ -77,7 +77,7 @@ Left-click is the most-used surface in the app, so every routine action sits dir
 - The menu bar icon is always the wine glass, with a corner badge: red = something failed, accent = a command is running, hollow ring = a service that should be up is stopped.
 - **Right-click** (or Control-click, or ⋯ in the panel header) opens Barback's own menu — configuration window, run history, event log, preferences, open at login, paste-import, quit (⌘Q).
 
-> The interface is currently Simplified Chinese only; English localization is planned.
+> The interface is available in Simplified Chinese and English and follows the system language by default. To fix it to one of them, use *Settings → General → Language*; the change applies after Barback restarts.
 
 ## Install
 
@@ -160,7 +160,7 @@ The core runs on a single serial queue, imports neither AppKit nor SwiftUI, and 
 
 ## Known limitations
 
-- Running outside an `.app` bundle (e.g. `make run`) skips system notifications: `UNUserNotificationCenter` needs a real bundle identity.
+- Running outside an `.app` bundle (e.g. `make run`) skips system notifications: `UNUserNotificationCenter` needs a real bundle identity. Such a run also has no localized strings and always shows the Chinese interface.
 - No root/system-level services, no remote management, no scheduled jobs (that is launchd's job), no interactive processes that need a TTY.
 - No command line client: that would need IPC the single-process design deliberately avoids.
 - Further open questions are listed in the [design document](docs/design.md) §9.

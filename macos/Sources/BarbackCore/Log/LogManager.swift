@@ -192,19 +192,19 @@ public enum LogManager {
             do {
                 try fm.copyItem(atPath: path, toPath: "\(path).1")
             } catch {
-                throw LogManagerError.rotationFailed("备份 \(path).1 失败：\(error)")
+                throw LogManagerError.rotationFailed(String(localized: "备份 \(path).1 失败：\(error.localizedDescription)"))
             }
         }
 
         let fd = open(path, O_WRONLY)
-        guard fd >= 0 else { throw LogManagerError.rotationFailed("无法打开 \(path) 进行截断") }
+        guard fd >= 0 else { throw LogManagerError.rotationFailed(String(localized: "无法打开 \(path) 进行截断")) }
         defer { close(fd) }
         // Checking the return value matters here for the same reason as the copy above: an
         // unchecked `ftruncate` used to report `rotated: true` (and log a plain `.logRotated`
         // info event) even on failure, hiding the fact that the live file never actually
         // shrank (R02).
         guard ftruncate(fd, 0) == 0 else {
-            throw LogManagerError.rotationFailed("截断 \(path) 失败：errno=\(errno)")
+            throw LogManagerError.rotationFailed(String(localized: "截断 \(path) 失败：errno=\(errno)"))
         }
         let marker = "----- rotated \(ISO8601DateFormatter().string(from: Date())) -----\n"
         marker.withCString { cstr in _ = write(fd, cstr, strlen(cstr)) }

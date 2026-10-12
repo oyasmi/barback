@@ -1,4 +1,4 @@
-.PHONY: all build test run sign clean
+.PHONY: all build test run check-strings sign clean
 
 # Default: build dist/Barback.app and dist/Barback-<version>-<arch>.dmg (arm64, design.md §8.5).
 all:
@@ -17,6 +17,11 @@ test:
 # notifications and the login item are unavailable — see README "已知限制").
 run:
 	swift run BarbackApp
+
+# Every Chinese UI string in Sources/ has an English entry with matching format specifiers
+# (design.md §6.7).
+check-strings:
+	Scripts/check-strings.py
 
 # Sign (Developer ID + Hardened Runtime), notarize and staple the dist/*.dmg.
 # Requires DEVELOPER_ID_APPLICATION to be set in the environment.

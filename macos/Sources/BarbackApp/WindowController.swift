@@ -16,6 +16,9 @@ final class WindowController: NSObject, NSWindowDelegate {
     private var preferencesWindow: NSWindow?
     private var importWindow: NSWindow?
     private var logWindows: [Int64: NSWindow] = [:]
+    /// Quits and relaunches Barback (偏好设置 「立即重启」); installed by `AppDelegate`, which
+    /// owns termination.
+    var relaunchHandler: (() -> Void)?
 
     init(appState: AppState) {
         self.appState = appState
@@ -118,7 +121,7 @@ final class WindowController: NSObject, NSWindowDelegate {
 
     func showPreferencesWindow() {
         if preferencesWindow == nil {
-            let view = PreferencesWindowView(appState: appState)
+            let view = PreferencesWindowView(appState: appState, onRelaunch: { [weak self] in self?.relaunchHandler?() })
             let window = makeWindow(title: String(localized: "偏好设置"), size: NSSize(width: 480, height: 520), autosaveName: "barback.preferences", content: view)
             window.delegate = self
             preferencesWindow = window

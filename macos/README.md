@@ -78,6 +78,8 @@ Barback 是一个常驻状态栏的进程管理器：把你长年跑在 Mac 上�
 - 状态栏图标始终是酒杯，以角标表示状态：红点 = 有失败，强调色点 = 有命令在执行，空心环 = 有应当在跑的服务停着。
 - **右键**（或 Control + 左键，或面板头部的 ⋯）是 Barback 自身的功能菜单：配置窗口、执行历史、事件日志、偏好设置、开机自动启动、粘贴导入、退出（⌘Q）。
 
+> 界面支持简体中文与英文，默认跟随系统语言；要固定为其中一种，在「偏好设置 → 通用 → 语言」中选择，重新启动 Barback 后生效。
+
 ## 安装
 
 要求 **macOS 14+ · Apple Silicon**（`ARCHS="arm64 x86_64" Scripts/build.sh` 可构建 Universal 2）、Xcode 命令行工具（Swift 6）。
@@ -160,7 +162,7 @@ Tests/                 CoreTests 纯函数单测 · ProcessTests 真实进程 ·
 
 ## 已知限制
 
-- 未打包为 `.app` 时运行（如 `make run`）会跳过系统通知：`UNUserNotificationCenter` 需要真实的 bundle identity。
+- 未打包为 `.app` 时运行（如 `make run`）会跳过系统通知：`UNUserNotificationCenter` 需要真实的 bundle identity；此时也没有本地化资源，界面总是中文。
 - 不支持 root / 系统级服务、远程管理、定时任务（那是 launchd 的地盘）、需要 TTY 输入的交互式进程。
 - 不提供命令行客户端：单进程架构下需要额外 IPC。
 - 更多未决问题见[设计文档](docs/design.md) §9。

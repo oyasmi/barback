@@ -12,6 +12,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var windowController: WindowController!
     private var onboardingWindow: NSWindow?
     private var isTerminating = false
+    /// Set by `relaunch()`: the quit that follows starts the relaunch helper once shutdown
+    /// completes. Cleared again if that quit is cancelled, so a later ordinary quit does not
+    /// relaunch.
+    private var relaunchAfterTermination = false
+    /// The relaunch alert already warned that running programs will be stopped, which makes
+    /// the running-one-shot confirmation redundant for that quit.
+    private var stoppingProgramsConfirmed = false
     /// Last time each (program, notification kind) pair was posted, for APP-4 debouncing.
     private var lastNotified: [String: Date] = [:]
 
@@ -51,6 +58,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         supervisor = Supervisor(store: store)
         appState = AppState(supervisor: supervisor, store: store)
         windowController = WindowController(appState: appState)
+        windowController.relaunchHandler = { [weak self] in self?.relaunch() }
         NSApp.mainMenu = AppMenuBuilder.buildMainMenu(appState: appState, windowController: windowController)
         statusItemController = StatusItemController(appState: appState)
         statusItemController.windowController = windowController
@@ -197,19 +205,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     // MARK: - Termination (design.md §3.6)
 
+    /// 偏好设置 「立即重启」 after a language change (design.md §6.7): an ordinary quit —
+    /// every managed process is stopped, and autostart services come back with the new
+    /// instance — followed by a fresh launch.
+    private func relaunch() {
+        guard !isTerminating, AppRelauncher.isAvailable else { return }
+        let activeCount = appState.snapshot.programs.filter(\.isActive).count
+        if activeCount > 0 {
+            let alert = NSAlert()
+            alert.messageText = String(localized: "重新启动 Barback？")
+            alert.informativeText = String(localized: "重启将停止 \(activeCount) 个正在运行的程序，开启了自动启动的服务会在重启后重新拉起。")
+            alert.addButton(withTitle: String(localized: "重启"))
+            alert.addButton(withTitle: String(localized: "取消"))
+            guard alert.runModal() == .alertFirstButtonReturn else { return }
+        }
+        relaunchAfterTermination = true
+        stoppingProgramsConfirmed = activeCount > 0
+        NSApp.terminate(nil)
+    }
+
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard !isTerminating else { return .terminateNow }
 
         supervisor.hasActiveOneshots { [weak self] hasActive in
             DispatchQueue.main.async {
                 guard let self else { return }
-                if hasActive {
+                if hasActive && !self.stoppingProgramsConfirmed {
                     let alert = NSAlert()
                     alert.messageText = String(localized: "有一次性命令正在执行")
                     alert.informativeText = String(localized: "退出将终止它们。")
                     alert.addButton(withTitle: String(localized: "退出"))
                     alert.addButton(withTitle: String(localized: "取消"))
                     guard alert.runModal() == .alertFirstButtonReturn else {
+                        self.relaunchAfterTermination = false
                         NSApp.reply(toApplicationShouldTerminate: false)
                         return
                     }
@@ -218,6 +246,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 let progressWindow = TerminationProgressWindow.show()
                 self.supervisor.stopAllForTermination {
                     progressWindow.close()
+                    if self.relaunchAfterTermination { AppRelauncher.spawnHelper() }
                     NSApp.reply(toApplicationShouldTerminate: true)
                 }
             }
