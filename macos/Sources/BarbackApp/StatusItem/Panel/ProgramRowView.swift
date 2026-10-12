@@ -195,7 +195,7 @@ struct ProgramRowView: View {
         .padding(.leading, 22)
     }
 
-    /// "运行中 · up 2d3h · CPU 0.3% · 48.0 MB": the state's word first, in its colour unless
+    /// "运行中 · up 2d3h · CPU 累计 12.3s · 48.0 MB": the state's word first, in its colour unless
     /// it is a quiet one, then the figures. Compact density keeps the word in the title row's
     /// badge instead, and an inactive disabled row lets 已停用 speak for it.
     private var detailText: Text {
@@ -219,7 +219,7 @@ struct ProgramRowView: View {
                 parts.append("up \(StatusStyle.uptimeShort(model.now.timeIntervalSince(startedAt)))")
             }
             if let sample = model.sample(for: snap) {
-                parts.append("CPU \(StatusStyle.cpu(sample.cpuPercent))")
+                parts.append(String(localized: "CPU 累计 \(StatusStyle.cpuTime(sample.totalCPUSeconds))"))
                 parts.append(StatusStyle.memory(sample.rssBytes))
             }
             if serviceState == .stopping { parts.append(String(localized: "等待退出")) }

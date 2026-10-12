@@ -13,7 +13,7 @@
 所有取舍服从以下四条，冲突时按顺序仲裁：
 
 1. **简单优先**——单进程、单数据库、无守护进程、无 IPC、无外部配置文件。能少一个活动部件就少一个。
-2. **常态零开销**——无事件、无界面打开时 CPU 为零。进程退出靠 kqueue 事件、日志不经过主程序、菜单关闭即停止采样；全系统仅有的周期性任务是两个 300 s（leeway 30 s）定时器——日志尺寸检查、以及 §3.2/§3.7 提到的存活兜底校对——都足够宽松，内核可以自由合并唤醒。
+2. **常态零开销**——无事件、无界面打开时 CPU 为零。进程退出靠 kqueue 事件、日志不经过主程序、菜单关闭即停止采样；全系统仅有的周期性检查是两个 300 s（leeway 30 s）定时器——日志尺寸检查、以及 §3.2/§3.7 提到的存活兜底校对——都足够宽松，内核可以自由合并唤醒。CRON 只对下次实际触发设置一个共享的单次定时器，不增加周期性检查。
 3. **语义可预期**——与 supervisor 同名的字段必须同义。
 4. **故障不扩散**——单个被管进程的任何异常不得波及 Barback 或其他被管进程。
 
@@ -178,9 +178,18 @@ IDLE ──[运行]──► RUNNING ──┬─ 退出码 ∈ exitCodes ─►
 
 - **无** autostart / autorestart / startSeconds / startRetries / 退避——一次性命令永不自动重试。
 - 禁止并发：RUNNING 时菜单「运行」置灰，`Supervisor.dispatchOneshotEvent` 无条件拒绝重复触发。曾经计划过 `allowConcurrent=true` 放开多实例，但 `OneshotRuntime`/`currentRunId` 只有单槽位记账，两个并发实例会互相踩踏对方的运行记录，故已放弃该方向并移除相关字段（ex-F12）。
-- `confirmBeforeRun=true` 的命令在触发前弹确认框。
+- `confirmBeforeRun=true` 的命令在手动触发前弹确认框；配置 CRON 即启用无人值守执行，界面明确说明定时触发不弹确认。
 - 每次执行写一条 `runs` 记录并分配独立输出文件 `runs/<name>-<runId>.log`——文件名取决于 run id，所以路径只能在插入记录之后回写（`Store.setRunLogPath`）；超出保留条数（默认 50）时按 FIFO 删记录与文件。
 - 终态触发系统通知（结果 + 耗时），点击通知打开该次输出。
+
+#### CRON 定时（v0.3.3）
+
+- `Program.cronExpression: String?` / `program.cron_expression TEXT`，空值关闭，仅对启用的一次性命令生效。数据库 v3 原子迁移加列，迁移前备份配置；旧 JSON 备份缺少该可选字段时仍可恢复。
+- 五段数字表达式：分（0–59）、时（0–23）、日（1–31）、月（1–12）、星期（0–7，0/7 为周日），支持 `*`、列表、范围、步长；不支持秒、名称、`@daily`、Quartz 扩展。日或星期以 `*` 开头时两者都须匹配，否则采用 CRON 的 OR 语义。保存时拒绝非法表达式和永不存在的日期。
+- `CronExpression` 无 I/O，使用本地时区的公历：跳过不匹配的日期，再直接选择允许的时/分，不逐分钟扫描。搜索上限为 8 年（覆盖 2100 年等非闰世纪造成的闰日间隔）；夏令时缺失时间跳过、重复本地时间只取第一次。
+- `CronScheduler` 在 core 串行队列缓存解析结果和下一次时间，所有条目共用一个 `DispatchSourceTimer`，按最早的墙钟时间单次唤醒，固定 1 s leeway；没有有效计划、休眠或退出时没有调度定时器。回调只重新计算到期条目的下次时间，不添加后台轮询、外部 cron/launchd 作业或调度记录表。
+- 启动、配置保存/删除、唤醒、系统时间/时区变更后，从当前时间严格向后计算；休眠前取消定时器，代次标记拒绝取消前已排队的回调。错过的时间不补跑；正常回调允许在指定分钟内的系统调度延迟，迟到整分钟后跳过。计划不持久化，也不保存待补跑队列。
+- 触发复用一次性命令的状态机、超时、日志和历史，`run.trigger = 'cron'`。正在执行（含停止中）的命令跳过当次触发、不并发、不排队；禁用或删除中的条目不触发。修改计划立即生效，不影响已启动的命令，退出清理前关闭调度。
 
 ### 3.5 停止序列（两类通用）
 
@@ -226,7 +235,9 @@ applicationShouldTerminate:
 
 ### 3.8 睡眠 / 唤醒
 
-订阅 `NSWorkspace.didWakeNotification`，唤醒后延迟 3 秒对所有活动 PID 做一次 §3.7 的双因子校验，修正睡眠期间的状态漂移。所有 `DispatchSourceTimer` 基于 mach 单调时钟调度（`.now() + N`），系统睡眠期间该时钟本身暂停，故定时器天然按"清醒时长"到期，无需显式重算——`backoffEndDates`（面板倒计时用的墙钟时间戳）是当前唯一的例外，一次长睡眠后可能短暂显示与实际到期时间不符的倒计时，下一次快照发布即会更正。
+订阅 `NSWorkspace.didWakeNotification`，唤醒后延迟 3 秒对所有活动 PID 做一次 §3.7 的双因子校验，修正睡眠期间的状态漂移。生命周期定时器基于 mach 单调时钟调度（`.now() + N`），系统睡眠期间该时钟本身暂停，故定时器天然按"清醒时长"到期，无需显式重算——`backoffEndDates`（面板倒计时用的墙钟时间戳）在一次长睡眠后可能短暂显示与实际到期时间不符的倒计时，下一次快照发布即会更正。
+
+CRON 使用墙钟时间，另订阅 `NSWorkspace.willSleepNotification`：休眠前取消 CRON 定时器，唤醒时立即从当前时间重新计算，只安排未来时间，不等待上述 3 秒存活核对。系统时间和时区变化也通过通知重算，不靠定期检查。
 
 ---
 
@@ -296,6 +307,7 @@ CREATE TABLE program (
   confirm_before_run INTEGER NOT NULL DEFAULT 0,
   allow_concurrent INTEGER NOT NULL DEFAULT 0,
   history_limit INTEGER NOT NULL DEFAULT 50,
+  cron_expression TEXT,                       -- NULL = 关闭，五段 CRON（v3）
   -- 停止（两类通用）
   stop_signal TEXT NOT NULL DEFAULT 'TERM',
   stop_wait_seconds INTEGER NOT NULL DEFAULT 10,
@@ -327,7 +339,7 @@ CREATE TABLE live (
 CREATE TABLE run (
   id INTEGER PRIMARY KEY,
   program_id INTEGER NOT NULL REFERENCES program(id) ON DELETE CASCADE,
-  trigger TEXT NOT NULL,                      -- manual|autostart|autorestart|retry
+  trigger TEXT NOT NULL,                      -- manual|autostart|autorestart|retry|cron
   pid INTEGER, started_at REAL NOT NULL, ended_at REAL,
   exit_code INTEGER, term_signal INTEGER,
   outcome TEXT,                               -- succeeded|failed|timeout|cancelled|unknown
@@ -394,7 +406,7 @@ statusItem.button?.action = #selector(handleClick(_:))
 }
 ```
 
-面板与菜单都**只在打开的瞬间构建、关闭即释放**。CPU/RSS 采样只发生两次：打开时一次，800 ms 后再一次。第二次采样不是刷新，而是 CPU% 的必要条件——`proc_taskinfo` 给的是累计 CPU 时间，占用率只能由两次采样的差值算出，只采一次的结果永远是 0.0%（0.3.0 曾因此让所有程序恒显 0.0%）。
+面板与菜单都**只在打开的瞬间构建、关闭即释放**。服务的 CPU 显示当前进程自启动以来累计消耗的 CPU 时间（用户态 + 内核态），直接读取 `proc_taskinfo` 的累计值并将 mach 时间单位换算为秒；首次采样即可显示，关闭面板不清零，服务重启后按新进程重新计数。CPU/RSS 在面板打开时采样一次；若有正在执行的一次性命令，800 ms 后再采样一次，以计算命令的即时 CPU%。占用率需要两次采样的差值，不能将首次采样当成 0.0%。
 
 面板另有一个**每秒只做一次 `Date()` 赋值**的时钟（`StatusPanelModel.startClock`），用于推进运行时长与退避倒计时——`backoff_remaining` 冻结在快照发布时刻，而 BACKOFF 等待期间不会有新快照，没有这个时钟时倒计时与进度发丝线在面板打开期间完全静止（与 §6.3 的约定相悖）。该时钟在没有任何活动进程时跳过赋值，且随面板关闭一并取消。
 
@@ -419,9 +431,9 @@ statusItem.button?.action = #selector(handleClick(_:))
 │ 服务 4                                                     │
 │  网络 2                                                    │
 │ ▎● nslocal                        [ 停止 ]                │ ← 静息：中性胶囊
-│    运行中 · up 2d3h · CPU 0.3% · 48.0 MB                   │
+│    运行中 · up 2d3h · CPU 累计 12.3s · 48.0 MB             │
 │ ▎● web-api                        [■ 停止] [↻] [📄] [⌄]   │ ← 悬停 / 选中：着色 + 次级按钮
-│    运行中 · up 5h12min · CPU 1.8% · 212 MB                 │
+│    运行中 · up 5h12min · CPU 累计 4min12s · 212 MB         │
 │  未分组 2                                                  │
 │ ▎○ voice_typer_server             [ 启动 ]                │
 │    已停止 · 上次退出 昨天 18:40 · 退出码 0                 │
@@ -455,7 +467,7 @@ statusItem.button?.action = #selector(handleClick(_:))
 | 一次性 其他 | 运行（强调色） | 输出 · 历史 · 展开 |
 
 - **颜色预算**：主按钮静息时是中性灰胶囊，指针悬停、键盘选中或抽屉展开时才显出红 / 绿 / 强调色——十个健康服务曾是十颗红色「停止」胶囊，把颜色全花在了最不需要提醒的状态上。只有补救性的主动作（FATAL 的「启动」、STOPPING 的「强制终止」）始终着色（`StatusStyle.PrimaryAction.isUrgent`）。「运行中」「成功」属于**安静态**：颜色只留在状态点与状态脊，文字退为次要色。颜色因此留给 BACKOFF 的橙与 FATAL 的红。
-- **状态文字在指标行开头**（「运行中 · up 2d3h · …」），标题行只放状态点、名称、主按钮与次级按钮，名称因此多出约 50 pt。紧凑密度没有指标行，状态徽标留在标题行。已停用是属性而非状态，「已停用」标签始终在标题行；未在运行的已停用行不再重复状态文字。
+- **状态文字在指标行开头**（「运行中 · up 2d3h · CPU 累计 12.3s · …」），标题行只放状态点、名称、主按钮与次级按钮，名称因此多出约 50 pt。紧凑密度没有指标行，状态徽标留在标题行。已停用是属性而非状态，「已停用」标签始终在标题行；未在运行的已停用行不再重复状态文字。
 - **PID 不在指标行**：它是最少被看的数字，却占着最显眼的位置；抽屉里的「复制 PID」仍可直达（服务与一次性命令都有）。
 - **相对时间**：上次退出 / 上次执行显示「刚刚 / 12 分钟前 / 3 小时前」，超过一天才显示「09-06 13:33」形式的绝对时间（`StatusStyle.relative`）。
 - **需要处理**：`FATAL`、`BACKOFF`、重试中的 `STARTING`（`retry_count > 0`）以及运行中改了配置待重启的服务，从原位置提到列表顶部的「需要处理」分节（`StatusStyle.needsAttention`）。STARTING 只在重试时计入：崩溃循环在 BACKOFF ↔ STARTING 间每几秒切换一次，若首次启动也算，行会在两节之间来回跳，无法点中。键盘 ↑/↓ 按这一绘制顺序走。
@@ -467,7 +479,7 @@ statusItem.button?.action = #selector(handleClick(_:))
 - 行上的次级图标按钮（重启 / 日志 / 历史 / 展开）在指针悬停、键盘选中或抽屉展开时才显现，主按钮常驻；占位保留，显隐不引起布局跳动。透明的按钮读屏也读不到，所以同样的动作以 `accessibilityActions` 挂在行上。
 - **点击展开的范围只有标题行与指标行**；抽屉在点击区域之外，在两条信息之间点一下、或想在路径上定位光标，不会把抽屉收起。
 - **头部 ⋯** 弹出与右键完全相同的应用菜单（同一份 `AppMenuBuilder.entries`），每项先关面板再执行——多数人不会想到去右键一个菜单栏图标。
-- **底栏只有一行**：左侧依次显示复制提示 →「最近问题」（过去 24 小时内最新的 warn / error 事件，形如「tunnel-gateway 进入启动失败 · 8 分钟前」，点击打开事件日志；Supervisor 静默自动重启的崩溃就是在这里被看见）→ 活动进程合计（「3 个进程运行中 · CPU 2.1% · 310 MB」）。事件只在面板打开时与打开期间快照变化时各查一次最新 50 条，不轮询。右侧是一个随情况变化的批量按钮（还有可启动的服务时为「全部启动」，否则「全部停止」），其余批量动作在旁边的 ⌄ 菜单里；全部停止 / 全部重启照旧先确认。原来的快捷键提示与版本号不再常驻：快捷键写进各按钮的提示，版本在「关于」里。
+- **底栏只有一行**：左侧依次显示复制提示 →「最近问题」（过去 24 小时内最新的 warn / error 事件，形如「tunnel-gateway 进入启动失败 · 8 分钟前」，点击打开事件日志；Supervisor 静默自动重启的崩溃就是在这里被看见）→ 活动进程合计（「3 个进程运行中 · 310 MB」；服务只有累计 CPU 时间，相加没有意义，故只合计内存）。事件只在面板打开时与打开期间快照变化时各查一次最新 50 条，不轮询。右侧是一个随情况变化的批量按钮（还有可启动的服务时为「全部启动」，否则「全部停止」），其余批量动作在旁边的 ⌄ 菜单里；全部停止 / 全部重启照旧先确认。原来的快捷键提示与版本号不再常驻：快捷键写进各按钮的提示，版本在「关于」里。
 - 键盘（BAR-10）：面板打开即聚焦搜索框；↑/↓ 按绘制顺序移动选中行并滚动到可见，↩ 展开/收起抽屉，⌘↩ 执行该行主动作，⌘L 打开该行日志，⌘R 重启该行服务（仅运行中）。Esc 逐层退出：先清搜索，再清筛选，最后关闭面板。按键由 `StatusItemController` 在面板显示期间挂的 `NSEvent` 本地监视器转发给 `StatusPanelModel.handleKeyDown`。↩ 与 ⌘↩ 这样分工是刻意的：在搜索框里打完字顺手敲回车太容易，不能让它停掉一个服务。
 - 主按钮的文案、图标、配色与行为统一来自 `StatusStyle.primaryAction(for:)`，键盘路径与按钮走同一个入口。
 - 项数 > 8 时出现搜索框；服务存在一个以上 `group_name` 时按分组分节。

@@ -150,6 +150,7 @@ final class SupervisorHarness {
     /// Kills anything still running and removes the scratch directory. Tests call this from a
     /// `defer` so a failed assertion can't leave a `sleep 30` behind.
     func cleanup() {
+        supervisor.suspendCronForSleep()
         // Going through `stopAll` rather than straight to SIGKILL matters: a bare kill looks
         // like an unexpected exit, and an `autorestart` service would be respawned — into a
         // log directory this method is about to delete.

@@ -24,10 +24,13 @@ Barback is a menu-bar-resident process manager. Hand it the local services, tunn
 - Crash adoption: if Barback itself is `kill -9`'d, the next launch reclaims child processes that are still running (verified by PID *and* process start time, so a recycled PID is never mistaken for the original)
 - Reconciles real process liveness after the machine wakes from sleep
 
-**One-shot commands** (triggered by hand, run to completion)
+**One-shot commands** (manual or CRON triggers, run to completion)
 
 - Timeout kill, confirmation prompt for dangerous commands
 - Every run keeps its output and a record (time / duration / exit code / outcome), trimmed to a per-command limit
+- Optional five-field CRON in the configuration's run rules: minute, hour, day of month, month, weekday. Leave blank to disable. Supports numbers, `*`, lists, ranges and `/steps`; Sunday is `0` or `7`. Examples: `0 9 * * 1-5` for weekdays at 9 AM, `*/15 * * * *` for every 15 minutes
+- Uses the system's local time zone while Barback is running and the computer is awake. Missed occurrences during sleep, shutdown or app exit are skipped; an occurrence is also skipped if the command is still running. Scheduled runs bypass manual confirmation and are marked in history
+- Restricted day-of-month and weekday fields use OR. Missing DST times are skipped; repeated local times use the first occurrence only. All schedules share one timer armed for the next occurrence, with no background polling
 
 **Everything else**
 
@@ -54,9 +57,9 @@ Left-click is the most-used surface in the app, so every routine action sits dir
 │    ⚠ Automatic retries stopped · Exit code 127  View log   │
 │ Services 3                                                 │
 │ ▎● nslocal                        [  Stop ]               │
-│    Running · up 2d3h · CPU 0.3% · 48.0 MB                  │
+│    Running · up 2d3h · CPU total 12.3s · 48.0 MB           │
 │ ▎● web-api                        [■ Stop ] [↻] [📄] [⌄]  │
-│    Running · up 5h12min · CPU 1.8% · 212 MB                │
+│    Running · up 5h12min · CPU total 4min12s · 212 MB       │
 │ One-shot commands 1                                        │
 │ ▎✓ backup-db                      [  Run  ]               │
 │    Succeeded · Last run 2 h ago · Took 3.4 s · 27 runs     │
@@ -67,9 +70,10 @@ Left-click is the most-used surface in the app, so every routine action sits dir
 
 - The primary button follows the state: **Stop** while running, **Start** while stopped, **Force kill** (with confirmation) while a stop is in flight. At rest it is a neutral capsule that takes its red or green only as the pointer approaches; only remedies (Start after a failure, Force kill on a stuck stop) stay coloured, so colour marks the rows that need you.
 - Failing, retrying and restart-pending services float to a *Needs Attention* section at the top; click a summary chip in the header (e.g. "⚠ 1 Failed") to show only that kind.
+- Service CPU shows the cumulative user + system CPU time consumed since the current process started, resetting on restart. It uses `ms` / `s` / `min` / `h` / `d` and is available as soon as the panel opens.
 - Click a row to expand a drawer with the command, working directory, log path, config summary, and *Reveal in Finder* / *Copy PID* / *Edit configuration*.
 - State is carried by shape and wording as well as colour, never colour alone; a failed row offers *View log* right there.
-- The footer shows the newest problem event from the last 24 hours (click for the event log), or the combined CPU / memory of what is running, next to the bulk actions.
+- The footer shows the newest problem event from the last 24 hours (click for the event log), or how many processes are running and their combined memory, next to the bulk actions.
 - The menu bar icon is always the wine glass, with a corner badge: red = something failed, accent = a command is running, hollow ring = a service that should be up is stopped.
 - **Right-click** (or Control-click, or ⋯ in the panel header) opens Barback's own menu — configuration window, run history, event log, preferences, open at login, paste-import, quit (⌘Q).
 

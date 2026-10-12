@@ -70,8 +70,20 @@ public final class Store {
                 try db.setUserVersion(2)
             }
         }
-        // Future migrations: `if db.userVersion < 3 { ...; try db.setUserVersion(3) }`, each
-        // preceded by a JSON backup.
+        if db.userVersion < 3 {
+            // Read the old layout with a NULL placeholder before adding the column.
+            if !recovering {
+                let columns = Self.programColumnNames.map { $0 == "cron_expression" ? "NULL" : $0 }.joined(separator: ", ")
+                let stmt = try db.prepare("SELECT \(columns) FROM program")
+                var programs: [Program] = []
+                while try stmt.step() { programs.append(Self.programFromRow(stmt)) }
+                try writeConfigBackup(JSONEncoder().encode(programs))
+            }
+            try db.inTransaction {
+                try db.exec("ALTER TABLE program ADD COLUMN cron_expression TEXT")
+                try db.setUserVersion(3)
+            }
+        }
         if recovering {
             restoredProgramCount = (try? restoreFromLatestConfigBackup()) ?? 0
         }
@@ -495,7 +507,7 @@ public final class Store {
         "storm_max_restarts", "timeout_seconds", "confirm_before_run",
         "history_limit", "stop_signal", "stop_wait_seconds", "stop_as_group", "kill_as_group",
         "log_path", "log_merge_stderr", "log_stderr_path", "log_max_bytes", "log_backups",
-        "log_rotate_policy", "run_total", "created_at", "updated_at"
+        "log_rotate_policy", "run_total", "created_at", "updated_at", "cron_expression"
     ]
     private static var programColumns: String { programColumnNames.joined(separator: ", ") }
     private static var programColumnCount: Int { programColumnNames.count }
@@ -541,6 +553,7 @@ public final class Store {
         }
         stmt.bind(i, p.createdAt.timeIntervalSince1970); i += 1
         stmt.bind(i, p.updatedAt.timeIntervalSince1970); i += 1
+        stmt.bindOptional(i, p.cronExpression); i += 1
     }
 
     private static func programFromRow(_ s: SQLiteStatement) -> Program {
@@ -568,6 +581,7 @@ public final class Store {
             timeoutSeconds: s.columnInt(20),
             confirmBeforeRun: s.columnInt(21) != 0,
             historyLimit: s.columnInt(22),
+            cronExpression: s.columnStringOptional(36),
             stopSignal: s.columnString(23),
             stopWaitSeconds: s.columnInt(24),
             stopAsGroup: s.columnInt(25) != 0,

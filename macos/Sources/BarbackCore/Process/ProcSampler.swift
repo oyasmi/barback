@@ -4,6 +4,9 @@ import Darwin
 #endif
 
 public struct ProcSample: Sendable, Equatable {
+    /// User + system CPU time consumed by this process since it started, in seconds.
+    /// Available on the first sample and independent of the sampling history.
+    public let totalCPUSeconds: Double
     /// CPU% is a difference between two samples, so it is `nil` on the first sample of a
     /// pid — there is nothing to subtract yet. Reporting that baseline as `0.0` made every
     /// reading in the panel a permanent "0.0%", since the panel samples once per open.
@@ -32,7 +35,7 @@ public enum ProcSampler {
     public static func sample(pid: Int32) -> ProcSample? {
         var taskInfo = proc_taskinfo()
         let size = proc_pidinfo(pid, PROC_PIDTASKINFO, 0, &taskInfo, Int32(MemoryLayout<proc_taskinfo>.size))
-        guard size > 0 else { return nil }
+        guard size == Int32(MemoryLayout<proc_taskinfo>.size) else { return nil }
 
         let totalCPUTicks = Double(taskInfo.pti_total_user) + Double(taskInfo.pti_total_system)
         let totalCPUSeconds = totalCPUTicks * nanosecondsPerMachTick / 1_000_000_000.0
@@ -53,7 +56,8 @@ public enum ProcSampler {
             cpuPercent = max(0, min(maxPercent, (deltaCPU / deltaWall) * 100))
         }
 
-        return ProcSample(cpuPercent: cpuPercent, rssBytes: taskInfo.pti_resident_size)
+        return ProcSample(totalCPUSeconds: totalCPUSeconds, cpuPercent: cpuPercent,
+                          rssBytes: taskInfo.pti_resident_size)
     }
 
     public static func clearHistory(pid: Int32) {

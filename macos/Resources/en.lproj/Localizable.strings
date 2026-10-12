@@ -38,6 +38,9 @@
 "Barback 启动" = "Barback started";
 "Barback 常驻在状态栏，没有 Dock 图标，也没有主窗口。所有操作都在菜单栏图标里完成。" = "Barback lives in the menu bar: there is no Dock icon and no main window. Everything happens from the menu bar icon.";
 "Barback 退出中" = "Barback quitting";
+"CPU 累计 %@" = "CPU total %@";
+"CRON 定时" = "Cron Schedule";
+"CRON 必须是五段：分 时 日 月 星期；支持数字、*、逗号、范围和 /步长，且必须存在有效日期" = "A cron expression needs five fields — minute hour day month weekday — using numbers, *, commas, ranges and /steps, and must match a date that exists";
 "kind.oneshot" = "One-shot command";
 "kind.service" = "Service";
 "posix_spawn 失败：%@" = "posix_spawn failed: %@";
@@ -98,6 +101,7 @@
 "关于 Barback" = "About Barback";
 "关闭" = "Close";
 "关闭窗口前要保存这些更改吗？" = "Save these changes before closing the window?";
+"分 时 日 月 星期；支持 *、逗号、范围和 /步长。星期 0 或 7 为周日。" = "minute hour day month weekday; supports *, commas, ranges and /steps. Weekday 0 or 7 is Sunday.";
 "分组" = "Group";
 "分组 %@" = "Group %@";
 "分组方式" = "Group by";
@@ -218,6 +222,7 @@
 "按大小" = "By size";
 "按状态" = "By State";
 "按类型" = "By Type";
+"按系统本地时区，仅在 Barback 运行且电脑清醒时触发；休眠或退出期间不补跑，正在执行时跳过。定时执行无需确认，「执行前确认」仅用于手动运行。" = "Uses the system time zone and fires only while Barback is running and the Mac is awake; runs missed during sleep or while quit are not made up, and a run is skipped if the command is still executing. Scheduled runs never ask for confirmation — “Confirm before running” applies to manual runs only.";
 "按进程组发送会把信号送达整棵子进程树，适合会派生子进程的命令。" = "Sending to the process group reaches the whole tree of child processes; use it for commands that spawn children.";
 "排列顺序" = "Sort order";
 "搜索" = "Search";
@@ -312,6 +317,7 @@
 "环境变量" = "Environment variables";
 "环境变量，每行一个 KEY=VALUE" = "Environment variables, one KEY=VALUE per line";
 "用户级运行，不支持切换用户" = "Runs as the current user; switching users is not supported";
+"留空关闭，例如：0 9 * * 1-5" = "Leave empty to disable, e.g. 0 9 * * 1-5";
 "登录环境快照" = "Login environment snapshot";
 "目录" = "Directory";
 "直接执行" = "Run directly";

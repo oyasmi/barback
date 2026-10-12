@@ -32,6 +32,31 @@ struct StoreTests {
         #expect(try store.fetchAllLive().isEmpty)
     }
 
+    @Test func cronConfigAndTriggerRoundTrip() throws {
+        let store = try makeStore()
+        var program = Program(name: "scheduled", kind: .oneshot, command: "/bin/true", cronExpression: "0 9 * * 1-5")
+        program.id = try store.insertProgram(program)
+        #expect(try store.fetchProgram(id: program.id)?.cronExpression == "0 9 * * 1-5")
+        program.cronExpression = "*/10 * * * *"
+        try store.updateProgram(program)
+        #expect(try store.fetchProgram(id: program.id)?.cronExpression == "*/10 * * * *")
+        program.cronExpression = nil
+        try store.updateProgram(program)
+        #expect(try store.fetchProgram(id: program.id)?.cronExpression == nil)
+        _ = try store.insertRun(RunRecord(programId: program.id, trigger: .cron))
+        #expect(try store.fetchRuns(programId: program.id).first?.trigger == .cron)
+    }
+
+    @Test func oldJsonBackupsDecodeWithoutCron() throws {
+        let program = Program(name: "legacy-json", kind: .oneshot, command: "/bin/true")
+        let data = try JSONEncoder().encode(program)
+        var json = try #require(JSONSerialization.jsonObject(with: data) as? [String: Any])
+        json.removeValue(forKey: "cronExpression")
+        let decoded = try JSONDecoder().decode(Program.self, from: JSONSerialization.data(withJSONObject: json))
+        #expect(decoded.cronExpression == nil)
+        #expect(decoded == program)
+    }
+
     @Test func runHistoryTrimsToLimit() throws {
         let store = try makeStore()
         let id = try store.insertProgram(Program(name: "job1", kind: .oneshot, command: "/bin/true", historyLimit: 2))
@@ -131,6 +156,13 @@ struct StoreTests {
         let store = try Store(dbPath: dbPath, backupsDir: backupsDir)
         let migrated = try store.fetchProgram(id: programId)
         #expect(migrated?.runTotal == 3)
+        #expect(migrated?.cronExpression == nil)
+        let version = try SQLiteDatabase(path: dbPath)
+        #expect(version.userVersion == 3)
+        let backupNames = try FileManager.default.contentsOfDirectory(atPath: backupsDir)
+        let backup = try #require(backupNames.first { $0.hasPrefix("config-") })
+        let backupData = try Data(contentsOf: URL(fileURLWithPath: backupsDir).appendingPathComponent(backup))
+        #expect(try JSONDecoder().decode([Program].self, from: backupData).first?.name == "legacy")
     }
 
     // ex-F02: clearing history must never touch a run that hasn't finished yet.

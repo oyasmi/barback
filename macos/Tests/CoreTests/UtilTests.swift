@@ -70,6 +70,17 @@ struct SupervisorImporterTests {
 }
 
 struct ProgramValidatorTests {
+    @Test func validatesCronOnlyForOneshots() {
+        var p = Program(name: "job", kind: .oneshot, command: "/usr/bin/true", cronExpression: "bad cron")
+        #expect(ProgramValidator.validate(p, existingNames: []).contains(.invalidCronExpression))
+        p.cronExpression = "0 9 * * 1-5"
+        #expect(ProgramValidator.validate(p, existingNames: []).isEmpty)
+        p.cronExpression = nil
+        #expect(ProgramValidator.validate(p, existingNames: []).isEmpty)
+        p.kind = .service
+        p.cronExpression = "unused"
+        #expect(ProgramValidator.validate(p, existingNames: []).isEmpty)
+    }
     @Test func rejectsInvalidName() {
         let p = Program(name: "bad name!", kind: .service, command: "/bin/true")
         let errors = ProgramValidator.validate(p, existingNames: [])
