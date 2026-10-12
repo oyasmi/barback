@@ -227,4 +227,20 @@ public sealed class StoreTests : IAsyncLifetime
         for (int i = 0; i < 3; i++) { var id = Guid.NewGuid(); await store.BeginRunAsync(new(id, c.Id, i, 1, DateTimeOffset.UtcNow.AddSeconds(i))); await store.EndRunAsync(id, Phase.Interrupted, EndReason.AppInterrupted, null); }
         await store.MaintainAsync(); Assert.Single(await store.RunsAsync());
     }
+    [Fact]
+    public async Task ProgramRunQueriesAreScopedOrderedAndVersioned()
+    {
+        var a = await store.SaveAsync(Draft("a"), 0); var b = await store.SaveAsync(Draft("b"), 0);
+        var before = store.RunsVersion; var start = DateTimeOffset.UtcNow;
+        for (int i = 0; i < 5; i++) await store.BeginRunAsync(new(Guid.NewGuid(), a.Id, i + 1, 1, start.AddSeconds(i)));
+        var other = new RunRecord(Guid.NewGuid(), b.Id, 1, 1, start); await store.BeginRunAsync(other);
+        Assert.NotEqual(before, store.RunsVersion);
+        var latest = await store.RunsAsync(a.Id, 3);
+        Assert.Equal([5L, 4L, 3L], latest.Select(r => r.Generation)); Assert.All(latest, r => Assert.Equal(a.Id, r.ProgramId));
+        Assert.True(await store.HasUnfinishedRunsAsync());
+        var events = store.EventsVersion; await store.EventAsync(new(DateTimeOffset.UtcNow, "Test", null, null, "detail")); Assert.NotEqual(events, store.EventsVersion);
+        var unchanged = store.RunsVersion; await store.LoadProgramsAsync(); Assert.Equal(unchanged, store.RunsVersion);
+        foreach (var run in await store.RunsAsync()) await store.EndRunAsync(run.Id, Phase.Exited, EndReason.Natural, 0);
+        Assert.False(await store.HasUnfinishedRunsAsync());
+    }
 }

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -29,6 +30,15 @@ public sealed class SqliteStore : IStore
     private readonly ISecretProtector secrets;
     public string Root { get; }
     public LogQuota? LogQuota { get; set; }
+    private long runsVersion, eventsVersion;
+    /// <summary>Changes whenever a run row is written. Readers compare it with what they loaded instead of re-querying on every UI refresh.</summary>
+    public long RunsVersion => Interlocked.Read(ref runsVersion);
+    /// <summary>Changes whenever an event row is written or pruned.</summary>
+    public long EventsVersion => Interlocked.Read(ref eventsVersion);
+    private void RunsChanged() => Interlocked.Increment(ref runsVersion);
+    private void EventsChanged() => Interlocked.Increment(ref eventsVersion);
+    /// <summary>Serializes output deletion (quota accounting must see each file once) without holding the database gate.</summary>
+    private readonly SemaphoreSlim outputGate = new(1);
     private SqliteStore(string root, SqliteConnection db, ISecretProtector secrets) { Root = root; this.db = db; this.secrets = secrets; }
     public static Task<SqliteStore> OpenAsync(string root, ISecretProtector? secrets = null) => Task.Run(() => OpenInternalAsync(root, secrets));
     private static async Task<SqliteStore> OpenInternalAsync(string root, ISecretProtector? secrets)
@@ -56,6 +66,7 @@ public sealed class SqliteStore : IStore
                 CREATE TABLE IF NOT EXISTS events(id INTEGER PRIMARY KEY,at TEXT NOT NULL,type TEXT NOT NULL,program_id TEXT,run_id TEXT,detail TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);
                 CREATE TABLE IF NOT EXISTS output_cleanup(run_id TEXT PRIMARY KEY,program_id TEXT NOT NULL,directory TEXT NOT NULL);
+                CREATE INDEX IF NOT EXISTS runs_program_started ON runs(program_id,started);
                 PRAGMA user_version=2;
                 """;
             await check.ExecuteNonQueryAsync(); tx.Commit();
@@ -109,7 +120,7 @@ public sealed class SqliteStore : IStore
         if (changed != 1) throw new ConfigurationConflictException();
         tx.Commit();
         // The durable save has succeeded; a backup failure is recorded without reporting a false save failure.
-        try { await BackupConfigInternalAsync(); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { using var warn = Command("INSERT INTO events(at,type,detail) VALUES($at,'BackupFailed','Configuration saved; backup could not be written.')", ("$at", DateTimeOffset.UtcNow.ToString("O"))); try { await warn.ExecuteNonQueryAsync(); } catch (SqliteException) { } }
+        try { await BackupConfigInternalAsync(); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { using var warn = Command("INSERT INTO events(at,type,detail) VALUES($at,'BackupFailed','Configuration saved; backup could not be written.')", ("$at", DateTimeOffset.UtcNow.ToString("O"))); try { await warn.ExecuteNonQueryAsync(); EventsChanged(); } catch (SqliteException) { } }
         return next;
     });
 
@@ -129,24 +140,27 @@ public sealed class SqliteStore : IStore
         try { await BackupConfigInternalAsync(); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
         return result;
     });
-    public Task DeleteAsync(Guid id) => Locked(async () =>
+    public async Task DeleteAsync(Guid id)
     {
-        using var tx = db.BeginTransaction();
-        using var cmd = Command("INSERT OR IGNORE INTO output_cleanup SELECT id,program_id,log_directory FROM runs WHERE program_id=$id AND log_directory IS NOT NULL; DELETE FROM programs WHERE id=$id", ("$id", id.ToString()));
-        cmd.Transaction = tx; await cmd.ExecuteNonQueryAsync(); tx.Commit();
-        await RetryOutputCleanupAsync();
-    });
+        await Locked(async () =>
+        {
+            using var tx = db.BeginTransaction();
+            using var cmd = Command("INSERT OR IGNORE INTO output_cleanup SELECT id,program_id,log_directory FROM runs WHERE program_id=$id AND log_directory IS NOT NULL; DELETE FROM programs WHERE id=$id", ("$id", id.ToString()));
+            cmd.Transaction = tx; await cmd.ExecuteNonQueryAsync(); tx.Commit(); RunsChanged();
+        });
+        await outputGate.WaitAsync(); try { await CleanOutputQueueAsync(); } finally { outputGate.Release(); }
+    }
     public Task BeginRunAsync(RunRecord r) => Locked(async () =>
     {
         using var tx = db.BeginTransaction();
         using var cmd = Command("INSERT INTO runs(id,program_id,generation,config_version,started,outcome,log_directory) VALUES($id,$p,$g,$v,$s,$o,$l)", ("$id", r.Id.ToString()), ("$p", r.ProgramId.ToString()), ("$g", r.Generation), ("$v", r.ConfigVersion), ("$s", r.Started.ToString("O")), ("$o", (int)Phase.Starting), ("$l", r.LogDirectory));
         cmd.Transaction = tx; await cmd.ExecuteNonQueryAsync();
-        cmd.CommandText = "UPDATE programs SET total_runs=total_runs+1 WHERE id=$p"; await cmd.ExecuteNonQueryAsync(); tx.Commit();
+        cmd.CommandText = "UPDATE programs SET total_runs=total_runs+1 WHERE id=$p"; await cmd.ExecuteNonQueryAsync(); tx.Commit(); RunsChanged();
     });
-    public Task IdentifyRunAsync(Guid id, int pid, long time) => Locked(async () => { using var cmd = Command("UPDATE runs SET pid=$pid,creation_time=$time,outcome=$o WHERE id=$id AND ended IS NULL", ("$pid", pid), ("$time", time), ("$o", (int)Phase.Running), ("$id", id.ToString())); await cmd.ExecuteNonQueryAsync(); });
+    public Task IdentifyRunAsync(Guid id, int pid, long time) => Locked(async () => { using var cmd = Command("UPDATE runs SET pid=$pid,creation_time=$time,outcome=$o WHERE id=$id AND ended IS NULL", ("$pid", pid), ("$time", time), ("$o", (int)Phase.Running), ("$id", id.ToString())); await cmd.ExecuteNonQueryAsync(); RunsChanged(); });
     public Task EndRunAsync(Guid id, Phase outcome, EndReason reason, uint? code) => Locked(async () =>
     {
-        using var cmd = Command("UPDATE runs SET ended=$at,outcome=$o,reason=$r,exit_code=$c WHERE id=$id AND ended IS NULL", ("$at", DateTimeOffset.UtcNow.ToString("O")), ("$o", (int)outcome), ("$r", (int)reason), ("$c", code is uint u ? (long)u : null), ("$id", id.ToString())); await cmd.ExecuteNonQueryAsync();
+        using var cmd = Command("UPDATE runs SET ended=$at,outcome=$o,reason=$r,exit_code=$c WHERE id=$id AND ended IS NULL", ("$at", DateTimeOffset.UtcNow.ToString("O")), ("$o", (int)outcome), ("$r", (int)reason), ("$c", code is uint u ? (long)u : null), ("$id", id.ToString())); await cmd.ExecuteNonQueryAsync(); RunsChanged();
     });
     public Task SaveRuntimeAsync(Guid id, RuntimeState state) => Locked(async () => { using var cmd = Command("INSERT INTO runtime VALUES($id,$json) ON CONFLICT(program_id) DO UPDATE SET json=excluded.json", ("$id", id.ToString()), ("$json", JsonSerializer.Serialize(state, JsonOptions))); await cmd.ExecuteNonQueryAsync(); });
     private static readonly JsonSerializerOptions JsonOptions = new() { NumberHandling = System.Text.Json.Serialization.JsonNumberHandling.AllowNamedFloatingPointLiterals };
@@ -155,28 +169,43 @@ public sealed class SqliteStore : IStore
         using var cmd = Command("SELECT program_id,json FROM runtime"); using var reader = await cmd.ExecuteReaderAsync(); var result = new Dictionary<Guid, RuntimeState>();
         while (await reader.ReadAsync()) result.Add(Guid.Parse(reader.GetString(0)), JsonSerializer.Deserialize<RuntimeState>(reader.GetString(1), JsonOptions)!); return result;
     });
-    public Task<IReadOnlyList<RunRecord>> RunsAsync() => Locked<IReadOnlyList<RunRecord>>(async () =>
+    private const string RunColumns = "id,program_id,generation,config_version,started,ended,pid,creation_time,outcome,reason,exit_code,log_directory";
+    private static DateTimeOffset ParseTime(string text) => DateTimeOffset.Parse(text, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind);
+    private static RunRecord ReadRun(SqliteDataReader r) => new(Guid.Parse(r.GetString(0)), Guid.Parse(r.GetString(1)), r.GetInt64(2), r.GetInt64(3), ParseTime(r.GetString(4)), r.IsDBNull(5) ? null : ParseTime(r.GetString(5)), r.IsDBNull(6) ? null : r.GetInt32(6), r.IsDBNull(7) ? null : r.GetInt64(7), (Phase)r.GetInt32(8), r.IsDBNull(9) ? null : (EndReason)r.GetInt32(9), r.IsDBNull(10) ? null : checked((uint)r.GetInt64(10)), r.IsDBNull(11) ? null : r.GetString(11));
+    private async Task<IReadOnlyList<RunRecord>> ReadRunsAsync(SqliteCommand cmd)
     {
-        using var cmd = Command("SELECT id,program_id,generation,config_version,started,ended,pid,creation_time,outcome,reason,exit_code,log_directory FROM runs ORDER BY started DESC LIMIT 5000");
         using var r = await cmd.ExecuteReaderAsync(); var result = new List<RunRecord>();
-        while (await r.ReadAsync()) result.Add(new(Guid.Parse(r.GetString(0)), Guid.Parse(r.GetString(1)), r.GetInt64(2), r.GetInt64(3), DateTimeOffset.Parse(r.GetString(4)), r.IsDBNull(5) ? null : DateTimeOffset.Parse(r.GetString(5)), r.IsDBNull(6) ? null : r.GetInt32(6), r.IsDBNull(7) ? null : r.GetInt64(7), (Phase)r.GetInt32(8), r.IsDBNull(9) ? null : (EndReason)r.GetInt32(9), r.IsDBNull(10) ? null : checked((uint)r.GetInt64(10)), r.IsDBNull(11) ? null : r.GetString(11))); return result;
+        while (await r.ReadAsync()) result.Add(ReadRun(r)); return result;
+    }
+    public Task<IReadOnlyList<RunRecord>> RunsAsync() => Locked(async () =>
+    {
+        using var cmd = Command($"SELECT {RunColumns} FROM runs ORDER BY started DESC LIMIT 5000"); return await ReadRunsAsync(cmd);
+    });
+    /// <summary>The newest runs of one program; served by the (program_id, started) index.</summary>
+    public Task<IReadOnlyList<RunRecord>> RunsAsync(Guid programId, int limit) => Locked(async () =>
+    {
+        using var cmd = Command($"SELECT {RunColumns} FROM runs WHERE program_id=$p ORDER BY started DESC LIMIT $limit", ("$p", programId.ToString()), ("$limit", limit)); return await ReadRunsAsync(cmd);
+    });
+    public Task<bool> HasUnfinishedRunsAsync() => Locked(async () =>
+    {
+        using var cmd = Command("SELECT EXISTS(SELECT 1 FROM runs WHERE ended IS NULL)"); return Convert.ToInt64(await cmd.ExecuteScalarAsync(), CultureInfo.InvariantCulture) != 0;
     });
     public Task EventAsync(EventRecord e) => Locked(async () =>
     {
         using var cmd = Command("INSERT INTO events(at,type,program_id,run_id,detail) VALUES($at,$type,$p,$r,$d)", ("$at", e.At.ToString("O")), ("$type", e.Type), ("$p", e.ProgramId?.ToString()), ("$r", e.RunId?.ToString()), ("$d", e.Detail));
-        await cmd.ExecuteNonQueryAsync();
+        await cmd.ExecuteNonQueryAsync(); EventsChanged();
         if (++eventsSincePrune >= 500) await PruneEventsAsync();
     });
     public Task<IReadOnlyList<EventRecord>> EventsAsync() => Locked<IReadOnlyList<EventRecord>>(async () =>
     {
         using var cmd = Command("SELECT at,type,program_id,run_id,detail FROM events ORDER BY id DESC LIMIT 5000"); using var r = await cmd.ExecuteReaderAsync(); var result = new List<EventRecord>();
-        while (await r.ReadAsync()) result.Add(new(DateTimeOffset.Parse(r.GetString(0)), r.GetString(1), r.IsDBNull(2) ? null : Guid.Parse(r.GetString(2)), r.IsDBNull(3) ? null : Guid.Parse(r.GetString(3)), r.GetString(4))); return result;
+        while (await r.ReadAsync()) result.Add(new(ParseTime(r.GetString(0)), r.GetString(1), r.IsDBNull(2) ? null : Guid.Parse(r.GetString(2)), r.IsDBNull(3) ? null : Guid.Parse(r.GetString(3)), r.GetString(4))); return result;
     });
     public Task<bool> RecoverAsync() => Locked(async () =>
     {
         using var cmd = Command("SELECT value FROM settings WHERE key='clean_shutdown'"); bool interrupted = (string?)await cmd.ExecuteScalarAsync() == "false";
         cmd.CommandText = "UPDATE runs SET ended=$at,outcome=$out,reason=$reason,exit_code=NULL WHERE ended IS NULL; INSERT INTO settings VALUES('clean_shutdown','false') ON CONFLICT(key) DO UPDATE SET value='false'";
-        cmd.Parameters.AddWithValue("$at", DateTimeOffset.UtcNow.ToString("O")); cmd.Parameters.AddWithValue("$out", (int)Phase.Interrupted); cmd.Parameters.AddWithValue("$reason", (int)EndReason.AppInterrupted); await cmd.ExecuteNonQueryAsync(); return interrupted;
+        cmd.Parameters.AddWithValue("$at", DateTimeOffset.UtcNow.ToString("O")); cmd.Parameters.AddWithValue("$out", (int)Phase.Interrupted); cmd.Parameters.AddWithValue("$reason", (int)EndReason.AppInterrupted); await cmd.ExecuteNonQueryAsync(); RunsChanged(); return interrupted;
     });
     public Task MarkCleanAsync() => Locked(async () => { using var cmd = Command("INSERT INTO settings VALUES('clean_shutdown','true') ON CONFLICT(key) DO UPDATE SET value='true'"); await cmd.ExecuteNonQueryAsync(); });
     public Task BackupDatabaseAsync(string destination) => Locked(() => { using var backup = new SqliteConnection(new SqliteConnectionStringBuilder { DataSource = destination, Pooling = false }.ToString()); backup.Open(); db.BackupDatabase(backup); return Task.CompletedTask; });
@@ -241,16 +270,28 @@ public sealed class SqliteStore : IStore
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return OutputRemoval.Retry; }
     }
-    private async Task RetryOutputCleanupAsync()
+    /// <summary>
+    /// Works through the output cleanup queue. Deleting run output can mean thousands of files, so the database gate is only
+    /// held to read the work list and to commit the result; launches and state writes never queue behind the file system.
+    /// Callers hold <see cref="outputGate"/>.
+    /// </summary>
+    private async Task CleanOutputQueueAsync()
     {
-        var pending = new List<(Guid Run, Guid Program, string Path)>();
-        using (var cmd = Command("SELECT run_id,program_id,directory FROM output_cleanup LIMIT 1000")) using (var r = await cmd.ExecuteReaderAsync())
-            while (await r.ReadAsync()) pending.Add((Guid.Parse(r.GetString(0)), Guid.Parse(r.GetString(1)), r.GetString(2)));
-        foreach (var item in pending)
+        var pending = await Locked(async () =>
         {
-            if (RemoveOwnedOutput(item.Program, item.Run, item.Path) == OutputRemoval.Retry) continue;
-            using var cmd = Command("DELETE FROM output_cleanup WHERE run_id=$id", ("$id", item.Run.ToString())); await cmd.ExecuteNonQueryAsync();
-        }
+            var items = new List<(Guid Run, Guid Program, string Path)>();
+            using var cmd = Command("SELECT run_id,program_id,directory FROM output_cleanup LIMIT 1000"); using var r = await cmd.ExecuteReaderAsync();
+            while (await r.ReadAsync()) items.Add((Guid.Parse(r.GetString(0)), Guid.Parse(r.GetString(1)), r.GetString(2)));
+            return items;
+        });
+        var done = pending.Where(item => RemoveOwnedOutput(item.Program, item.Run, item.Path) != OutputRemoval.Retry).Select(item => item.Run).ToArray();
+        if (done.Length == 0) return;
+        await Locked(async () =>
+        {
+            using var tx = db.BeginTransaction();
+            foreach (var run in done) { using var cmd = Command("DELETE FROM output_cleanup WHERE run_id=$id", ("$id", run.ToString())); cmd.Transaction = tx; await cmd.ExecuteNonQueryAsync(); }
+            tx.Commit();
+        });
     }
     private int eventsSincePrune;
     /// <summary>Keeps the newest 50,000 events and drops anything older than 30 days; runs from MaintainAsync and every 500 inserts.</summary>
@@ -258,27 +299,54 @@ public sealed class SqliteStore : IStore
     {
         eventsSincePrune = 0;
         using var cmd = Command("DELETE FROM events WHERE at<$cut OR id <= (SELECT id FROM events ORDER BY id DESC LIMIT 1 OFFSET 50000)", ("$cut", DateTimeOffset.UtcNow.AddDays(-30).ToString("O")));
-        await cmd.ExecuteNonQueryAsync();
+        if (await cmd.ExecuteNonQueryAsync() > 0) EventsChanged();
     }
     /// <summary>Clean completed output until usage falls to 90 % of the global budget; without a budget nothing is trimmed.</summary>
     private bool OverQuotaTarget() => LogQuota is { } quota && quota.UsedBytes > (long)(quota.Limit * 0.9);
-    public Task MaintainAsync() => Locked(async () =>
+    /// <summary>Trims history and output. File deletion happens outside the database gate (see <see cref="CleanOutputQueueAsync"/>).</summary>
+    public async Task MaintainAsync()
     {
-        await RetryOutputCleanupAsync();
-        await PruneEventsAsync();
-        var limits = new Dictionary<Guid, int>();
-        using (var cmd = Command("SELECT id,json FROM programs")) using (var r = await cmd.ExecuteReaderAsync())
-            while (await r.ReadAsync()) limits[Guid.Parse(r.GetString(0))] = JsonSerializer.Deserialize<ProgramConfig>(r.GetString(1))!.Policy.HistoryLimit;
-        var completed = new List<(Guid Id, Guid Program, string Directory, bool Prune)>(); var counts = new Dictionary<Guid, int>();
-        using (var cmd = Command("SELECT id,program_id,log_directory FROM runs WHERE ended IS NOT NULL ORDER BY started DESC")) using (var r = await cmd.ExecuteReaderAsync())
-            while (await r.ReadAsync()) { var program = Guid.Parse(r.GetString(1)); counts[program] = counts.GetValueOrDefault(program) + 1; completed.Add((Guid.Parse(r.GetString(0)), program, r.IsDBNull(2) ? "" : r.GetString(2), counts[program] > limits.GetValueOrDefault(program, 50))); }
-        foreach (var item in completed.Where(x => x.Prune).Concat(OverQuotaTarget() ? completed.Where(x => !x.Prune).Reverse() : []))
+        await outputGate.WaitAsync();
+        try
         {
-            // Runs without a recorded directory have no output to delete; their rows are still pruned by history limit.
-            if (item.Directory.Length > 0 && RemoveOwnedOutput(item.Program, item.Id, item.Directory) != OutputRemoval.Removed) continue;
-            using var delete = Command(item.Prune ? "DELETE FROM runs WHERE id=$id AND ended IS NOT NULL" : "UPDATE runs SET log_directory=NULL WHERE id=$id AND ended IS NOT NULL", ("$id", item.Id.ToString())); await delete.ExecuteNonQueryAsync();
-            if (!item.Prune && !OverQuotaTarget()) break;
+            await CleanOutputQueueAsync();
+            var completed = await Locked(async () =>
+            {
+                await PruneEventsAsync();
+                var limits = new Dictionary<Guid, int>();
+                using (var cmd = Command("SELECT id,json FROM programs")) using (var r = await cmd.ExecuteReaderAsync())
+                    while (await r.ReadAsync()) limits[Guid.Parse(r.GetString(0))] = JsonSerializer.Deserialize<ProgramConfig>(r.GetString(1))!.Policy.HistoryLimit;
+                var items = new List<(Guid Id, Guid Program, string Directory, bool Prune)>(); var counts = new Dictionary<Guid, int>();
+                using (var cmd = Command("SELECT id,program_id,log_directory FROM runs WHERE ended IS NOT NULL ORDER BY started DESC")) using (var r = await cmd.ExecuteReaderAsync())
+                    while (await r.ReadAsync()) { var program = Guid.Parse(r.GetString(1)); counts[program] = counts.GetValueOrDefault(program) + 1; items.Add((Guid.Parse(r.GetString(0)), program, r.IsDBNull(2) ? "" : r.GetString(2), counts[program] > limits.GetValueOrDefault(program, 50))); }
+                return items;
+            });
+            var applied = new List<(Guid Id, bool Prune)>();
+            foreach (var item in completed.Where(x => x.Prune).Concat(OverQuotaTarget() ? completed.Where(x => !x.Prune).Reverse() : []))
+            {
+                // Runs without a recorded directory have no output to delete; their rows are still pruned by history limit.
+                if (item.Directory.Length > 0 && RemoveOwnedOutput(item.Program, item.Id, item.Directory) != OutputRemoval.Removed) continue;
+                applied.Add((item.Id, item.Prune));
+                if (!item.Prune && !OverQuotaTarget()) break;
+            }
+            if (applied.Count == 0) return;
+            await Locked(async () =>
+            {
+                // A row that changed meanwhile (its program was deleted) simply matches nothing here.
+                using var tx = db.BeginTransaction();
+                foreach (var (id, prune) in applied)
+                {
+                    using var cmd = Command(prune ? "DELETE FROM runs WHERE id=$id AND ended IS NOT NULL" : "UPDATE runs SET log_directory=NULL WHERE id=$id AND ended IS NOT NULL", ("$id", id.ToString()));
+                    cmd.Transaction = tx; await cmd.ExecuteNonQueryAsync();
+                }
+                tx.Commit(); RunsChanged();
+            });
         }
-    });
-    public async ValueTask DisposeAsync() { await gate.WaitAsync(); try { await db.DisposeAsync(); } finally { gate.Release(); gate.Dispose(); } }
+        finally { outputGate.Release(); }
+    }
+    public async ValueTask DisposeAsync()
+    {
+        await outputGate.WaitAsync();
+        await gate.WaitAsync(); try { await db.DisposeAsync(); } finally { gate.Release(); gate.Dispose(); outputGate.Release(); outputGate.Dispose(); }
+    }
 }

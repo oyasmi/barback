@@ -73,7 +73,8 @@
         "dependencies": {
           "Barback.Core": "[1.0.0, )",
           "Microsoft.Data.Sqlite": "[10.0.9, )",
-          "SQLitePCLRaw.bundle_e_sqlite3": "[2.1.13, )"
+          "SQLitePCLRaw.bundle_e_sqlite3": "[2.1.13, )",
+          "System.Security.Cryptography.ProtectedData": "[10.0.9, )"
         }
       },
       "barback.windows": {
@@ -102,6 +103,12 @@
           "SQLitePCLRaw.lib.e_sqlite3": "2.1.13",
           "SQLitePCLRaw.provider.e_sqlite3": "2.1.13"
         }
+      },
+      "System.Security.Cryptography.ProtectedData": {
+        "type": "CentralTransitive",
+        "requested": "[10.0.9, )",
+        "resolved": "10.0.9",
+        "contentHash": "vXp+vBQbTkMrDzUiPCxo1KvzfaAvZWuSRS2P7e5orhtV7ZuePKAB3Cqc9dH2YHUavRJyA2uWd2yrL6hl2VoJ5g=="
       }
     },
     "net10.0-windows10.0.19041/win-arm64": {

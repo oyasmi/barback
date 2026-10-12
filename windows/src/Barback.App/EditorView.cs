@@ -152,9 +152,17 @@ public sealed class EditorView : UserControl, IDisposable
         return saved with
         {
             Name = Get("Name"), Priority = Integer("Priority"), Group = Get("Group"), Notes = Get("Notes"), Enabled = enabled.IsChecked == true,
-            Launch = saved.Launch with { Mode = mode, Executable = Get("Executable"), Arguments = mode is ExecutionMode.PowerShellText or ExecutionMode.Cmd || mode == ExecutionMode.Direct && rawMode.IsChecked == true ? [] : Get("Arguments").Length == 0 ? [] : Get("Arguments").Replace("\r\n", "\n").Split('\n'), RawArguments = mode == ExecutionMode.Direct && rawMode.IsChecked == true ? Get("Raw") : null, ScriptPath = Get("ScriptPath"), ScriptText = Get("ScriptText"), WorkingDirectory = Get("WorkingDirectory"), Environment = all, StopMode = (StopMode)options["StopMode"].SelectedValue, StopWaitSeconds = Number("StopWait"), EncodingCodePage = Integer("Encoding"), LogSegmentBytes = checked((long)Math.Round(Number("LogBytes") * 1048576)), LogSegments = Integer("LogSegments") },
+            Launch = saved.Launch with { Mode = mode, Executable = Get("Executable"), Arguments = mode is ExecutionMode.PowerShellText or ExecutionMode.Cmd || mode == ExecutionMode.Direct && rawMode.IsChecked == true ? [] : ArgumentLines(Get("Arguments")), RawArguments = mode == ExecutionMode.Direct && rawMode.IsChecked == true ? Get("Raw") : null, ScriptPath = Get("ScriptPath"), ScriptText = Get("ScriptText"), WorkingDirectory = Get("WorkingDirectory"), Environment = all, StopMode = (StopMode)options["StopMode"].SelectedValue, StopWaitSeconds = Number("StopWait"), EncodingCodePage = Integer("Encoding"), LogSegmentBytes = checked((long)Math.Round(Number("LogBytes") * 1048576)), LogSegments = Integer("LogSegments") },
             Policy = policy
         };
+    }
+    /// <summary>One argument per line. Empty lines inside the list are deliberate empty arguments, but trailing ones are almost
+    /// always a stray Enter and used to pass extra "" arguments the program never expected.</summary>
+    private static string[] ArgumentLines(string text)
+    {
+        var lines = text.Replace("\r\n", "\n").Split('\n').ToList();
+        while (lines.Count > 0 && lines[^1].Length == 0) lines.RemoveAt(lines.Count - 1);
+        return [.. lines];
     }
     private void FocusField(string key)
     {
@@ -169,7 +177,7 @@ public sealed class EditorView : UserControl, IDisposable
         try
         {
             var config = Build();
-            if (config.Launch.StopMode == StopMode.TerminateJob && (saved.Version == 0 || saved.Launch.StopMode != StopMode.TerminateJob) && !MainWindow.Confirm("ForceConfirm")) return false;
+            if (config.Launch.StopMode == StopMode.TerminateJob && (saved.Version == 0 || saved.Launch.StopMode != StopMode.TerminateJob) && !MainWindow.Confirm("ForceConfirm", "OK", DialogTone.Warning)) return false;
             var errors = ConfigurationValidator.Validate(config, false);
             if (errors.Count > 0) { FocusField(errors[0].Field); throw new ArgumentException(string.Join("\n", errors.Select(e => Text.Get(e.Field) + ": " + e.Message))); }
             await supervisor.SaveAsync(config, saved.Version);
@@ -184,8 +192,7 @@ public sealed class EditorView : UserControl, IDisposable
     {
         if (busy) return false;
         if (DraftFingerprint() == baseline) return true;
-        var result = MessageBox.Show(Window.GetWindow(this), Text.Get("DirtyPrompt"), "Barback", MessageBoxButton.YesNoCancel, MessageBoxImage.Question, MessageBoxResult.Cancel);
-        return result == MessageBoxResult.No || result == MessageBoxResult.Yes && await SaveAsync(null);
+        return Dialog.SaveChanges(Window.GetWindow(this)) switch { false => true, true => await SaveAsync(null), null => false };
     }
     public void Dispose() { if (disposed) return; disposed = true; supervisor.Changed -= SupervisorChanged; }
 }

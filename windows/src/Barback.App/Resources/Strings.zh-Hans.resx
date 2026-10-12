@@ -141,7 +141,7 @@
     <value>添加敏感变量</value>
   </data>
   <data name="DirtyPrompt" xml:space="preserve">
-    <value>离开前保存更改？是＝保存，否＝放弃，取消＝继续编辑。</value>
+    <value>离开前保存更改吗？</value>
   </data>
   <data name="StopConfirm" xml:space="preserve">
     <value>停止所有活动服务和一次性命令？提交时将重新计算数量。</value>
@@ -745,6 +745,9 @@ CPU {1} · 内存 {2} MiB</value>
   <data name="NoMatch" xml:space="preserve">
     <value>已加载内容中没有匹配项</value>
   </data>
+  <data name="EarlierOutputHidden" xml:space="preserve">
+    <value>[仅显示最后 {0} KiB，更早的输出可使用全文搜索或导出]</value>
+  </data>
   <data name="SkippedOutput" xml:space="preserve">
     <value>[已跳过 {0} MiB 较早输出，可使用全文搜索或导出]</value>
   </data>
@@ -936,5 +939,38 @@ CPU {1} · 内存 {2} MiB</value>
   </data>
   <data name="StartupEnabledByPolicy" xml:space="preserve">
     <value>已被系统策略开启</value>
+  </data>
+  <data name="OK" xml:space="preserve">
+    <value>确定</value>
+  </data>
+  <data name="KeepEditing" xml:space="preserve">
+    <value>继续编辑</value>
+  </data>
+  <data name="DeleteAction" xml:space="preserve">
+    <value>删除</value>
+  </data>
+  <data name="ForceAction" xml:space="preserve">
+    <value>强制终止</value>
+  </data>
+  <data name="ExitAction" xml:space="preserve">
+    <value>退出</value>
+  </data>
+  <data name="ResizeDetail" xml:space="preserve">
+    <value>拖动以调整详情栏宽度</value>
+  </data>
+  <data name="StatusStorageOk" xml:space="preserve">
+    <value>存储正常</value>
+  </data>
+  <data name="StatusStorageFailed" xml:space="preserve">
+    <value>存储写入失败</value>
+  </data>
+  <data name="OutputUsage" xml:space="preserve">
+    <value>程序输出 {0} / {1}</value>
+  </data>
+  <data name="WrapLines" xml:space="preserve">
+    <value>自动换行</value>
+  </data>
+  <data name="SearchLocation" xml:space="preserve">
+    <value>{0} · 第 {1} 个字符</value>
   </data>
 </root>

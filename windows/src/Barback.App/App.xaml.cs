@@ -26,7 +26,13 @@ public partial class App : Application
         TaskScheduler.UnobservedTaskException += (_, args) => { log.Warning("task", "Unobserved task exception.", args.Exception); args.SetObserved(); };
         // Match the Windows API baseline and MSIX MinVersion (Windows 10 2004).
         if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 19041)) { MessageBox.Show("Barback requires Windows 10 version 2004 (build 19041) or later.", "Barback"); Shutdown(1); return; }
-        DispatcherUnhandledException += (_, args) => { log.Error("dispatcher", "Unhandled UI exception.", args.Exception); MessageBox.Show(args.Exception.Message, "Barback", MessageBoxButton.OK, MessageBoxImage.Error); args.Handled = true; };
+        DispatcherUnhandledException += (_, args) =>
+        {
+            log.Error("dispatcher", "Unhandled UI exception.", args.Exception); args.Handled = true;
+            // The themed dialog needs working resources; if those are what failed, fall back to the system box.
+            try { Dialog.Notify(args.Exception.Message, DialogTone.Error); }
+            catch (Exception dialogError) { log.Error("dispatcher", "Error dialog failed.", dialogError); MessageBox.Show(args.Exception.Message, "Barback", MessageBoxButton.OK, MessageBoxImage.Error); }
+        };
         using var identity = WindowsIdentity.GetCurrent();
         if (new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator)) { MessageBox.Show("Barback must run as a standard user. Close it and launch without administrator privileges.", "Barback"); Shutdown(1); return; }
         shell = new(); shell.Log = log;
@@ -53,7 +59,14 @@ public partial class App : Application
                 if (!recovery.Restored) { shell.Dispose(); instance?.Dispose(); instance = null; Shutdown(1); return; }
                 store = await SqliteStore.OpenAsync(shell.Root);
             }
-            var language = await store.GetSettingAsync("language"); if (language is not null) CultureInfo.CurrentUICulture = new CultureInfo(language);
+            var language = await store.GetSettingAsync("language");
+            if (language is not null)
+            {
+                // An unknown value (a hand-edited database, a culture removed from the system) must not keep Barback from starting.
+                // The default thread culture also covers text formatted on background threads, such as log viewer markers.
+                try { var culture = new CultureInfo(language); CultureInfo.CurrentUICulture = culture; CultureInfo.DefaultThreadCurrentUICulture = culture; }
+                catch (CultureNotFoundException ex) { log.Warning("app", "Ignoring unknown language setting.", ex); }
+            }
             WorkbenchTheme.Initialize();
             WorkbenchTheme.Set(await store.GetSettingAsync("theme") ?? "System");
             CloseExits = await store.GetSettingAsync("close_exits") == "true";
@@ -102,7 +115,8 @@ public partial class App : Application
         try
         {
             // Task.Run drops the UI synchronization context; the whole stop stays inside the 5 s local budget.
-            Task.Run(() => current.ShutdownAsync(TimeSpan.FromSeconds(2), forceBudget: TimeSpan.FromSeconds(2.5))).Wait(TimeSpan.FromSeconds(5));
+            if (!Task.Run(() => current.ShutdownAsync(TimeSpan.FromSeconds(2), forceBudget: TimeSpan.FromSeconds(2.5))).Wait(TimeSpan.FromSeconds(5)))
+                log.Warning("app", "Stopping programs at session end did not finish within 5 s; the next start recovers."); // run records stay interrupted
         }
         catch (AggregateException ex) { log.Error("app", "Stopping programs at session end failed; the next start recovers.", ex.GetBaseException()); } // run records stay interrupted
     }
@@ -130,7 +144,7 @@ public partial class App : Application
         if (exiting || supervisor is null) return;
         if (MainWindow is MainWindow workbench && !await workbench.RequestLeaveEditorAsync()) return;
         foreach (var editor in Windows.OfType<Window>().Where(w => w is EditorWindow or EnvironmentWindow).ToArray()) { editor.Close(); if (Windows.OfType<Window>().Contains(editor)) return; }
-        if (supervisor.Snapshot.Any(s => s.Runtime.Active) && MessageBox.Show(Text.Get("ExitConfirm"), "Barback", MessageBoxButton.OKCancel, MessageBoxImage.Question, MessageBoxResult.Cancel) != MessageBoxResult.OK) return;
+        if (supervisor.Snapshot.Any(s => s.Runtime.Active) && !Dialog.Confirm(Text.Get("ExitConfirm"), "ExitAction", DialogTone.Warning)) return;
         exiting = true; log.Info("app", "Exiting.");
         using var cancellation = new CancellationTokenSource();
         var force = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -139,7 +153,7 @@ public partial class App : Application
         if (supervisor.Snapshot.Any(s => s.Runtime.Active)) { progress = new(supervisor, budget, cancellation, force); if (MainWindow?.IsVisible == true) progress.Owner = MainWindow; progress.Show(); }
         try { await supervisor.ShutdownAsync(budget, cancellation.Token, force.Task); progress?.Finish(); await supervisor.DisposeAsync(); tray?.Dispose(); shell?.Dispose(); if (store is not null) await store.DisposeAsync(); instance?.Dispose(); instance = null; Shutdown(); }
         catch (OperationCanceledException) when (cancellation.IsCancellationRequested) { exiting = false; }
-        catch (Exception ex) { exiting = false; MessageBox.Show(ex.Message, "Barback", MessageBoxButton.OK, MessageBoxImage.Error); }
+        catch (Exception ex) { exiting = false; Dialog.Notify(ex.Message, DialogTone.Error); }
         finally { progress?.Finish(); }
     }
     protected override void OnExit(ExitEventArgs e) { WorkbenchTheme.Dispose(); instance?.Dispose(); tray?.Dispose(); shell?.Dispose(); base.OnExit(e); }

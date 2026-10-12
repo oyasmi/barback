@@ -75,8 +75,8 @@ public sealed class EnvironmentWindow : Window
     private async void OnClosing(object? sender, CancelEventArgs e)
     {
         if (allowClose || !loaded || Fingerprint() == baseline) return; e.Cancel = true; if (busy) return;
-        var answer = MessageBox.Show(Text.Get("DirtyPrompt"), "Barback", MessageBoxButton.YesNoCancel, MessageBoxImage.Question, MessageBoxResult.Cancel);
-        if (answer == MessageBoxResult.Cancel) return; if (answer == MessageBoxResult.Yes) { await SaveAsync(); if (Fingerprint() != baseline) return; }
+        var answer = Dialog.SaveChanges(this);
+        if (answer is null) return; if (answer == true) { await SaveAsync(); if (Fingerprint() != baseline) return; }
         allowClose = true; Close();
     }
 }

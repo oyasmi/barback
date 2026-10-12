@@ -23,7 +23,7 @@ public sealed class ExitProgressWindow : Window
         var cancel = new Button { Content = Text.Get("CancelExit"), Padding = new(12, 6, 12, 6), Margin = new(4) };
         cancel.Click += (_, _) => { cancel.IsEnabled = false; cancellation.Cancel(); };
         var immediately = new Button { Content = Text.Get("ForceExit"), Padding = new(12, 6, 12, 6), Margin = new(4) };
-        immediately.Click += (_, _) => { if (MessageBox.Show(this, Text.Get("ForceConfirm"), "Barback", MessageBoxButton.OKCancel, MessageBoxImage.Warning, MessageBoxResult.Cancel) == MessageBoxResult.OK) { force.TrySetResult(); immediately.IsEnabled = false; } };
+        immediately.Click += (_, _) => { if (Dialog.Confirm(Text.Get("ForceConfirm"), "ForceAction", DialogTone.Danger, this)) { force.TrySetResult(); immediately.IsEnabled = false; } };
         controls.Children.Add(cancel); controls.Children.Add(immediately); root.Children.Add(programs);
         timer.Tick += (_, _) => Refresh(); Loaded += (_, _) => { Refresh(); timer.Start(); };
         Closing += (_, e) => { if (!finished) { e.Cancel = true; cancellation.Cancel(); } };

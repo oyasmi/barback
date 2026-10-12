@@ -50,7 +50,7 @@ dotnet build Barback.sln -c Release -p:Platform=ARM64 -p:WindowsAppSDKSelfContai
 
 ## 评审修正（2026-10）
 
-依据 [评审修正方案](review-fix-plan.md) 的实施记录。环境：Linux x86_64，.NET SDK 10.0.401。**以下全部是 Linux 上可运行的单测与编译检查结果；标注“待实机”的行为没有在 Windows 上验证，不得视为通过。**
+以下是评审修正方案（该文档未随仓库提交；各编号对应 `fix(windows): Fxx` 提交）的实施记录。环境：Linux x86_64，.NET SDK 10.0.401。**以下全部是 Linux 上可运行的单测与编译检查结果；标注“待实机”的行为没有在 Windows 上验证，不得视为通过。**
 
 验证结果：Core 145、Storage 22、Windows 5（9 个 Win32 用例在非 Windows 明确跳过）通过，0 失败；Core 套件连续运行 12 次无失败/挂起。x64 与 ARM64 全解决方案编译 0 警告、0 错误；中英资源键均为 311 个且键集一致。编译检查使用 `-p:WindowsAppSDKSelfContained=false -p:AppxGeneratePriEnabled=false -p:MicrosoftWindowsAppSDKPackageDir=<任意路径>`（后一项绕过 Windows App SDK 对框架依赖运行时包的目标检查，仅用于托管代码编译，不生成可验证产物）。附录 A 的 4 个复现测试在修复前全部失败（A1 在 Linux 上表现为重复创建 Run 而非挂起），修复后通过。
 
@@ -88,6 +88,20 @@ dotnet build Barback.sln -c Release -p:Platform=ARM64 -p:WindowsAppSDKSelfContai
 ### 实机必须补做
 
 `scripts/test.ps1`（含新增 `TargetEnvironmentDoesNotLeakIntoConsoleHost`、`SlowResumeAfterReadyDoesNotExpireTheHostHandshake`、`ProcessIdentityDistinguishesReusedAndOwnedPids`）、`scripts/test-ui.ps1`，以及 [实机手册](windows-test-runbook.md)“评审修正的实机项”中的注销/重启恢复、PID 复用、DPAPI 修复、高吞吐日志、MSIX 虚拟化探测。
+
+## 健壮性与界面评审（2026-10-12）
+
+环境：Linux x86_64，.NET SDK 10.0.401。**全部是 Linux 单测与编译检查结果；界面与 Win32 行为未在 Windows 实机验证。** Core 149（连续 3 次）、Storage 23、Windows 5（9 个 Win32 用例跳过）通过，0 失败；x64 全解决方案编译 0 警告 0 错误；中英资源键均为 323 个且一致。
+
+| 项 | 实现内容 | 单测 | 待实机 |
+| --- | --- | --- | --- |
+| 清理重试 | 服务自然退出后清理失败，第二次及以后的“重试清理”此前不生效（状态不变时提前返回，丢掉 Terminate）；改为有效果的转移照常执行 | CleanupCanBeRetriedRepeatedlyAfterNaturalExit（修复前超时失败） | — |
+| 计时调度 | 去掉 250 ms 轮询，按 `Reducer.SecondsUntilTick` 只在最近截止时间唤醒 | SecondsUntilTickFollowsEveryTimeBoundPhase、EveryDeadlineReportedAsDueIsActedOnByTick、BackoffRelaunchesWhenItsDeadlineArrivesWithoutPolling | 睡眠/唤醒后的退避与超时 |
+| 记录刷新 | 存储增加 `RunsVersion`/`EventsVersion`、按程序查询（新索引 `runs_program_started`）、`HasUnfinishedRunsAsync`；工作台版本不变不查询，程序页只读选中程序，表格重绑保留滚动位置 | ProgramRunQueriesAreScopedOrderedAndVersioned | 大量历史下的界面流畅度 |
+| 维护 | 输出文件删除移出数据库锁（独立 `outputGate`），只在读工作清单和提交时持锁 | 既有 Maintain/Delete 用例 | 大量输出目录的维护期间启动延迟 |
+| 日志视图 | 首次打开从末尾 256 KiB 开始；自动换行；Cascadia Mono 回退；全文搜索结果带匹配行片段 | — | 10 MiB 分段打开速度 |
+| 小项 | 时间解析固定 InvariantCulture；无效语言设置不再阻止启动并设置后台线程 UI 文化；`LogCollector` 重试用单调时钟；会话结束超时写日志；参数末尾空行不再变成空参数 | 既有用例 | — |
+| 界面 | 可拖动并记忆的详情栏（默认 55%）；Segoe Fluent Icons 统一图标；主题化对话框替换 12 处 MessageBox（启动早期 4 处保留）；底栏显示存储状态与输出占用；托盘品牌图标加状态角标 | — | 全部（需 `test-ui.ps1` 与截图核对） |
 
 ## 实现范围与仍需完成的产品核对
 

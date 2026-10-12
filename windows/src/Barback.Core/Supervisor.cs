@@ -79,6 +79,7 @@ public sealed class Supervisor : IAsyncDisposable
         var next = configs.Values.OrderBy(c => c.Priority).ThenBy(c => c.NameKey).ThenBy(c => c.Id)
             .Select(c => new ProgramSnapshot(c, states.GetValueOrDefault(c.Id) ?? new(), states.GetValueOrDefault(c.Id)?.Active == true ? runConfigs.GetValueOrDefault(c.Id) : null, unresolved.TryGetValue(c.Id, out var identity) ? identity.Pid : null)).ToArray();
         if (!snapshot.SequenceEqual(next) || publishedStorageError != StorageError) { snapshot = next; publishedStorageError = StorageError; Changed?.Invoke(); }
+        ScheduleNextTick();
     }
     public Task InitializeAsync() => Enqueue(async () =>
     {
@@ -193,7 +194,8 @@ public sealed class Supervisor : IAsyncDisposable
         }
         var transition = Reducer.Apply(before, e, basis, clock.Now);
         states[id] = transition.State;
-        if (transition.State == before) return;
+        // An unchanged state can still carry work: a repeated "retry cleanup" re-issues Terminate. BeginCleanup is idempotent.
+        if (transition.State == before && transition.Effects.Length == 0) return;
         if (transition.Effects.Contains(Effect.Finish) && before.RunId is Guid finished)
         {
             var reason = before.StopReason ?? e.Reason ?? (e.Signal == Signal.SpawnFailed ? EndReason.SpawnFailed : EndReason.Natural);
@@ -349,17 +351,49 @@ public sealed class Supervisor : IAsyncDisposable
             });
         }));
     }
+    /// <summary>Environment.TickCount64 at which the next reducer deadline falls due; long.MaxValue when none is pending.</summary>
+    private long nextTickAt = long.MaxValue;
+    private readonly SemaphoreSlim tickWake = new(0, 1);
+    /// <summary>Lower bound between ticks, so a deadline the reducer does not act on can never turn into a busy loop.</summary>
+    private const int MinTickDelayMilliseconds = 50;
+    /// <summary>Long waits are re-evaluated hourly; this also keeps timer arguments in range.</summary>
+    private const int MaxTickDelayMilliseconds = 3_600_000;
+    /// <summary>Runs on the actor after every request: arms the ticker for the earliest deadline instead of polling.</summary>
+    private void ScheduleNextTick()
+    {
+        var now = clock.Now; double soonest = double.PositiveInfinity;
+        foreach (var (id, state) in states)
+        {
+            if (!configs.TryGetValue(id, out var config)) continue;
+            var basis = state.Active ? runConfigs.GetValueOrDefault(id) ?? config : config;
+            if (Reducer.SecondsUntilTick(state, basis, now) is double remaining) soonest = Math.Min(soonest, remaining);
+        }
+        long due = double.IsFinite(soonest)
+            ? Environment.TickCount64 + (long)Math.Clamp(Math.Ceiling(soonest * 1000), MinTickDelayMilliseconds, MaxTickDelayMilliseconds)
+            : long.MaxValue;
+        var previous = Interlocked.Exchange(ref nextTickAt, due);
+        // Only an earlier deadline needs to interrupt the current wait; a later one is picked up when that wait ends.
+        if (due < previous) { try { tickWake.Release(); } catch (SemaphoreFullException) { } }
+    }
+    /// <summary>Sleeps until the next deadline. A running service with no pending deadline costs no wakeups at all.</summary>
     private async Task TickAsync()
     {
         try
         {
-            using var timer = new PeriodicTimer(TimeSpan.FromMilliseconds(250));
-            while (await timer.WaitForNextTickAsync(lifetime.Token).ConfigureAwait(false))
-                if (Snapshot.Any(s => s.Runtime.Active || s.Runtime.Phase == Phase.Backoff) && Interlocked.Exchange(ref tickQueued, 1) == 0) Post(async () =>
+            while (true)
+            {
+                var due = Interlocked.Read(ref nextTickAt);
+                var wait = due == long.MaxValue ? MaxTickDelayMilliseconds : (int)Math.Clamp(due - Environment.TickCount64, 0, MaxTickDelayMilliseconds);
+                if (await tickWake.WaitAsync(wait, lifetime.Token).ConfigureAwait(false)) continue; // an earlier deadline appeared
+                if (due == long.MaxValue || Environment.TickCount64 < due) continue; // hourly re-check, or the deadline moved
+                // Consumed: the tick's own publish arms the next deadline.
+                Interlocked.CompareExchange(ref nextTickAt, long.MaxValue, due);
+                if (Interlocked.Exchange(ref tickQueued, 1) == 0) Post(async () =>
                 {
                     try { foreach (var id in states.Keys.ToArray()) await ApplyAsync(id, new(Signal.Tick)).ConfigureAwait(false); }
                     finally { Volatile.Write(ref tickQueued, 0); }
                 });
+            }
         }
         catch (OperationCanceledException) { }
     }
@@ -435,7 +469,7 @@ public sealed class Supervisor : IAsyncDisposable
             if (Snapshot.Any(s => s.Runtime.Active)) throw new InvalidOperationException("Cleanup is not confirmed; retry cleanup before exiting. Run records remain interrupted.");
             await FlushWritesAsync().ConfigureAwait(false);
             cancellationToken.ThrowIfCancellationRequested();
-            if (StorageError is null && !(await store.RunsAsync().ConfigureAwait(false)).Any(r => r.Ended is null)) await store.MarkCleanAsync().ConfigureAwait(false);
+            if (StorageError is null && !await store.HasUnfinishedRunsAsync().ConfigureAwait(false)) await store.MarkCleanAsync().ConfigureAwait(false);
         }
         catch
         {

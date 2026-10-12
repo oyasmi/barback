@@ -27,8 +27,13 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer sampler = new() { Interval = TimeSpan.FromSeconds(1) };
     private readonly Dictionary<Guid, (TimeSpan Cpu, DateTime At)> lastMetrics = [];
     private readonly Dictionary<Guid, LogWindow> logWindows = [];
-    private RunRecord[] loadedRuns = [];
+    /// <summary>Runs behind the Activity table, and the newest runs of the program shown in the detail pane.</summary>
+    private RunRecord[] activityRuns = [], programRuns = [];
     private EventRecord[] loadedEvents = [];
+    /// <summary>Store versions the loaded records correspond to: a refresh only queries when these move.</summary>
+    private long activityRunsVersion = -1, programRunsVersion = -1, eventsVersion = -1;
+    private Guid? programRunsFor;
+    private const int ProgramRunLimit = 1000;
     private ProgramRow? selected;
     private HistoryRow? historical;
     private Guid? displayedProgram;
@@ -41,6 +46,11 @@ public partial class MainWindow : Window
     private string page = "programs", scope = "all", groupSignature = "";
     private bool ready, refreshing, hiddenHint, narrowDetail, recordsDirty = true, loadingRecords, historyFromActivity, closed, closing;
     private int refreshQueued;
+    /// <summary>Share of the workbench width given to the details pane (the output lives there). Persisted when the divider moves.</summary>
+    private double detailShare = DefaultDetailShare;
+    private const double DefaultDetailShare = 0.55, MinDetailShare = 0.25, MaxDetailShare = 0.8;
+    /// <summary>Layout mode the column widths were last set for; widths are only rewritten on a mode change so a drag is never undone by a refresh.</summary>
+    private bool? layoutNarrow;
 
     public MainWindow(Supervisor supervisor, SqliteStore store, ShellIntegration shell, WindowsProcessHost host)
     {
@@ -67,12 +77,13 @@ public partial class MainWindow : Window
         ProgramList.ContextMenuOpening += (_, e) => { e.Handled = true; if (selected is not null) ShowProgramMenu(selected.Id, ProgramList); };
         supervisor.Changed += OnSupervisorChanged;
         WorkbenchTheme.Changed += OnThemeChanged;
-        sampler.Tick += async (_, _) => { if (closed) return; RefreshTimedDetails(); Sample(); if (recordsDirty) await GuardAsync(RefreshRecordsAsync); };
+        sampler.Tick += async (_, _) => { if (closed) return; RefreshTimedDetails(); Sample(); UpdateStatusBar(); if (recordsDirty) await GuardAsync(RefreshRecordsAsync); };
+        var version = typeof(App).Assembly.GetName().Version; AppVersion.Text = version is null ? "Barback" : $"Barback {version.Major}.{version.Minor}.{version.Build}";
         IsVisibleChanged += (_, _) => { if (IsVisible) { sampler.Start(); OnSupervisorChanged(); } else { sampler.Stop(); lastMetrics.Clear(); } };
         SizeChanged += (_, _) => ApplyAdaptiveLayout();
         PreviewKeyDown += OnKey; Closing += OnClosing;
         Closed += (_, _) => { closed = true; sampler.Stop(); supervisor.Changed -= OnSupervisorChanged; WorkbenchTheme.Changed -= OnThemeChanged; logView?.Dispose(); };
-        Loaded += async (_, _) => { await GuardAsync(() => WindowPlacement.RestoreAsync(this, store)); await GuardAsync(RefreshRecordsAsync); };
+        Loaded += async (_, _) => { await GuardAsync(() => WindowPlacement.RestoreAsync(this, store)); await GuardAsync(RestoreDetailShareAsync); await GuardAsync(RefreshRecordsAsync); };
         ready = true; RefreshPrograms(); Navigate("programs");
     }
 
@@ -106,10 +117,10 @@ public partial class MainWindow : Window
     public static async Task RunGuardedAsync(Func<Task> action)
     {
         try { await action(); }
-        catch (Exception ex) { MessageBox.Show(Text.Get("Error") + "\n" + ex.Message, "Barback", MessageBoxButton.OK, MessageBoxImage.Error); }
+        catch (Exception ex) { Dialog.Notify(Text.Get("Error") + "\n\n" + ex.Message, DialogTone.Error); }
     }
-    public static bool Confirm(string key) => MessageBox.Show(Text.Get(key), "Barback", MessageBoxButton.OKCancel, MessageBoxImage.Question, MessageBoxResult.Cancel) == MessageBoxResult.OK;
-    private bool Ask(string message) => MessageBox.Show(this, message, "Barback", MessageBoxButton.OKCancel, MessageBoxImage.Question, MessageBoxResult.Cancel) == MessageBoxResult.OK;
+    public static bool Confirm(string key, string confirmKey = "OK", DialogTone tone = DialogTone.Question) => Dialog.Confirm(Text.Get(key), confirmKey, tone);
+    private bool Ask(string message, string confirmKey = "OK", DialogTone tone = DialogTone.Question) => Dialog.Confirm(message, confirmKey, tone, this);
     private async Task GuardAsync(Func<Task> action) { try { await action(); } catch (Exception ex) { ShowError(ex); } }
     private void ShowError(Exception ex)
     {
@@ -180,7 +191,7 @@ public partial class MainWindow : Window
         ProgramList.SelectedItem = rows.FirstOrDefault(r => r.Id == selectedId && Matches(r));
         selected = ProgramList.SelectedItem as ProgramRow;
         refreshing = false;
-        SyncStorageBanner();
+        SyncStorageBanner(); UpdateStatusBar();
         UpdateSummary(); UpdateGroups(); UpdateEmptyState(); UpdateDetails(); ApplyAdaptiveLayout();
     }
     private void RefreshTimedDetails()
@@ -297,9 +308,18 @@ public partial class MainWindow : Window
         if (!ready) return;
         bool narrow = ActualWidth < 1060 || SystemParameters.HighContrast && ActualWidth < 1200;
         RailColumn.Width = new GridLength(narrow ? 156 : 176);
+        if (layoutNarrow != narrow)
+        {
+            layoutNarrow = narrow;
+            if (narrow)
+            {
+                ListColumn.MinWidth = DetailColumn.MinWidth = 0;
+                ListColumn.Width = new GridLength(1, GridUnitType.Star); DividerColumn.Width = new GridLength(0); DetailColumn.Width = new GridLength(0);
+            }
+            else ApplyDetailShare();
+        }
         if (narrow)
         {
-            ListColumn.Width = new GridLength(1, GridUnitType.Star); DividerColumn.Width = new GridLength(0); DetailColumn.Width = new GridLength(0);
             bool detail = narrowDetail && (selected is not null || historical is not null);
             CollectionPane.Visibility = detail ? Visibility.Collapsed : Visibility.Visible;
             DetailPane.Visibility = detail ? Visibility.Visible : Visibility.Collapsed;
@@ -307,12 +327,43 @@ public partial class MainWindow : Window
         }
         else
         {
-            ListColumn.Width = new GridLength(1, GridUnitType.Star); DividerColumn.Width = new GridLength(1); DetailColumn.Width = new GridLength(360);
             CollectionPane.Visibility = Visibility.Visible; DetailPane.Visibility = Visibility.Visible;
             Grid.SetColumn(DetailPane, 2); Grid.SetColumnSpan(DetailPane, 1); WorkbenchDivider.Visibility = Visibility.Visible;
         }
         BackToList.Visibility = narrow || historical is not null ? Visibility.Visible : Visibility.Collapsed;
     }
+    private void ApplyDetailShare()
+    {
+        ListColumn.MinWidth = 300; DetailColumn.MinWidth = 340;
+        ListColumn.Width = new GridLength(1 - detailShare, GridUnitType.Star); DividerColumn.Width = new GridLength(7); DetailColumn.Width = new GridLength(detailShare, GridUnitType.Star);
+    }
+    private async Task RestoreDetailShareAsync()
+    {
+        if (await store.GetSettingAsync("detail_share") is string text && double.TryParse(text, NumberStyles.Float, CultureInfo.InvariantCulture, out var share) && double.IsFinite(share))
+            detailShare = Math.Clamp(share, MinDetailShare, MaxDetailShare);
+        if (layoutNarrow == false) ApplyDetailShare();
+    }
+    private async void DividerDragCompleted(object sender, DragCompletedEventArgs e) => await GuardAsync(SaveDetailShareAsync);
+    private async void DividerKeyUp(object sender, KeyEventArgs e) { if (e.Key is Key.Left or Key.Right) await GuardAsync(SaveDetailShareAsync); }
+    private async Task SaveDetailShareAsync()
+    {
+        double list = ListColumn.ActualWidth, detail = DetailColumn.ActualWidth;
+        if (layoutNarrow != false || list + detail <= 0) return;
+        detailShare = Math.Clamp(detail / (list + detail), MinDetailShare, MaxDetailShare);
+        await store.SetSettingAsync("detail_share", detailShare.ToString("R", CultureInfo.InvariantCulture));
+    }
+    /// <summary>The footer reports what a glance should answer: is state being saved, and how much of the output budget is used.</summary>
+    private void UpdateStatusBar()
+    {
+        var error = supervisor.StorageError; bool failing = error is not null;
+        StorageIcon.Text = failing ? "\uE7BA" : "\uE73E";
+        StorageIcon.SetResourceReference(TextBlock.ForegroundProperty, failing ? "DangerBrush" : "SuccessBrush");
+        StorageStatus.Text = Text.Get(failing ? "StatusStorageFailed" : "StatusStorageOk"); StorageStatus.ToolTip = error;
+        if (store.LogQuota is { } quota) OutputUsage.Text = Text.Format("OutputUsage", FormatSize(quota.UsedBytes), FormatSize(quota.Limit));
+    }
+    private static string FormatSize(long bytes) => bytes >= 1L << 30
+        ? (bytes / (double)(1L << 30)).ToString("0.#", CultureInfo.CurrentUICulture) + " GiB"
+        : (Math.Max(0, bytes) / 1048576d).ToString(bytes < 10L << 20 ? "0.#" : "0", CultureInfo.CurrentUICulture) + " MiB";
     private void BackClick(object sender, RoutedEventArgs e)
     {
         if (historical is not null && historyFromActivity) { Navigate("activity"); return; }
@@ -340,7 +391,7 @@ public partial class MainWindow : Window
         RerunButton.Visibility = historical is not null && snapshot?.Config.Kind == ProgramKind.Oneshot ? Visibility.Visible : Visibility.Collapsed;
         RerunButton.IsEnabled = historical is not null && ProgramActionPolicy.CanRerun(historical.Run, snapshot);
         RerunButton.ToolTip = RerunButton.IsEnabled ? Text.Get("RerunCurrent") : Text.Get("RerunUnavailable");
-        var run = historical?.Run ?? (snapshot?.Runtime.RunId is Guid runId ? loadedRuns.FirstOrDefault(r => r.Id == runId) : loadedRuns.FirstOrDefault(r => r.ProgramId == snapshot?.Config.Id));
+        var run = historical?.Run ?? (snapshot?.Runtime.RunId is Guid runId ? programRuns.FirstOrDefault(r => r.Id == runId) : programRuns.FirstOrDefault(r => r.ProgramId == snapshot?.Config.Id));
         RunDescription.Text = run is null ? Text.Get(snapshot?.Runtime.Active == true ? "PreparingOutput" : "NoOutput")
             : Text.Format("RunDescription", run.Started.ToLocalTime().ToString("MM-dd HH:mm:ss", CultureInfo.CurrentUICulture), run.ConfigVersion, historical?.DisplayCode ?? (run.Ended is null ? Text.Get("RunInProgress") : new HistoryRow(run, "").DisplayOutcome));
         // A service that restarts keeps its earlier output on screen (usually the crash that caused the restart).
@@ -427,11 +478,11 @@ public partial class MainWindow : Window
         AddMenu(menu, "Copy", () => CopyAsync(id));
         AddMenu(menu, "ProgramRecords", async () => { SelectProgram(id); DetailTabs.SelectedIndex = 2; narrowDetail = true; ApplyAdaptiveLayout(); await RefreshRecordsAsync(); });
         if (ProgramActionPolicy.CanRestart(snapshot)) AddMenu(menu, "Restart", () => SendAsync(id, Signal.Restart));
-        if (snapshot.Runtime.Active) AddMenu(menu, "Force", async () => { if (Ask(Text.Get("ForceConfirm") + "\n\n" + snapshot.Config.Name)) { var latest = supervisor.Snapshot.FirstOrDefault(s => s.Config.Id == id); if (latest?.Runtime.RunId == snapshot.Runtime.RunId) await supervisor.SendAsync(id, Signal.Force); } });
+        if (snapshot.Runtime.Active) AddMenu(menu, "Force", async () => { if (Ask(Text.Get("ForceConfirm") + "\n\n" + snapshot.Config.Name, "ForceAction", DialogTone.Danger)) { var latest = supervisor.Snapshot.FirstOrDefault(s => s.Config.Id == id); if (latest?.Runtime.RunId == snapshot.Runtime.RunId) await supervisor.SendAsync(id, Signal.Force); } });
         if (snapshot.Runtime.Phase == Phase.Fatal) AddMenu(menu, "ClearFailure", async () =>
         {
             // An unconfirmed previous process may still be running; clearing it risks a duplicate instance.
-            if (snapshot.UnresolvedPid is int pid && !Ask(Text.Format("ClearUnresolvedConfirm", pid, snapshot.Config.Name))) return;
+            if (snapshot.UnresolvedPid is int pid && !Ask(Text.Format("ClearUnresolvedConfirm", pid, snapshot.Config.Name), "OK", DialogTone.Warning)) return;
             await supervisor.SendAsync(id, Signal.ClearFailure);
         });
         menu.Items.Add(new Separator()); AddMenu(menu, "Delete", () => DeleteAsync(id)); menu.IsOpen = true;
@@ -459,7 +510,7 @@ public partial class MainWindow : Window
         if (candidates.Length == 0) return;
         string message = Text.Format(signal == Signal.Stop ? "BatchStopPrompt" : "BatchRestartPrompt", candidates.Count(s => s.Config.Kind == ProgramKind.Service), candidates.Count(s => s.Config.Kind == ProgramKind.Oneshot));
         message += "\n\n" + string.Join("\n", candidates.Take(15).Select(s => s.Config.Name)) + (candidates.Length > 15 ? "\n…" : "");
-        if (Ask(message)) await supervisor.BatchAsync(signal);
+        if (Ask(message, "OK", DialogTone.Warning)) await supervisor.BatchAsync(signal);
     }
     public Task EditSelectedAsync()
     {
@@ -497,22 +548,41 @@ public partial class MainWindow : Window
     private async Task DeleteAsync(Guid id)
     {
         var config = supervisor.Snapshot.FirstOrDefault(s => s.Config.Id == id)?.Config;
-        if (config is not null && Ask(Text.Format("DeleteProgramPrompt", config.Name))) await supervisor.DeleteAsync(id);
+        if (config is not null && Ask(Text.Format("DeleteProgramPrompt", config.Name), "DeleteAction", DialogTone.Danger)) await supervisor.DeleteAsync(id);
     }
     private void ImportClick(object sender, RoutedEventArgs e) => new ImportWindow(supervisor) { Owner = this }.ShowDialog();
 
+    /// <summary>
+    /// Runs on every state change (at most once per second). It used to read the newest 5000 runs each time, even on the
+    /// Programs page and even when no run had changed; now it compares store versions first and loads only what the
+    /// visible page needs: the selected program's runs, or the Activity list while that tab is open.
+    /// </summary>
     private async Task RefreshRecordsAsync()
     {
         if (loadingRecords || closed) return;
         loadingRecords = true; recordsDirty = false;
         try
         {
-            var runs = (await store.RunsAsync()).ToArray();
-            if (closed) return;
-            if (!loadedRuns.SequenceEqual(runs)) { loadedRuns = runs; FilterHistory(); UpdateProgramHistory(); }
-            if (page == "activity" && ActivityTabs.SelectedIndex == 1)
+            var version = store.RunsVersion; var programId = historical?.ProgramId ?? selected?.Id;
+            if (programId != programRunsFor || version != programRunsVersion)
+            {
+                RunRecord[] runs = programId is Guid id ? [.. await store.RunsAsync(id, ProgramRunLimit)] : [];
+                if (closed) return;
+                bool sameProgram = programRunsFor == programId;
+                programRunsFor = programId; programRunsVersion = version;
+                if (!sameProgram || !programRuns.SequenceEqual(runs)) { programRuns = runs; UpdateProgramHistory(); }
+            }
+            if (page == "activity" && ActivityTabs.SelectedIndex == 0 && version != activityRunsVersion)
+            {
+                var runs = (await store.RunsAsync()).ToArray(); if (closed) return;
+                activityRunsVersion = version;
+                if (!activityRuns.SequenceEqual(runs)) { activityRuns = runs; FilterHistory(); }
+            }
+            var eventVersion = store.EventsVersion;
+            if (page == "activity" && ActivityTabs.SelectedIndex == 1 && eventVersion != eventsVersion)
             {
                 var events = (await store.EventsAsync()).ToArray(); if (closed) return;
+                eventsVersion = eventVersion;
                 if (!loadedEvents.SequenceEqual(events)) { loadedEvents = events; FilterEvents(); }
             }
             UpdateDetails();
@@ -520,30 +590,47 @@ public partial class MainWindow : Window
         catch { recordsDirty = true; throw; }
         finally { loadingRecords = false; }
     }
+    /// <summary>Replacing ItemsSource scrolls a DataGrid back to the top; new records must not throw the reader off their place.</summary>
+    private static void SetItemsKeepingScroll(DataGrid table, System.Collections.IEnumerable? items)
+    {
+        var scroller = FindDescendant<ScrollViewer>(table); var offset = scroller?.VerticalOffset ?? 0;
+        table.ItemsSource = items;
+        if (scroller is not null && offset > 0) table.Dispatcher.BeginInvoke(() => scroller.ScrollToVerticalOffset(offset), DispatcherPriority.Loaded);
+    }
+    private static T? FindDescendant<T>(DependencyObject root) where T : DependencyObject
+    {
+        for (int i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
+        {
+            var child = VisualTreeHelper.GetChild(root, i);
+            if (child is T match) return match;
+            if (FindDescendant<T>(child) is { } nested) return nested;
+        }
+        return null;
+    }
     private void FilterHistory()
     {
         if (!ready) return;
         var names = supervisor.Snapshot.ToDictionary(s => s.Config.Id, s => s.Config.Name);
         var selectedId = (HistoryTable.SelectedItem as HistoryRow)?.Run.Id;
         string result = (OutcomeFilter.SelectedItem as FilterChoice)?.Key ?? "All";
-        var filtered = loadedRuns.Where(r => r.Ended is not null && (HistorySince.SelectedDate is not DateTime since || r.Started.LocalDateTime >= since)
+        var filtered = activityRuns.Where(r => r.Ended is not null && (HistorySince.SelectedDate is not DateTime since || r.Started.LocalDateTime >= since)
             && (result == "All" || ProgramActionPolicy.Outcome(r) == result))
             .Select(r => new HistoryRow(r, names.GetValueOrDefault(r.ProgramId, Text.Get("DeletedProgram"))))
             .Where(r => r.ProgramName.Contains(HistorySearch.Text.Trim(), StringComparison.OrdinalIgnoreCase)).ToArray();
-        HistoryTable.ItemsSource = filtered; HistoryTable.SelectedItem = filtered.FirstOrDefault(r => r.Run.Id == selectedId);
+        SetItemsKeepingScroll(HistoryTable, filtered); HistoryTable.SelectedItem = filtered.FirstOrDefault(r => r.Run.Id == selectedId);
         HistoryHint.Text = filtered.Length == 0 ? Text.Get("NoHistory") : Text.Get("HistoryHint");
     }
     private void UpdateProgramHistory()
     {
         var id = historical?.ProgramId ?? selected?.Id;
-        ProgramHistory.ItemsSource = id is null ? null : loadedRuns.Where(r => r.ProgramId == id && r.Ended is not null).Select(r => new HistoryRow(r, DetailName.Text)).ToArray();
+        SetItemsKeepingScroll(ProgramHistory, id is null ? null : programRuns.Where(r => r.ProgramId == id && r.Ended is not null).Select(r => new HistoryRow(r, DetailName.Text)).ToArray());
     }
     private void FilterEvents()
     {
         if (!ready) return;
         var names = supervisor.Snapshot.ToDictionary(s => s.Config.Id, s => s.Config.Name);
-        EventsTable.ItemsSource = loadedEvents.Select(record => new EventRow(record, record.ProgramId is Guid id ? names.GetValueOrDefault(id, Text.Get("DeletedProgram")) : "Barback"))
-            .Where(row => (row.Title + " " + row.Name + " " + row.Detail).Contains(EventSearch.Text.Trim(), StringComparison.OrdinalIgnoreCase)).ToArray();
+        SetItemsKeepingScroll(EventsTable, loadedEvents.Select(record => new EventRow(record, record.ProgramId is Guid id ? names.GetValueOrDefault(id, Text.Get("DeletedProgram")) : "Barback"))
+            .Where(row => (row.Title + " " + row.Name + " " + row.Detail).Contains(EventSearch.Text.Trim(), StringComparison.OrdinalIgnoreCase)).ToArray());
     }
     private void HistoryFilterChanged(object sender, TextChangedEventArgs e) => FilterHistory();
     private void HistoryDateChanged(object? sender, SelectionChangedEventArgs e) => FilterHistory();
@@ -671,7 +758,7 @@ public partial class MainWindow : Window
         {
             if (!await RequestLeaveEditorAsync()) return;
             if (application.CloseExits) { await application.ExitAsync(); return; }
-            if (!hiddenHint && await store.GetSettingAsync("hidden_hint") != "true") { MessageBox.Show(this, Text.Get("Hidden"), "Barback"); hiddenHint = true; await store.SetSettingAsync("hidden_hint", "true"); }
+            if (!hiddenHint && await store.GetSettingAsync("hidden_hint") != "true") { Dialog.Notify(Text.Get("Hidden"), DialogTone.Info, this); hiddenHint = true; await store.SetSettingAsync("hidden_hint", "true"); }
             await GuardAsync(() => WindowPlacement.SaveAsync(this, store)); Hide();
         }
         catch (Exception ex) { ShowError(ex); }

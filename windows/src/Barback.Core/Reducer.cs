@@ -120,4 +120,22 @@ public static class Reducer
         }
         return Return(s);
     }
+
+    /// <summary>
+    /// Seconds until a <see cref="Signal.Tick"/> can next change <paramref name="s"/>, or null when nothing is time-bound.
+    /// Mirrors the Tick branch of <see cref="Apply"/>; keep the two in step. Active-clock deadlines exclude sleep, so a
+    /// wall-clock timer armed from this value can only fire early, never late.
+    /// </summary>
+    public static double? SecondsUntilTick(RuntimeState s, ProgramConfig c, ClockReading now)
+    {
+        if (s.Cleaning) return null;
+        double soonest = double.PositiveInfinity;
+        void Due(double remaining) => soonest = Math.Min(soonest, remaining);
+        if (s.Phase == Phase.Backoff) Due(s.Deadline - now.Active);
+        if (s.Phase == Phase.Starting && s.Pid is not null) Due(s.Deadline - now.Active);
+        if (s.Phase == Phase.Stopping) Due(s.Deadline - now.Elapsed);
+        if (s.Phase == Phase.Running && c.Kind == ProgramKind.Oneshot && c.Policy.TimeoutSeconds > 0) Due(s.StartedElapsed + c.Policy.TimeoutSeconds - now.Elapsed);
+        if (s.Phase == Phase.Running && s.BackoffExponent != 0) Due(s.StartedActive + 60 - now.Active);
+        return double.IsFinite(soonest) ? Math.Max(0, soonest) : null;
+    }
 }

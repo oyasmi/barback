@@ -120,4 +120,6 @@ public interface IStore : IAsyncDisposable
     Task<bool> RecoverAsync();
     Task MarkCleanAsync();
     Task MaintainAsync() => Task.CompletedTask;
+    /// <summary>Whether any run record is still open; stores override this with a direct query.</summary>
+    async Task<bool> HasUnfinishedRunsAsync() => (await RunsAsync().ConfigureAwait(false)).Any(r => r.Ended is null);
 }

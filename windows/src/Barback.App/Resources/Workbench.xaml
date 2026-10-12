@@ -17,6 +17,24 @@
   <Style x:Key="QuietButton" TargetType="Button" BasedOn="{StaticResource WorkbenchButton}">
     <Setter Property="Background" Value="Transparent"/><Setter Property="BorderThickness" Value="0"/>
   </Style>
+  <!-- Square, glyph-only toolbar button; the glyph comes from the Symbol font so every icon in the app matches. -->
+  <Style x:Key="IconButton" TargetType="Button" BasedOn="{StaticResource QuietButton}">
+    <Setter Property="Padding" Value="0"/><Setter Property="MinWidth" Value="32"/><Setter Property="Width" Value="32"/><Setter Property="Height" Value="32"/>
+    <Setter Property="FontFamily" Value="Segoe Fluent Icons, Segoe MDL2 Assets"/><Setter Property="FontSize" Value="14"/>
+  </Style>
+  <Style x:Key="WorkbenchSplitter" TargetType="GridSplitter">
+    <Setter Property="Background" Value="Transparent"/><Setter Property="Cursor" Value="SizeWE"/><Setter Property="Focusable" Value="True"/>
+    <Setter Property="HorizontalAlignment" Value="Stretch"/><Setter Property="ResizeBehavior" Value="PreviousAndNext"/><Setter Property="ResizeDirection" Value="Columns"/>
+    <Setter Property="KeyboardIncrement" Value="24"/>
+    <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="GridSplitter">
+      <Border Background="{TemplateBinding Background}"><Border x:Name="Line" Width="1" HorizontalAlignment="Center" Background="{DynamicResource LineBrush}"/></Border>
+      <ControlTemplate.Triggers>
+        <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Line" Property="Width" Value="3"/><Setter TargetName="Line" Property="Background" Value="{DynamicResource AccentBrush}"/></Trigger>
+        <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Line" Property="Width" Value="3"/><Setter TargetName="Line" Property="Background" Value="{DynamicResource AccentBrush}"/></Trigger>
+        <Trigger Property="IsDragging" Value="True"><Setter TargetName="Line" Property="Width" Value="3"/><Setter TargetName="Line" Property="Background" Value="{DynamicResource AccentBrush}"/></Trigger>
+      </ControlTemplate.Triggers>
+    </ControlTemplate></Setter.Value></Setter>
+  </Style>
   <Style x:Key="NavButton" TargetType="Button" BasedOn="{StaticResource QuietButton}">
     <Setter Property="HorizontalContentAlignment" Value="Left"/><Setter Property="Padding" Value="12,10"/>
     <Setter Property="Margin" Value="0,2"/><Setter Property="HorizontalAlignment" Value="Stretch"/>
@@ -31,7 +49,7 @@
   </Style>
   <Style x:Key="Heading" TargetType="TextBlock"><Setter Property="FontSize" Value="24"/><Setter Property="FontWeight" Value="SemiBold"/><Setter Property="TextWrapping" Value="Wrap"/></Style>
   <Style x:Key="SectionHeading" TargetType="TextBlock"><Setter Property="FontSize" Value="15"/><Setter Property="FontWeight" Value="SemiBold"/><Setter Property="Margin" Value="0,20,0,12"/></Style>
-  <Style x:Key="Symbol" TargetType="TextBlock"><Setter Property="FontFamily" Value="Segoe MDL2 Assets"/><Setter Property="FontSize" Value="16"/><Setter Property="VerticalAlignment" Value="Center"/></Style>
+  <Style x:Key="Symbol" TargetType="TextBlock"><Setter Property="FontFamily" Value="Segoe Fluent Icons, Segoe MDL2 Assets"/><Setter Property="FontSize" Value="16"/><Setter Property="VerticalAlignment" Value="Center"/></Style>
   <Style x:Key="ProgramItem" TargetType="ListBoxItem">
     <Setter Property="Padding" Value="10,8"/><Setter Property="Margin" Value="0,2"/><Setter Property="HorizontalContentAlignment" Value="Stretch"/>
     <Setter Property="AutomationProperties.Name" Value="{Binding Name}"/>

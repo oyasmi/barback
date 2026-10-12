@@ -4,6 +4,7 @@ namespace Barback.Core.Tests;
 public class SupervisorTests
 {
     private sealed class Clock : IClock { public ClockReading Now => new(10, 10, DateTimeOffset.UtcNow); }
+    private sealed class ManualClock : IClock { public double Seconds = 10; public ClockReading Now => new(Seconds, Seconds, DateTimeOffset.UtcNow); }
     private sealed class Store : IStore
     {
         public List<ProgramConfig> Configs = []; private readonly System.Collections.Concurrent.ConcurrentDictionary<Guid, RunRecord> records = []; public RunRecord[] Runs => records.Values.ToArray(); public Dictionary<Guid, RuntimeState> Runtime = [];
@@ -557,6 +558,42 @@ public class SupervisorTests
         {
             var store = new Store(); await using var supervisor = new Supervisor(store, new Host(store), new Clock(), root); await supervisor.InitializeAsync();
             await supervisor.DeleteAsync(Guid.NewGuid());
+        }
+        finally { Directory.Delete(root, true); }
+    }
+    [Fact]
+    public async Task CleanupCanBeRetriedRepeatedlyAfterNaturalExit()
+    {
+        var root = Temp(); try
+        {
+            var store = new Store(); var config = Config(root); store.Configs.Add(config); var host = new Host(store) { CleanupFailures = 2 };
+            await using var supervisor = new Supervisor(store, host, new Clock(), root); await supervisor.InitializeAsync(); await supervisor.SendAsync(config.Id, Signal.Start);
+            await Until(() => host.Runs.Any(r => r.Activated));
+            host.Runs[0].End.TrySetResult(1); // natural exit; the automatic cleanup fails
+            await Until(() => supervisor.Snapshot.Single().Runtime.CleanupFailed);
+            await supervisor.SendAsync(config.Id, Signal.Force); // first retry fails as well
+            await Until(() => host.Runs[0].CleanupFailures == 0); await Task.Delay(200); // both failed attempts have been applied
+            Assert.True(supervisor.Snapshot.Single().Runtime.CleanupFailed); Assert.False(host.Runs[0].Cleaned);
+            await supervisor.SendAsync(config.Id, Signal.Force); // the second retry must still reach the run
+            await Until(() => !supervisor.Snapshot.Single().Runtime.Active);
+            Assert.True(host.Runs[0].Cleaned); Assert.True(host.Runs[0].Disposed);
+        }
+        finally { Directory.Delete(root, true); }
+    }
+    [Fact]
+    public async Task BackoffRelaunchesWhenItsDeadlineArrivesWithoutPolling()
+    {
+        var root = Temp(); try
+        {
+            var store = new Store(); var config = Config(root) with { Policy = new() { Autostart = false, StartSeconds = 0, Restart = RestartPolicy.Always, BackoffBaseSeconds = 0.2 } };
+            store.Configs.Add(config); var host = new Host(store); var clock = new ManualClock();
+            await using var supervisor = new Supervisor(store, host, clock, root); await supervisor.InitializeAsync(); await supervisor.SendAsync(config.Id, Signal.Start);
+            await Until(() => host.Runs.Any(r => r.Activated));
+            host.Runs[0].End.TrySetResult(1);
+            await Until(() => supervisor.Snapshot.Single().Runtime.Phase == Phase.Backoff);
+            await Task.Delay(500); Assert.Single(host.Runs); // the clock has not advanced: the deadline is not due
+            clock.Seconds += 1; // the next armed check sees the deadline as due
+            await Until(() => host.Runs.Length == 2 && host.Runs[1].Activated);
         }
         finally { Directory.Delete(root, true); }
     }

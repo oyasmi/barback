@@ -70,12 +70,12 @@ public sealed class LogCollector : IAsyncDisposable
     }
     private async Task WriteAsync()
     {
-        FileStream? output = null; var retry = DateTime.MinValue; long marked = 0; bool runLimited = false;
+        FileStream? output = null; long retryAt = 0; long marked = 0; bool runLimited = false; // retry uses the monotonic tick count: a clock change must not stall recovery
         try
         {
             await foreach (var bytes in queue.Reader.ReadAllAsync())
             {
-                if (runLimited || DateTime.UtcNow < retry) { Drop(bytes.Length); continue; }
+                if (runLimited || Environment.TickCount64 < retryAt) { Drop(bytes.Length); continue; }
                 bool reserved = false;
                 try
                 {
@@ -119,7 +119,7 @@ public sealed class LogCollector : IAsyncDisposable
                     if (reserved) Release(bytes.Length);
                     Drop(bytes.Length);
                     if (output is not null) { try { await output.DisposeAsync(); } catch (IOException) { } output = null; }
-                    retry = DateTime.UtcNow.AddSeconds(30);
+                    retryAt = Environment.TickCount64 + 30_000;
                 }
             }
         }

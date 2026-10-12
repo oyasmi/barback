@@ -180,4 +180,39 @@ public class ReducerTests
         var t = Reducer.Apply(s, new(Signal.Stop), Config(), Now);
         Assert.Equal(Phase.Stopped, t.State.Phase);
     }
+    [Fact]
+    public void SecondsUntilTickFollowsEveryTimeBoundPhase()
+    {
+        var c = Config();
+        Assert.Null(Reducer.SecondsUntilTick(new(), c, Now));
+        Assert.Null(Reducer.SecondsUntilTick(Running(), c, Now)); // a healthy service has nothing pending
+        Assert.Equal(3, Reducer.SecondsUntilTick(new() { Phase = Phase.Backoff, Deadline = 103 }, c, Now));
+        Assert.Equal(2, Reducer.SecondsUntilTick(Running() with { Phase = Phase.Starting, Deadline = 102 }, c, Now));
+        Assert.Null(Reducer.SecondsUntilTick(Running() with { Phase = Phase.Starting, Pid = null, Deadline = 102 }, c, Now));
+        Assert.Equal(5, Reducer.SecondsUntilTick(Running() with { Phase = Phase.Stopping, Deadline = 105 }, c, Now));
+        Assert.Null(Reducer.SecondsUntilTick(Running() with { Phase = Phase.Stopping, Deadline = double.PositiveInfinity }, c, Now));
+        Assert.Equal(0, Reducer.SecondsUntilTick(Running() with { Phase = Phase.Stopping, Deadline = 50 }, c, Now)); // overdue fires now
+        Assert.Null(Reducer.SecondsUntilTick(Running() with { Phase = Phase.Stopping, Deadline = 50, Cleaning = true }, c, Now));
+        var oneshot = Config(ProgramKind.Oneshot) with { Policy = new() { TimeoutSeconds = 120 } };
+        Assert.Equal(21, Reducer.SecondsUntilTick(Running(), oneshot, Now)); // started at 1, times out at 121
+        Assert.Equal(1, Reducer.SecondsUntilTick(Running() with { StartedActive = 41, BackoffExponent = 2 }, c, Now)); // exponent reset at 101
+    }
+    [Fact]
+    public void EveryDeadlineReportedAsDueIsActedOnByTick()
+    {
+        var c = Config(); var oneshot = Config(ProgramKind.Oneshot) with { Policy = new() { TimeoutSeconds = 10 } };
+        var cases = new (RuntimeState State, ProgramConfig Config)[]
+        {
+            (new() { Phase = Phase.Backoff, Deadline = 100 }, c),
+            (Running() with { Phase = Phase.Starting, Deadline = 100 }, c),
+            (Running() with { Phase = Phase.Stopping, Deadline = 100 }, c),
+            (Running(), oneshot),
+            (Running() with { BackoffExponent = 3 }, c),
+        };
+        foreach (var (state, config) in cases)
+        {
+            Assert.Equal(0, Reducer.SecondsUntilTick(state, config, Now));
+            Assert.NotEqual(state, Reducer.Apply(state, new(Signal.Tick), config, Now).State);
+        }
+    }
 }

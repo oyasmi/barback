@@ -12,6 +12,8 @@ public sealed class TrayAdapter : IDisposable
 {
     private readonly Forms.NotifyIcon icon;
     private readonly System.Drawing.Icon brand;
+    private readonly TrayIcons badges;
+    private TrayState? shownState;
     private readonly MainWindow main;
     private readonly Supervisor supervisor;
     private readonly Window panel;
@@ -38,6 +40,7 @@ public sealed class TrayAdapter : IDisposable
         menu.Items.Add(Text.Get("Exit"), null, async (_, _) => await exit());
         var iconPath = Path.Combine(AppContext.BaseDirectory, "Assets", "Barback.ico");
         brand = File.Exists(iconPath) ? new System.Drawing.Icon(iconPath) : (System.Drawing.Icon)System.Drawing.SystemIcons.Application.Clone();
+        badges = new(brand);
         icon = new() { Icon = brand, Text = "Barback", Visible = true, ContextMenuStrip = menu };
         panel = new Window { Title = "Barback", Width = 460, MaxHeight = SystemParameters.WorkArea.Height * 0.7, SizeToContent = SizeToContent.Height, ShowInTaskbar = false, ResizeMode = ResizeMode.NoResize, WindowStyle = WindowStyle.ToolWindow, Topmost = true };
         panel.SetResourceReference(Window.BackgroundProperty, "SurfaceBrush"); panel.SetResourceReference(Window.ForegroundProperty, "PrimaryTextBrush");
@@ -67,8 +70,24 @@ public sealed class TrayAdapter : IDisposable
         OnChanged();
     }
     private nint Hook(nint hwnd, int msg, nint w, nint l, ref bool handled) { if ((uint)msg == taskbarCreated) { icon.Visible = false; icon.Visible = true; } return 0; }
-    private void OnChanged() => Application.Current.Dispatcher.BeginInvoke(() => { if (disposed) return; var count = supervisor.Snapshot.Count(s => s.Runtime.Active); var errors = supervisor.Snapshot.Count(ProgramActionPolicy.NeedsAttention); icon.Icon = errors > 0 ? System.Drawing.SystemIcons.Warning : supervisor.Snapshot.Any(s => s.Runtime.Phase == Phase.Stopping) ? System.Drawing.SystemIcons.Information : brand; icon.Text = Text.Format("TraySummary", count, errors); if (panel.IsVisible) Refresh(); });
-    private void ThemeChanged() { foreach (var row in rows) row.RefreshTheme(); }
+    private void OnChanged() => Application.Current.Dispatcher.BeginInvoke(() =>
+    {
+        if (disposed) return;
+        var snapshots = supervisor.Snapshot;
+        var count = snapshots.Count(s => s.Runtime.Active); var errors = snapshots.Count(ProgramActionPolicy.NeedsAttention);
+        // Busy covers what is waiting on time or cleanup (stopping, retry pending); a normal start is too brief to flag.
+        var state = errors > 0 ? TrayState.Attention : snapshots.Any(s => s.Runtime.Phase is Phase.Stopping or Phase.Backoff || s.Runtime.Cleaning) ? TrayState.Busy : TrayState.Normal;
+        SetIcon(state);
+        var tip = Text.Format("TraySummary", count, errors); icon.Text = tip.Length > 127 ? tip[..127] : tip; // the shell rejects longer tips
+        if (panel.IsVisible) Refresh();
+    });
+    /// <summary>Only touches the shell when the state changes; re-assigning the same icon still makes the shell redraw it.</summary>
+    private void SetIcon(TrayState state, bool force = false)
+    {
+        if (shownState == state && !force) return;
+        shownState = state; icon.Icon = badges.For(state);
+    }
+    private void ThemeChanged() { foreach (var row in rows) row.RefreshTheme(); badges.Rebuild(); if (shownState is TrayState state) SetIcon(state, force: true); }
     private void Refresh()
     {
         var snapshots = supervisor.Snapshot;
@@ -76,7 +95,7 @@ public sealed class TrayAdapter : IDisposable
         foreach (var snapshot in snapshots)
         {
             var row = rows.FirstOrDefault(r => r.Id == snapshot.Config.Id);
-            if (row is null) { row = new(snapshot, main.PerformPrimaryAsync, ShowMenuAsync, ex => { panel.Hide(); main.ShowPage(0); MessageBox.Show(main, ex.Message, Text.Get("Error")); }); rows.Add(row); }
+            if (row is null) { row = new(snapshot, main.PerformPrimaryAsync, ShowMenuAsync, ex => { panel.Hide(); main.ShowPage(0); Dialog.Notify(Text.Get("Error") + "\n\n" + ex.Message, DialogTone.Error, main); }); rows.Add(row); }
             row.Update(snapshot, clock.Now);
         }
         CollectionViewSource.GetDefaultView(rows).Refresh();
@@ -107,5 +126,5 @@ public sealed class TrayAdapter : IDisposable
         int y = Math.Clamp(cursor.Y - height, screen.Top, Math.Max(screen.Top, screen.Bottom - height));
         SetWindowPos(handle, -1, x, y, width, height, 0x10); panel.Activate(); search.Focus();
     }
-    public void Dispose() { if (disposed) return; disposed = true; clickTimer.Stop(); supervisor.Changed -= OnChanged; WorkbenchTheme.Changed -= ThemeChanged; icon.Visible = false; icon.Dispose(); brand.Dispose(); source.Dispose(); panel.Close(); }
+    public void Dispose() { if (disposed) return; disposed = true; clickTimer.Stop(); supervisor.Changed -= OnChanged; WorkbenchTheme.Changed -= ThemeChanged; icon.Visible = false; icon.Dispose(); badges.Dispose(); brand.Dispose(); source.Dispose(); panel.Close(); }
 }

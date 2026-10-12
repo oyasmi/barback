@@ -25,15 +25,15 @@
           <StackPanel><TextBlock x:Name="PageTitle" Style="{StaticResource Heading}" Text="{local:Loc Programs}"/><TextBlock x:Name="Summary" Style="{StaticResource Caption}" Margin="0,8,0,0"/></StackPanel>
           <StackPanel x:Name="PageActions" Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
             <Button x:Name="AddButton" Content="{local:Loc AddProgram}" Style="{StaticResource AccentButton}" Click="AddClick"/>
-            <Button x:Name="BatchButton" Content="···" Style="{StaticResource QuietButton}" Margin="8,0,0,0" AutomationProperties.Name="{local:Loc AllProgramActions}" ToolTip="{local:Loc AllProgramActions}" Click="BatchClick"/>
+            <Button x:Name="BatchButton" Content="&#xE712;" Style="{StaticResource IconButton}" Margin="8,0,0,0" AutomationProperties.Name="{local:Loc AllProgramActions}" ToolTip="{local:Loc AllProgramActions}" Click="BatchClick"/>
           </StackPanel>
         </Grid>
         <Border x:Name="MessagePanel" Grid.Row="1" Margin="24,0,24,12" Padding="12" CornerRadius="6" Background="{DynamicResource ErrorSurfaceBrush}" Visibility="Collapsed">
-          <DockPanel><Button DockPanel.Dock="Right" Content="×" Style="{StaticResource QuietButton}" Click="DismissMessage" AutomationProperties.Name="{local:Loc Dismiss}"/><Button x:Name="MessageAction" DockPanel.Dock="Right" Content="{local:Loc EditEnvironment}" Style="{StaticResource QuietButton}" Margin="0,0,8,0" Visibility="Collapsed" Click="OpenEnvironmentFromMessage"/><TextBlock x:Name="Message" TextWrapping="Wrap" Foreground="{DynamicResource DangerBrush}"/></DockPanel>
+          <DockPanel><Button DockPanel.Dock="Right" Content="&#xE711;" Style="{StaticResource IconButton}" FontSize="12" VerticalAlignment="Top" Click="DismissMessage" AutomationProperties.Name="{local:Loc Dismiss}" ToolTip="{local:Loc Dismiss}"/><Button x:Name="MessageAction" DockPanel.Dock="Right" Content="{local:Loc EditEnvironment}" Style="{StaticResource QuietButton}" Margin="0,0,8,0" Visibility="Collapsed" Click="OpenEnvironmentFromMessage"/><TextBlock x:Name="Message" TextWrapping="Wrap" Foreground="{DynamicResource DangerBrush}"/></DockPanel>
         </Border>
         <Grid Grid.Row="2">
           <Grid x:Name="Workbench" Background="{DynamicResource SurfaceBrush}">
-            <Grid.ColumnDefinitions><ColumnDefinition x:Name="ListColumn"/><ColumnDefinition x:Name="DividerColumn" Width="1"/><ColumnDefinition x:Name="DetailColumn" Width="360"/></Grid.ColumnDefinitions>
+            <Grid.ColumnDefinitions><ColumnDefinition x:Name="ListColumn" MinWidth="300"/><ColumnDefinition x:Name="DividerColumn" Width="7"/><ColumnDefinition x:Name="DetailColumn" Width="1.2*" MinWidth="340"/></Grid.ColumnDefinitions>
             <Grid x:Name="CollectionPane" Margin="16,0,16,16">
               <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition/></Grid.RowDefinitions>
               <Grid Margin="0,0,0,12"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
@@ -52,7 +52,7 @@
                     <WrapPanel Margin="0,5,0,0"><TextBlock Text="{Binding StatusIcon}" Style="{StaticResource Symbol}" FontSize="12" Foreground="{Binding Color}" Margin="0,0,5,0"/><TextBlock Text="{Binding Status}" Foreground="{Binding Color}" FontSize="12" Margin="0,0,8,0"/><TextBlock Text="{Binding Detail}" Style="{StaticResource Caption}" MaxWidth="290" TextTrimming="CharacterEllipsis" ToolTip="{Binding Detail}"/></WrapPanel>
                   </StackPanel>
                   <Button Grid.Column="1" Style="{StaticResource WorkbenchButton}" Content="{Binding ActionLabel}" Command="{Binding PrimaryCommand}" IsEnabled="{Binding CanAct}" AutomationProperties.Name="{Binding ActionName}"/>
-                  <Button Grid.Column="2" Style="{StaticResource QuietButton}" Content="···" Margin="4,0,0,0" Command="{Binding MoreCommand}" AutomationProperties.Name="{Binding MoreName}" ToolTip="{local:Loc MoreActions}"/>
+                  <Button Grid.Column="2" Style="{StaticResource IconButton}" Content="&#xE712;" Margin="4,0,0,0" Command="{Binding MoreCommand}" AutomationProperties.Name="{Binding MoreName}" ToolTip="{local:Loc MoreActions}"/>
                 </Grid></DataTemplate></ListBox.ItemTemplate>
               </ListBox>
               <StackPanel x:Name="EmptyState" Grid.Row="1" VerticalAlignment="Center" HorizontalAlignment="Center" Margin="16" Visibility="Collapsed">
@@ -62,11 +62,11 @@
                 <WrapPanel HorizontalAlignment="Center"><Button x:Name="EmptyAdd" Content="{local:Loc AddProgram}" Style="{StaticResource AccentButton}" Click="AddClick"/><Button x:Name="EmptyImport" Content="{local:Loc Import}" Style="{StaticResource QuietButton}" Margin="8,0,0,0" Click="ImportClick"/><Button x:Name="ClearFilter" Content="{local:Loc ClearFilter}" Style="{StaticResource QuietButton}" Click="ClearFilterClick" Visibility="Collapsed"/></WrapPanel>
               </StackPanel>
             </Grid>
-            <Border x:Name="WorkbenchDivider" Grid.Column="1" Background="{DynamicResource LineBrush}"/>
+            <GridSplitter x:Name="WorkbenchDivider" Grid.Column="1" Style="{StaticResource WorkbenchSplitter}" AutomationProperties.Name="{local:Loc ResizeDetail}" ToolTip="{local:Loc ResizeDetail}" DragCompleted="DividerDragCompleted" KeyUp="DividerKeyUp"/>
             <Border x:Name="DetailPane" Grid.Column="2" Background="{DynamicResource DetailBrush}" Padding="20,20,20,16">
               <Grid><StackPanel x:Name="NoSelection" VerticalAlignment="Center" HorizontalAlignment="Center"><TextBlock Text="{local:Loc ChooseProgram}" Style="{StaticResource Caption}"/></StackPanel>
                 <Grid x:Name="SelectedDetail" Visibility="Collapsed"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition/></Grid.RowDefinitions>
-                  <DockPanel><StackPanel DockPanel.Dock="Right" Orientation="Horizontal"><Button x:Name="RestartButton" Style="{StaticResource QuietButton}" Content="↻" AutomationProperties.Name="{local:Loc Restart}" ToolTip="{local:Loc Restart}" Click="RestartClick"/><Button Content="···" Style="{StaticResource QuietButton}" AutomationProperties.Name="{local:Loc MoreActions}" Click="DetailMoreClick"/></StackPanel><StackPanel><Button x:Name="BackToList" Content="{local:Loc BackToList}" Style="{StaticResource QuietButton}" HorizontalAlignment="Left" Click="BackClick" Visibility="Collapsed"/><TextBlock x:Name="DetailName" FontSize="18" FontWeight="SemiBold" TextWrapping="Wrap"/><TextBlock x:Name="DetailStatus" Style="{StaticResource Caption}" Margin="0,6,0,0"/></StackPanel></DockPanel>
+                  <DockPanel><StackPanel DockPanel.Dock="Right" Orientation="Horizontal"><Button x:Name="RestartButton" Style="{StaticResource IconButton}" Content="&#xE72C;" AutomationProperties.Name="{local:Loc Restart}" ToolTip="{local:Loc Restart}" Click="RestartClick"/><Button Content="&#xE712;" Style="{StaticResource IconButton}" Margin="4,0,0,0" AutomationProperties.Name="{local:Loc MoreActions}" ToolTip="{local:Loc MoreActions}" Click="DetailMoreClick"/></StackPanel><StackPanel><Button x:Name="BackToList" Content="{local:Loc BackToList}" Style="{StaticResource QuietButton}" HorizontalAlignment="Left" Click="BackClick" Visibility="Collapsed"/><TextBlock x:Name="DetailName" FontSize="18" FontWeight="SemiBold" TextWrapping="Wrap"/><TextBlock x:Name="DetailStatus" Style="{StaticResource Caption}" Margin="0,6,0,0"/></StackPanel></DockPanel>
                   <TextBlock x:Name="Metrics" Grid.Row="1" Style="{StaticResource Caption}" Margin="0,12,0,8"/>
                   <StackPanel Grid.Row="2"><Border x:Name="FailurePanel" Background="{DynamicResource ErrorSurfaceBrush}" Padding="12" CornerRadius="6" Margin="0,6,0,10" Visibility="Collapsed"><StackPanel><TextBlock x:Name="FailureText" Foreground="{DynamicResource DangerBrush}" TextWrapping="Wrap"/><Button Content="{local:Loc Edit}" Style="{StaticResource WorkbenchButton}" Margin="0,10,0,0" HorizontalAlignment="Left" Click="EditClick"/></StackPanel></Border><Border x:Name="PendingPanel" Background="{DynamicResource NoticeBrush}" Padding="10" Margin="0,6,0,10" CornerRadius="6" Visibility="Collapsed"><TextBlock x:Name="PendingText" Text="{local:Loc Pending}" Foreground="{DynamicResource WarningBrush}" TextWrapping="Wrap" FontSize="12"/></Border></StackPanel>
                   <TabControl x:Name="DetailTabs" Grid.Row="3" SelectionChanged="DetailTabChanged" Background="Transparent" BorderThickness="0">
@@ -89,6 +89,16 @@
         </Grid>
       </Grid>
     </Border>
-    <Border Grid.Row="1" Grid.ColumnSpan="2" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,1,0,0" Padding="16,8"><DockPanel><TextBlock Text="{local:Loc LocalOutput}" DockPanel.Dock="Right" Style="{StaticResource Caption}"/><TextBlock Text="{local:Loc LocalProcesses}" Style="{StaticResource Caption}"/></DockPanel></Border>
+    <Border Grid.Row="1" Grid.ColumnSpan="2" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,1,0,0" Padding="16,6">
+      <DockPanel>
+        <TextBlock x:Name="AppVersion" DockPanel.Dock="Right" Style="{StaticResource Caption}" VerticalAlignment="Center"/>
+        <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+          <TextBlock x:Name="StorageIcon" Style="{StaticResource Symbol}" FontSize="12" Margin="0,0,6,0" Text="&#xE73E;" Foreground="{DynamicResource SuccessBrush}"/>
+          <TextBlock x:Name="StorageStatus" Style="{StaticResource Caption}" VerticalAlignment="Center" Text="{local:Loc StatusStorageOk}"/>
+          <TextBlock Style="{StaticResource Caption}" Text="  ·  " VerticalAlignment="Center"/>
+          <TextBlock x:Name="OutputUsage" Style="{StaticResource Caption}" VerticalAlignment="Center" ToolTip="{local:Loc LocalOutput}"/>
+        </StackPanel>
+      </DockPanel>
+    </Border>
   </Grid>
 </Window>

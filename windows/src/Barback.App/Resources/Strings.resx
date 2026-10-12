@@ -141,7 +141,7 @@
     <value>Add sensitive variable</value>
   </data>
   <data name="DirtyPrompt" xml:space="preserve">
-    <value>Save your changes before leaving? Yes = save, No = discard, Cancel = stay.</value>
+    <value>Save your changes before leaving?</value>
   </data>
   <data name="StopConfirm" xml:space="preserve">
     <value>Stop all active services and one-shot commands? Counts will be recalculated when submitted.</value>
@@ -745,6 +745,9 @@ Active processes will stop. Configuration, execution history, and application-ow
   <data name="NoMatch" xml:space="preserve">
     <value>No match in loaded output</value>
   </data>
+  <data name="EarlierOutputHidden" xml:space="preserve">
+    <value>[showing the last {0} KiB; use full-text search or export for earlier output]</value>
+  </data>
   <data name="SkippedOutput" xml:space="preserve">
     <value>[skipped {0} MiB of earlier output; use full-text search or export]</value>
   </data>
@@ -936,5 +939,38 @@ Active processes will stop. Configuration, execution history, and application-ow
   </data>
   <data name="StartupEnabledByPolicy" xml:space="preserve">
     <value>Enabled by system policy</value>
+  </data>
+  <data name="OK" xml:space="preserve">
+    <value>OK</value>
+  </data>
+  <data name="KeepEditing" xml:space="preserve">
+    <value>Keep editing</value>
+  </data>
+  <data name="DeleteAction" xml:space="preserve">
+    <value>Delete</value>
+  </data>
+  <data name="ForceAction" xml:space="preserve">
+    <value>Force terminate</value>
+  </data>
+  <data name="ExitAction" xml:space="preserve">
+    <value>Exit</value>
+  </data>
+  <data name="ResizeDetail" xml:space="preserve">
+    <value>Drag to resize the details pane</value>
+  </data>
+  <data name="StatusStorageOk" xml:space="preserve">
+    <value>Storage OK</value>
+  </data>
+  <data name="StatusStorageFailed" xml:space="preserve">
+    <value>Storage writes are failing</value>
+  </data>
+  <data name="OutputUsage" xml:space="preserve">
+    <value>Program output {0} of {1}</value>
+  </data>
+  <data name="WrapLines" xml:space="preserve">
+    <value>Wrap lines</value>
+  </data>
+  <data name="SearchLocation" xml:space="preserve">
+    <value>{0} · character {1}</value>
   </data>
 </root>
