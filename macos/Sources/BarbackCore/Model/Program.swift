@@ -207,13 +207,13 @@ public enum ProgramValidationError: Error, LocalizedError, Sendable, Equatable {
 
     public var errorDescription: String? {
         switch self {
-        case .invalidName: return "名称必须是 1-64 位的字母、数字、`.`、`_`、`-`"
-        case .duplicateName: return "名称已存在"
-        case .emptyCommand: return "命令不能为空"
-        case .executableNotFound(let p): return "找不到可执行文件：\(p)"
-        case .directoryNotFound(let p): return "工作目录不存在：\(p)"
-        case .invalidLogPath(let p): return "日志路径无效：\(p)"
-        case .invalidNumber(let field): return "数值字段非法：\(field)"
+        case .invalidName: return String(localized: "名称必须是 1-64 位的字母、数字、`.`、`_`、`-`")
+        case .duplicateName: return String(localized: "名称已存在")
+        case .emptyCommand: return String(localized: "命令不能为空")
+        case .executableNotFound(let p): return String(localized: "找不到可执行文件：\(p)")
+        case .directoryNotFound(let p): return String(localized: "工作目录不存在：\(p)")
+        case .invalidLogPath(let p): return String(localized: "日志路径无效：\(p)")
+        case .invalidNumber(let field): return String(localized: "数值字段非法：\(field)")
         }
     }
 }

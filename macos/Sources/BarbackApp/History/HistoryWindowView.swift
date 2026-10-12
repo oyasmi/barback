@@ -47,7 +47,7 @@ struct HistoryWindowView: View {
                 TableColumn("时间") { run in Text(Self.timeFormatter.string(from: run.startedAt)) }
                 TableColumn("触发") { run in Text(run.trigger.displayText) }
                 TableColumn("结果") { run in
-                    Text(run.outcome?.displayText ?? "运行中")
+                    Text(run.outcome?.displayText ?? String(localized: "运行中"))
                         .foregroundStyle(run.outcome.map { StatusStyle.outcomeColor($0) } ?? .secondary)
                 }
                 TableColumn("耗时") { run in Text(run.duration.map { String(format: "%.1fs", $0) } ?? "—") }
@@ -67,7 +67,7 @@ struct HistoryWindowView: View {
             }
         }
         .onAppear { reload() }
-        .onChange(of: selectedProgramId) { _ in reload() }
+        .onChange(of: selectedProgramId) { reload() }
         .sheet(item: $viewingRun) { run in
             RunOutputSheet(run: run)
         }
@@ -131,7 +131,7 @@ private struct RunOutputSheet: View {
                 Button("关闭") { dismiss() }
             }.padding()
             if run.logPath != nil {
-                LogTextView(text: model.displayText(matching: ""), fontSize: fontSize)
+                LogTextView(model: model, revision: model.revision, fontSize: fontSize)
             } else {
                 Text("无输出文件").foregroundStyle(.secondary)
             }

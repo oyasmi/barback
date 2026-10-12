@@ -14,26 +14,26 @@ enum EventPresentation {
         case .processSpawned:
             return fields["pid"].map { "PID \($0)" } ?? ""
         case .processExited:
-            if let code = fields["code"] { return "退出码 \(code)" }
-            if let signal = fields["signal"] { return "被信号 \(signalName(signal)) 终止" }
-            return "退出码未知"
+            if let code = fields["code"] { return String(localized: "退出码 \(code)") }
+            if let signal = fields["signal"] { return String(localized: "被信号 \(signalName(signal)) 终止") }
+            return String(localized: "退出码未知")
         case .spawnFailed, .logWriteFailed:
             return fields["reason"] ?? fields["error"] ?? ""
         case .restartScheduled:
             var parts: [String] = []
-            if let retry = fields["retry"] { parts.append("第 \(retry) 次重试") }
+            if let retry = fields["retry"] { parts.append(String(localized: "第 \(retry) 次重试")) }
             if let delay = fields["delay"], let seconds = Double(delay) {
-                parts.append(String(format: "%.1f 秒后", seconds))
+                parts.append(String(format: NSLocalizedString("%.1f 秒后", comment: "delay before the next retry"), seconds))
             }
             return parts.joined(separator: " · ")
         case .enteredFatal:
             switch fields["reason"] {
-            case "retries_exhausted": return "重试次数已用尽"
-            case "crash_storm": return "短时间内重启过于频繁"
+            case "retries_exhausted": return String(localized: "重试次数已用尽")
+            case "crash_storm": return String(localized: "短时间内重启过于频繁")
             default: return fields["reason"] ?? ""
             }
         case .recoveredFromCrash, .imported:
-            return fields["count"].map { "共 \($0) 项" } ?? ""
+            return fields["count"].map { String(localized: "共 \($0) 项") } ?? ""
         default:
             // An unrecognised shape is still better shown than hidden — just flattened out of
             // its JSON braces.

@@ -6,7 +6,7 @@ Barback manages local background services and one-shot commands, with start/stop
 
 | Platform | Status | Documentation |
 | --- | --- | --- |
-| macOS | Implemented in Swift 6, AppKit and SwiftUI; macOS 13+ | [Usage and build](macos/README.en.md) |
+| macOS | Implemented in Swift 6, AppKit and SwiftUI; macOS 14+ | [Usage and build](macos/README.en.md) |
 | Windows | C# / .NET 10 LTS / WPF; v0.3.2.0 x64 Release build and unsigned MSIX verified; signing and real-device release validation remain | [Build and validation (Chinese)](windows/README.md) |
 
 Platform implementations live in `macos/` and `windows/`. The repository license and GitHub workflows remain at the root. Each platform uses native lifecycle and interaction conventions; feature and configuration parity are not guaranteed.

@@ -38,7 +38,7 @@ final class WindowController: NSObject, NSWindowDelegate {
     }
 
     func showAboutWindow() {
-        NSApp.activate(ignoringOtherApps: true)
+        NSApp.activate()
         // AppKit reads the icon, version, build and copyright from the app bundle.
         NSApp.orderFrontStandardAboutPanel(nil)
     }
@@ -46,7 +46,7 @@ final class WindowController: NSObject, NSWindowDelegate {
     func showConfigWindow(selecting id: Int64? = nil) {
         if let window = configWindow {
             if let id { configModel?.attempt(.select(id)) }
-            NSApp.activate(ignoringOtherApps: true)
+            NSApp.activate()
             window.makeKeyAndOrderFront(nil)
             return
         }
@@ -58,7 +58,7 @@ final class WindowController: NSObject, NSWindowDelegate {
             onShowHistory: { [weak self] in self?.showHistoryWindow(programId: $0) },
             onShowImport: { [weak self] in self?.showImportWindow() }
         )
-        let window = makeWindow(title: "配置", size: NSSize(width: 980, height: 680), autosaveName: "barback.config", content: view)
+        let window = makeWindow(title: String(localized: "配置"), size: NSSize(width: 980, height: 680), autosaveName: "barback.config", content: view)
         window.minSize = NSSize(width: 840, height: 560)
         window.toolbarStyle = .unified
         window.delegate = self
@@ -66,7 +66,7 @@ final class WindowController: NSObject, NSWindowDelegate {
         model.onDirtyChange = { [weak window] isDirty in window?.isDocumentEdited = isDirty }
         configWindow = window
         configModel = model
-        NSApp.activate(ignoringOtherApps: true)
+        NSApp.activate()
         window.makeKeyAndOrderFront(nil)
     }
 
@@ -74,14 +74,14 @@ final class WindowController: NSObject, NSWindowDelegate {
         guard let snap = appState.program(id: programId) else { return }
         if let existing = logWindows[programId] {
             existing.makeKeyAndOrderFront(nil)
-            NSApp.activate(ignoringOtherApps: true)
+            NSApp.activate()
             return
         }
         let view = LogViewerView(programName: snap.program.name, path: ProgramLogPath.resolve(for: snap))
-        let window = makeWindow(title: "日志 · \(snap.program.name)", size: NSSize(width: 760, height: 520), autosaveName: "barback.log.\(programId)", content: view)
+        let window = makeWindow(title: String(localized: "日志 · \(snap.program.name)"), size: NSSize(width: 760, height: 520), autosaveName: "barback.log.\(programId)", content: view)
         window.delegate = self
         logWindows[programId] = window
-        NSApp.activate(ignoringOtherApps: true)
+        NSApp.activate()
         window.makeKeyAndOrderFront(nil)
     }
 
@@ -97,54 +97,54 @@ final class WindowController: NSObject, NSWindowDelegate {
                 initialProgramId: programId,
                 onRerun: { [weak self] id in self?.runOneshotRespectingConfirm(programId: id) }
             )
-            let window = makeWindow(title: "执行历史", size: NSSize(width: 820, height: 520), autosaveName: "barback.history", content: view)
+            let window = makeWindow(title: String(localized: "执行历史"), size: NSSize(width: 820, height: 520), autosaveName: "barback.history", content: view)
             window.delegate = self
             historyWindow = window
         }
-        NSApp.activate(ignoringOtherApps: true)
+        NSApp.activate()
         historyWindow?.makeKeyAndOrderFront(nil)
     }
 
     func showEventsWindow() {
         if eventsWindow == nil {
             let view = EventsWindowView(appState: appState)
-            let window = makeWindow(title: "事件日志", size: NSSize(width: 820, height: 520), autosaveName: "barback.events", content: view)
+            let window = makeWindow(title: String(localized: "事件日志"), size: NSSize(width: 820, height: 520), autosaveName: "barback.events", content: view)
             window.delegate = self
             eventsWindow = window
         }
-        NSApp.activate(ignoringOtherApps: true)
+        NSApp.activate()
         eventsWindow?.makeKeyAndOrderFront(nil)
     }
 
     func showPreferencesWindow() {
         if preferencesWindow == nil {
             let view = PreferencesWindowView(appState: appState)
-            let window = makeWindow(title: "偏好设置", size: NSSize(width: 480, height: 520), autosaveName: "barback.preferences", content: view)
+            let window = makeWindow(title: String(localized: "偏好设置"), size: NSSize(width: 480, height: 520), autosaveName: "barback.preferences", content: view)
             window.delegate = self
             preferencesWindow = window
         }
-        NSApp.activate(ignoringOtherApps: true)
+        NSApp.activate()
         preferencesWindow?.makeKeyAndOrderFront(nil)
     }
 
     func showImportWindow() {
         if importWindow == nil {
             let view = ImportWindowView(appState: appState, onClose: { [weak self] in self?.importWindow?.close() })
-            let window = makeWindow(title: "从 supervisor 粘贴导入", size: NSSize(width: 720, height: 560), autosaveName: "barback.import", content: view)
+            let window = makeWindow(title: String(localized: "从 supervisor 粘贴导入"), size: NSSize(width: 720, height: 560), autosaveName: "barback.import", content: view)
             window.delegate = self
             importWindow = window
         }
-        NSApp.activate(ignoringOtherApps: true)
+        NSApp.activate()
         importWindow?.makeKeyAndOrderFront(nil)
     }
 
     func confirmRun(programId: Int64) {
         guard let snap = appState.program(id: programId) else { return }
         let alert = NSAlert()
-        alert.messageText = "运行「\(snap.program.name)」？"
-        alert.informativeText = "该命令已标记为需要确认。"
-        alert.addButton(withTitle: "运行")
-        alert.addButton(withTitle: "取消")
+        alert.messageText = String(localized: "运行「\(snap.program.name)」？")
+        alert.informativeText = String(localized: "该命令已标记为需要确认。")
+        alert.addButton(withTitle: String(localized: "运行"))
+        alert.addButton(withTitle: String(localized: "取消"))
         if alert.runModal() == .alertFirstButtonReturn {
             appState.supervisor.runOneshot(id: programId)
         }
@@ -186,11 +186,11 @@ final class WindowController: NSObject, NSWindowDelegate {
         if sender === configWindow, configModel?.isSaving == true { return false }
         guard sender === configWindow, let model = configModel, model.isDirty else { return true }
         let alert = NSAlert()
-        alert.messageText = "「\(model.draft?.name ?? "")」有未保存的更改"
-        alert.informativeText = "关闭窗口前要保存这些更改吗？"
-        alert.addButton(withTitle: "保存")
-        alert.addButton(withTitle: "不保存")
-        alert.addButton(withTitle: "取消")
+        alert.messageText = String(localized: "「\(model.draft?.name ?? "")」有未保存的更改")
+        alert.informativeText = String(localized: "关闭窗口前要保存这些更改吗？")
+        alert.addButton(withTitle: String(localized: "保存"))
+        alert.addButton(withTitle: String(localized: "不保存"))
+        alert.addButton(withTitle: String(localized: "取消"))
         switch alert.runModal() {
         case .alertFirstButtonReturn:
             model.save(restart: false) { [weak self] succeeded in

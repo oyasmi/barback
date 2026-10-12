@@ -25,12 +25,12 @@ public struct ProgramSnapshot: Identifiable, Equatable, Sendable {
         case .service:
             let s = serviceState ?? .stopped
             if s == .backoff, let remaining = backoffRemaining {
-                return "\(s.displayText) \(retryCount)/\(program.startRetries) · \(Int(remaining))秒"
+                return String(localized: "\(s.displayText) \(retryCount)/\(program.startRetries) · \(Int(remaining))秒")
             }
             return s.displayText
         case .oneshot:
-            if oneshotState == .running { return "执行中" }
-            guard let last = lastRun else { return "尚未执行" }
+            if oneshotState == .running { return String(localized: "执行中") }
+            guard let last = lastRun else { return String(localized: "尚未执行") }
             return (last.outcome ?? .unknown).displayText
         }
     }

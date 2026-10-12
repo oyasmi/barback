@@ -148,20 +148,20 @@ public enum SupervisorImporter {
             logMaxBytes: parseByteSize(kv["stdout_logfile_maxbytes"]) ?? 10_485_760,
             logBackups: kv["stdout_logfile_backups"].flatMap(Int.init) ?? 3
         )
-        program.notes = "从 supervisor 导入自 [\(sectionName)]"
+        program.notes = String(localized: "从 supervisor 导入自 [\(sectionName)]")
 
         let unmappedKeys = ["user", "numprocs", "process_name", "serverurl", "umask", "stopasgroup", "killasgroup"]
         let reasons: [String: String] = [
-            "user": "用户级运行，不支持切换用户",
-            "numprocs": "不支持多实例",
-            "process_name": "不支持多实例模板名",
-            "serverurl": "无 RPC 接口",
-            "umask": "暂不支持自定义 umask"
+            "user": String(localized: "用户级运行，不支持切换用户"),
+            "numprocs": String(localized: "不支持多实例"),
+            "process_name": String(localized: "不支持多实例模板名"),
+            "serverurl": String(localized: "无 RPC 接口"),
+            "umask": String(localized: "暂不支持自定义 umask")
         ]
         for key in unmappedKeys {
             guard kv[key] != nil else { continue }
             if key == "stopasgroup" || key == "killasgroup" { continue } // mapped above
-            unmapped.append(ImportUnmappedField(key: key, reason: reasons[key] ?? "不支持"))
+            unmapped.append(ImportUnmappedField(key: key, reason: reasons[key] ?? String(localized: "不支持")))
         }
 
         return ImportPreview(program: program, unmapped: unmapped, sourceSectionName: sectionName)

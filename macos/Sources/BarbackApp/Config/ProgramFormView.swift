@@ -58,7 +58,7 @@ struct ProgramFormView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 7) {
             HStack(spacing: 12) {
-                Text(program.name.isEmpty ? "未命名" : program.name)
+                Text(program.name.isEmpty ? String(localized: "未命名") : program.name)
                     .font(.title2.weight(.semibold))
                     .lineLimit(1)
                     .help(program.name)
@@ -81,7 +81,7 @@ struct ProgramFormView: View {
                 }
             }
             HStack(spacing: 8) {
-                Text(program.kind == .service ? "服务" : "一次性命令")
+                Text(program.kind == .service ? String(localized: "kind.service", defaultValue: "服务") : String(localized: "kind.oneshot", defaultValue: "一次性命令"))
                 if let snapshot { StatusPill(snap: snapshot) }
                 Text(subtitle).lineLimit(1).help(subtitle)
             }
@@ -96,18 +96,18 @@ struct ProgramFormView: View {
     }
 
     private var subtitle: String {
-        guard let snapshot, !isNew else { return "尚未保存" }
+        guard let snapshot, !isNew else { return String(localized: "尚未保存") }
         var parts: [String] = []
         if let pid = snapshot.pid { parts.append("PID \(pid)") }
-        if let startedAt = snapshot.startedAt { parts.append("已运行 \(Self.uptime(since: startedAt))") }
+        if let startedAt = snapshot.startedAt { parts.append(String(localized: "已运行 \(Self.uptime(since: startedAt))")) }
         if let run = snapshot.lastRun, snapshot.program.kind == .oneshot {
-            parts.append("上次 \(run.outcome?.rawValue ?? "—")")
+            parts.append(String(localized: "上次 \(run.outcome?.displayText ?? "—")"))
             if let duration = run.duration { parts.append(String(format: "%.1fs", duration)) }
         }
         if let code = snapshot.lastRun?.exitCode, snapshot.program.kind == .service, !snapshot.isActive {
-            parts.append("上次退出码 \(code)")
+            parts.append(String(localized: "上次退出码 \(code)"))
         }
-        if let group = program.groupName, !group.isEmpty { parts.append("分组 \(group)") }
+        if let group = program.groupName, !group.isEmpty { parts.append(String(localized: "分组 \(group)")) }
         return parts.joined(separator: " · ")
     }
 
@@ -115,7 +115,7 @@ struct ProgramFormView: View {
 
     private var restartAdvisoryText: String? {
         guard needsRestart else { return nil }
-        return isDirty ? "这些更改需要重启后生效。可先保存，或保存并重启。" : "配置已保存，重启后生效。"
+        return isDirty ? String(localized: "这些更改需要重启后生效。可先保存，或保存并重启。") : String(localized: "配置已保存，重启后生效。")
     }
 
     private func restartAdvisory(text: String) -> some View {
@@ -167,10 +167,10 @@ struct ProgramFormView: View {
     }
 
     private var commitStatus: String {
-        if isSaving { return "正在保存…" }
-        if isNew { return "尚未保存" }
-        if isDirty { return "有未保存的更改" }
-        return needsRestart ? "已保存 · 待重启" : "已保存"
+        if isSaving { return String(localized: "正在保存…") }
+        if isNew { return String(localized: "尚未保存") }
+        if isDirty { return String(localized: "有未保存的更改") }
+        return needsRestart ? String(localized: "已保存 · 待重启") : String(localized: "已保存")
     }
 
     static func uptime(since date: Date) -> String {
@@ -178,10 +178,10 @@ struct ProgramFormView: View {
         let days = seconds / 86400
         let hours = (seconds % 86400) / 3600
         let minutes = (seconds % 3600) / 60
-        if days > 0 { return "\(days) 天 \(hours) 小时" }
-        if hours > 0 { return "\(hours) 小时 \(minutes) 分" }
-        if minutes > 0 { return "\(minutes) 分" }
-        return "\(seconds) 秒"
+        if days > 0 { return String(localized: "\(days) 天 \(hours) 小时") }
+        if hours > 0 { return String(localized: "\(hours) 小时 \(minutes) 分") }
+        if minutes > 0 { return String(localized: "\(minutes) 分") }
+        return String(localized: "\(seconds) 秒")
     }
 }
 

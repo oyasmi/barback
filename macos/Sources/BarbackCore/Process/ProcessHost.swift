@@ -16,9 +16,9 @@ public enum ProcessHostError: Error, LocalizedError, Equatable {
 
     public var errorDescription: String? {
         switch self {
-        case .posixSpawnFailed(let code): return "posix_spawn 失败：\(String(cString: strerror(code)))"
-        case .cannotOpenLog(let path): return "无法打开日志文件：\(path)"
-        case .invalidCommand: return "命令无法解析"
+        case .posixSpawnFailed(let code): return String(localized: "posix_spawn 失败：\(String(cString: strerror(code)))")
+        case .cannotOpenLog(let path): return String(localized: "无法打开日志文件：\(path)")
+        case .invalidCommand: return String(localized: "命令无法解析")
         }
     }
 }
@@ -60,9 +60,7 @@ public enum ProcessHost {
 
         if let directory {
             let expanded = PathUtil.expandTilde(directory)
-            if #available(macOS 13, *) {
-                posix_spawn_file_actions_addchdir_np(fileActionsPtr, expanded)
-            }
+            posix_spawn_file_actions_addchdir_np(fileActionsPtr, expanded)
         }
 
         let attrPtr = UnsafeMutablePointer<posix_spawnattr_t?>.allocate(capacity: 1)

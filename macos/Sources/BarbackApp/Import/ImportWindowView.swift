@@ -59,7 +59,7 @@ struct ImportWindowView: View {
             Text("command: \(preview.program.command)\(preview.program.useShell ? "  (via /bin/sh)" : "")").font(.caption)
             Text("autorestart: \(preview.program.autorestart.rawValue) · stopSignal: \(preview.program.stopSignal)").font(.caption)
             if !preview.unmapped.isEmpty {
-                Text("无法映射：" + preview.unmapped.map { "\($0.key)(\($0.reason))" }.joined(separator: ", "))
+                Text(String(localized: "无法映射：") + preview.unmapped.map { "\($0.key)(\($0.reason))" }.joined(separator: ", "))
                     .font(.caption).foregroundStyle(.orange)
             }
         }

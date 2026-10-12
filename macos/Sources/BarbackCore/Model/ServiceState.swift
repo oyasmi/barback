@@ -19,13 +19,13 @@ public enum ServiceState: String, Codable, Sendable, Equatable {
 
     public var displayText: String {
         switch self {
-        case .stopped: return "已停止"
-        case .starting: return "启动中"
-        case .running: return "运行中"
-        case .backoff: return "重试中"
-        case .stopping: return "停止中"
-        case .exited: return "已退出"
-        case .fatal: return "启动失败"
+        case .stopped: return String(localized: "已停止")
+        case .starting: return String(localized: "启动中")
+        case .running: return String(localized: "运行中")
+        case .backoff: return String(localized: "重试中")
+        case .stopping: return String(localized: "停止中")
+        case .exited: return String(localized: "已退出")
+        case .fatal: return String(localized: "启动失败")
         }
     }
 }
@@ -43,12 +43,12 @@ public enum OneshotState: String, Codable, Sendable, Equatable {
 
     public var displayText: String {
         switch self {
-        case .idle: return "空闲"
-        case .running: return "执行中"
-        case .succeeded: return "成功"
-        case .failed: return "失败"
-        case .timeout: return "超时"
-        case .cancelled: return "已中止"
+        case .idle: return String(localized: "空闲")
+        case .running: return String(localized: "执行中")
+        case .succeeded: return String(localized: "成功")
+        case .failed: return String(localized: "失败")
+        case .timeout: return String(localized: "超时")
+        case .cancelled: return String(localized: "已中止")
         }
     }
 }

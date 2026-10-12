@@ -43,8 +43,8 @@ struct EventsWindowView: View {
             }
         }
         .onAppear { reload() }
-        .onChange(of: levelFilter) { _ in reload() }
-        .onChange(of: programFilter) { _ in reload() }
+        .onChange(of: levelFilter) { reload() }
+        .onChange(of: programFilter) { reload() }
     }
 
     private func programName(_ id: Int64?) -> String {

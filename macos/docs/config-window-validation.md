@@ -1,6 +1,6 @@
 # 配置窗口验收
 
-需在 macOS 13+、Swift 6 环境中执行。Linux 上的语法解析不能代替 SwiftUI 编译与窗口验收。
+需在 macOS 14+、Swift 6 环境中执行。Linux 上的语法解析不能代替 SwiftUI 编译与窗口验收。
 
 ## 自动检查
 

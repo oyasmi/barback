@@ -4,7 +4,7 @@
 | --- | --- |
 | 产品 | Barback · macOS 状态栏进程管理器 |
 | 版本 | v1.0 |
-| 平台 | macOS 13+ / Universal 2 |
+| 平台 | macOS 14+ / Universal 2 |
 | 关联 | [设计文档](./design.md) · 2026-09-12 |
 
 ---
@@ -277,7 +277,7 @@ Program（被管理对象）
 | SEC-3 | 子进程以当前用户身份运行，不提权、不 setuid |
 | SEC-4 | 仅申请通知权限与登录项；不申请辅助功能/全盘访问/屏幕录制 |
 | SEC-5 | 发布产物 Developer ID 签名 + 公证 + 加固运行时；若自签名分发须文档写明放行步骤 |
-| CMP-1 | 最低 macOS 13，主验证目标 macOS 15；Universal 2 |
+| CMP-1 | 最低 macOS 14，主验证目标 macOS 15；Universal 2 |
 | CMP-2 | 跟随系统明暗、强调色、字号与"减少动态效果"；zh-Hans + en 双语 |
 
 ---

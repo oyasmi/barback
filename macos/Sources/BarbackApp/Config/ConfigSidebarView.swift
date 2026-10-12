@@ -153,21 +153,21 @@ struct ConfigSidebarView: View {
         switch model.sortMode {
         case .kind:
             return [
-                SidebarGroup(id: "service", title: "服务", items: items.filter { $0.program.kind == .service }),
-                SidebarGroup(id: "oneshot", title: "一次性命令", items: items.filter { $0.program.kind == .oneshot })
+                SidebarGroup(id: "service", title: String(localized: "服务"), items: items.filter { $0.program.kind == .service }),
+                SidebarGroup(id: "oneshot", title: String(localized: "一次性命令"), items: items.filter { $0.program.kind == .oneshot })
             ].filter { !$0.items.isEmpty }
         case .group:
-            return bucket(items) { $0.program.groupName ?? "默认" }
+            return bucket(items) { $0.program.groupName ?? String(localized: "默认") }
         case .state:
             return bucket(items) { snap in
-                if snap.serviceState == .fatal { return "启动失败" }
-                if snap.isActive { return "活动中" }
-                return snap.program.kind == .service ? "已停止" : "空闲"
+                if snap.serviceState == .fatal { return String(localized: "启动失败") }
+                if snap.isActive { return String(localized: "活动中") }
+                return snap.program.kind == .service ? String(localized: "已停止") : String(localized: "空闲")
             }
         case .name:
             return [SidebarGroup(
                 id: "all",
-                title: "全部",
+                title: String(localized: "全部"),
                 items: items.sorted { $0.program.name.localizedCompare($1.program.name) == .orderedAscending }
             )].filter { !$0.items.isEmpty }
         }
@@ -204,10 +204,10 @@ private struct DraftRow: View {
     var body: some View {
         HStack(spacing: 8) {
             Image(systemName: "circle.dashed")
-                .font(.system(size: 9))
+                .font(.system(size: 10))
                 .foregroundStyle(.tertiary)
             VStack(alignment: .leading, spacing: 1) {
-                Text(program.name.isEmpty ? "未命名" : program.name).lineLimit(1)
+                Text(program.name.isEmpty ? String(localized: "未命名") : program.name).lineLimit(1)
                 Text("未保存").font(.caption).foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
@@ -241,8 +241,8 @@ private struct ProgramRow: View {
     }
 
     private var subtitle: String {
-        guard snap.program.enabled else { return isDirty ? "未保存 · 已停用" : "已停用" }
-        if isDirty { return "未保存 · " + snap.statusText }
+        guard snap.program.enabled else { return isDirty ? String(localized: "未保存 · 已停用") : String(localized: "已停用") }
+        if isDirty { return String(localized: "未保存 · ") + snap.statusText }
         return snap.statusText
     }
 

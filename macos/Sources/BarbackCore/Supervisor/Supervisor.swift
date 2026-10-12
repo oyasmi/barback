@@ -70,7 +70,13 @@ public final class Supervisor: @unchecked Sendable {
     // MARK: - Startup
 
     /// Loads config, recovers crashed processes, then autostarts (design.md §3.7).
-    public func bootstrap() {
+    ///
+    /// `autostart: false` is for a launch after the database was restored from a config
+    /// backup: the live-process table went with the old database, so processes from the
+    /// previous session can no longer be recognised, and starting the autostart services would
+    /// risk a second instance of each (duplicate work, port conflicts). The user starts them
+    /// once they have checked.
+    public func bootstrap(autostart: Bool = true) {
         queue.async { [self] in
             baseEnvironment = loadOrCaptureEnvironment()
             do {
@@ -81,7 +87,9 @@ public final class Supervisor: @unchecked Sendable {
             loadLastRuns()
             recoverFromCrashIfNeeded()
             try? store.insertEvent(EventRecord(level: .info, type: .appStarted))
-            autostartServices()
+            if autostart {
+                autostartServices()
+            }
             publishSnapshot()
             scheduleLogRotationCheck()
             scheduleLivenessReconcile()

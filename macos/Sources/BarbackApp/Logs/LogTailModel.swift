@@ -1,4 +1,5 @@
 import Foundation
+import BarbackCore
 #if canImport(Darwin)
 import Darwin
 #endif
@@ -8,8 +9,21 @@ import Darwin
 @MainActor
 final class LogTailModel: ObservableObject {
     private let path: String
-    @Published private var lines: [String] = []
+    /// Bumped whenever the displayed text changes; views compare it with what they last drew.
+    @Published private(set) var revision = 0
     @Published var sizeDescription: String = ""
+
+    /// Completed lines, already cleaned for display (`LogLineAssembler`).
+    private var lines: [String] = []
+    /// `lines`, each followed by a newline — the part of the display text that only grows.
+    private var committed = ""
+    private var committedLength = 0
+    /// The unfinished last line, shown after `committed` until its newline arrives.
+    private var partial = ""
+    private var assembler = LogLineAssembler()
+    /// Recent revisions and the UTF-16 offset from which each one's text differs from the
+    /// previous revision's (`nil` = unrelated text, redraw everything).
+    private var edits: [(revision: Int, from: Int?)] = []
 
     private var source: DispatchSourceFileSystemObject?
     private var lastInode: UInt64?
@@ -17,6 +31,10 @@ final class LogTailModel: ObservableObject {
 
     static let maxBytes: Int64 = 2 * 1024 * 1024
     static let maxLines = 5000
+    /// Old lines are dropped in batches of this many, so the text view rebuilds once per batch
+    /// instead of on every line once the limit is reached — everything else is an append.
+    static let trimBatch = 500
+    private static let editHistory = 16
 
     init(path: String) {
         self.path = path
@@ -60,6 +78,7 @@ final class LogTailModel: ObservableObject {
         source = nil
     }
 
+    /// Truncates the file on disk. Irreversible — callers confirm with the user first.
     func clearFile() {
         guard let handle = FileHandle(forWritingAtPath: path) else { return }
         handle.truncateFile(atOffset: 0)
@@ -67,9 +86,36 @@ final class LogTailModel: ObservableObject {
         loadTail()
     }
 
+    var fileName: String { (path as NSString).lastPathComponent }
+
+    /// The whole display text.
+    var text: String { committed + partial }
+
+    /// The display text from UTF-16 offset `from` on; pairs with `changeStart(since:)`.
+    func text(fromUTF16 from: Int) -> String {
+        if from >= committedLength {
+            return (partial as NSString).substring(from: min(from - committedLength, (partial as NSString).length))
+        }
+        return (committed as NSString).substring(from: from) + partial
+    }
+
+    /// Where the text first differs from what it was at `revision`, or `nil` when the view
+    /// has to redraw everything (a reload, a trim, or a revision too old to reconstruct).
+    func changeStart(since applied: Int) -> Int? {
+        guard applied < revision, let oldest = edits.first, oldest.revision <= applied + 1 else { return nil }
+        var start = Int.max
+        for edit in edits where edit.revision > applied {
+            guard let from = edit.from else { return nil }
+            start = min(start, from)
+        }
+        return start == Int.max ? nil : start
+    }
+
     func displayText(matching query: String) -> String {
-        guard !query.isEmpty else { return lines.joined(separator: "\n") }
-        return lines.filter { $0.localizedCaseInsensitiveContains(query) }.joined(separator: "\n")
+        guard !query.isEmpty else { return text }
+        var matches = lines.filter { $0.localizedCaseInsensitiveContains(query) }
+        if partial.localizedCaseInsensitiveContains(query) { matches.append(partial) }
+        return matches.joined(separator: "\n")
     }
 
     /// A chatty service's file-system events can fire dozens of times a second; each one used
@@ -109,8 +155,10 @@ final class LogTailModel: ObservableObject {
     private var readOffset: UInt64 = 0
 
     private func loadTail() {
+        assembler = LogLineAssembler()
         guard let handle = FileHandle(forReadingAtPath: path) else {
-            lines = ["(日志文件尚不存在)"]
+            replaceAll(lines: [], partial: String(localized: "(日志文件尚不存在)"))
+            readOffset = 0
             sizeDescription = "0 B"
             return
         }
@@ -118,18 +166,23 @@ final class LogTailModel: ObservableObject {
         let size = (try? handle.seekToEnd()) ?? 0
         let start = size > UInt64(Self.maxBytes) ? size - UInt64(Self.maxBytes) : 0
         try? handle.seek(toOffset: start)
-        let data = handle.readDataToEndOfFile()
-        var text = String(data: data, encoding: .utf8) ?? String(decoding: data, as: UTF8.self)
-        if start > 0, let firstNewline = text.firstIndex(of: "\n") {
-            text = String(text[text.index(after: firstNewline)...])
+        var data = handle.readDataToEndOfFile()
+        readOffset = start + UInt64(data.count)
+        // Starting mid-file means starting mid-line (and maybe mid-character): begin at the
+        // first full line instead.
+        if start > 0 {
+            if let newline = data.firstIndex(of: 0x0A) {
+                data = data.subdata(in: data.index(after: newline)..<data.endIndex)
+            } else {
+                data = Data()
+            }
         }
-        var allLines = text.components(separatedBy: "\n")
-        if allLines.count > Self.maxLines {
-            allLines = Array(allLines.suffix(Self.maxLines))
+        var loaded = assembler.append(data)
+        if loaded.count > Self.maxLines {
+            loaded = Array(loaded.suffix(Self.maxLines))
         }
-        lines = allLines
-        readOffset = size
-        sizeDescription = ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file)
+        replaceAll(lines: loaded, partial: assembler.partial)
+        sizeDescription = ByteCountFormatter.string(fromByteCount: Int64(readOffset), countStyle: .file)
         if let attrs = try? FileManager.default.attributesOfItem(atPath: path) {
             lastInode = attrs[.systemFileNumber] as? UInt64
         }
@@ -160,13 +213,39 @@ final class LogTailModel: ObservableObject {
         // the earlier, smaller size used to mean the bytes appended in between got queued up to
         // be read (and displayed) a second time on the next event (R13).
         readOffset += UInt64(data.count)
-        let text = String(data: data, encoding: .utf8) ?? String(decoding: data, as: UTF8.self)
-        var newLines = text.components(separatedBy: "\n")
-        if newLines.last == "" { newLines.removeLast() }
-        lines.append(contentsOf: newLines)
-        if lines.count > Self.maxLines {
-            lines = Array(lines.suffix(Self.maxLines))
-        }
+        append(lines: assembler.append(data), partial: assembler.partial)
         sizeDescription = ByteCountFormatter.string(fromByteCount: Int64(readOffset), countStyle: .file)
+    }
+
+    private func replaceAll(lines newLines: [String], partial newPartial: String) {
+        lines = newLines
+        committed = newLines.map { $0 + "\n" }.joined()
+        committedLength = (committed as NSString).length
+        partial = newPartial
+        record(from: nil)
+    }
+
+    private func append(lines newLines: [String], partial newPartial: String) {
+        guard !newLines.isEmpty || newPartial != partial else { return }
+        // Everything before the old unfinished line is unchanged.
+        let changedFrom = committedLength
+        lines.append(contentsOf: newLines)
+        if lines.count > Self.maxLines + Self.trimBatch {
+            replaceAll(lines: Array(lines.suffix(Self.maxLines)), partial: newPartial)
+            return
+        }
+        for line in newLines {
+            committed += line
+            committed += "\n"
+            committedLength += (line as NSString).length + 1
+        }
+        partial = newPartial
+        record(from: changedFrom)
+    }
+
+    private func record(from: Int?) {
+        revision += 1
+        edits.append((revision: revision, from: from))
+        if edits.count > Self.editHistory { edits.removeFirst(edits.count - Self.editHistory) }
     }
 }

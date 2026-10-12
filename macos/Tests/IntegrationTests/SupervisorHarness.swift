@@ -59,8 +59,8 @@ final class SupervisorHarness {
         try store.insertProgram(program)
     }
 
-    func bootstrapAndSettle(timeout: TimeInterval = 5) {
-        supervisor.bootstrap()
+    func bootstrapAndSettle(autostart: Bool = true, timeout: TimeInterval = 5) {
+        supervisor.bootstrap(autostart: autostart)
         _ = waitUntil(timeout: timeout) { self.snapshot() != nil }
     }
 

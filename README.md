@@ -6,7 +6,7 @@ Barback 是面向个人开发者的本机后台进程管理器，用于管理常
 
 | 平台 | 状态 | 入口 |
 | --- | --- | --- |
-| macOS | 已有实现，Swift 6 + AppKit / SwiftUI，macOS 13+ | [使用与构建](macos/README.md) · [设计](macos/docs/design.md) |
+| macOS | 已有实现，Swift 6 + AppKit / SwiftUI，macOS 14+ | [使用与构建](macos/README.md) · [设计](macos/docs/design.md) |
 | Windows | C# + .NET 10 LTS + WPF；已完成 v0.3.2.0 x64 Release 构建并生成未签名 MSIX，正式发布仍需证书和实机验收 | [构建与验证](windows/README.md) · [总体设计](windows/docs/design.md) |
 
 两端遵循相同的产品目标，分别采用平台原生技术。进程生命周期、停止方式、Shell、系统集成和交互按各平台特点设计，不承诺配置或行为完全对等。

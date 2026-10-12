@@ -65,8 +65,8 @@ enum CommandHint {
 
     var text: String {
         switch self {
-        case .shell: return "将由 /bin/sh -c 执行"
-        case .resolved(let path): return "解析为 \(path)"
+        case .shell: return String(localized: "将由 /bin/sh -c 执行")
+        case .resolved(let path): return String(localized: "解析为 \(path)")
         case .problem(let message): return message
         }
     }
@@ -97,9 +97,9 @@ enum CommandHint {
             if let resolved = PathUtil.resolveExecutable(first, directory: directory) {
                 return .resolved(resolved)
             }
-            return .problem("找不到可执行文件：\(first)")
+            return .problem(String(localized: "找不到可执行文件：\(first)"))
         } catch {
-            return .problem((error as? LocalizedError)?.errorDescription ?? "命令无法解析")
+            return .problem((error as? LocalizedError)?.errorDescription ?? String(localized: "命令无法解析"))
         }
     }
 }
@@ -174,7 +174,7 @@ private struct ConfigFieldFocusModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
             .focused($isFocused)
-            .onChange(of: focus.request) { _ in isFocused = focus.field == field }
+            .onChange(of: focus.request) { isFocused = focus.field == field }
     }
 }
 
@@ -243,7 +243,7 @@ struct AdvancedGroup<Content: View>: View {
             .padding(.vertical, 3)
         }
         .onAppear { if hasError { isExpanded = true } }
-        .onChange(of: hasError) { value in if value { isExpanded = true } }
+        .onChange(of: hasError) { _, value in if value { isExpanded = true } }
     }
 
     /// A validation error keeps the section open no matter what the user last chose; once

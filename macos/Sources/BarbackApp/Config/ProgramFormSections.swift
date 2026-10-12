@@ -40,7 +40,7 @@ struct ProgramFormBody: View {
                 let anchor = sorted.last(where: { $0.value <= 28 })?.key ?? sorted.first?.key
                 if scrollAnchors[program.id] != anchor { scrollAnchors[program.id] = anchor }
             }
-            .onChange(of: validationRequest) { _ in
+            .onChange(of: validationRequest) {
                 guard let field = index.firstField else { return }
                 let section = sectionForError(field)
                 setExpanded(section, true)
@@ -68,20 +68,20 @@ struct ProgramFormBody: View {
         .toggleStyle(.switch)
         .textFieldStyle(.roundedBorder)
         .onAppear { refreshHint() }
-        .onChange(of: program.command) { _ in refreshHint() }
-        .onChange(of: program.useShell) { _ in refreshHint() }
-        .onChange(of: program.directory) { _ in refreshHint() }
+        .onChange(of: program.command) { refreshHint() }
+        .onChange(of: program.useShell) { refreshHint() }
+        .onChange(of: program.directory) { refreshHint() }
     }
 
     private var identitySection: some View {
-        ConfigSection(title: "基本信息") {
-            FormRow(label: "名称", required: program.name.isEmpty, messages: index.messages(.name)) {
+        ConfigSection(title: String(localized: "基本信息")) {
+            FormRow(label: String(localized: "名称"), required: program.name.isEmpty, messages: index.messages(.name)) {
                 TextField("程序名称", text: $program.name)
                     .configField(.name)
                 Text("1–64 位字母、数字或 . _ -，用于菜单与日志文件名。")
                     .font(.caption).foregroundStyle(.secondary)
             }
-            FormRow(label: "分组") {
+            FormRow(label: String(localized: "分组")) {
                 HStack(spacing: 6) {
                     TextField("默认", text: optionalText($program.groupName))
                     if !existingGroups.isEmpty {
@@ -104,7 +104,7 @@ struct ProgramFormBody: View {
     }
 
     private var commandSection: some View {
-        ConfigSection(title: "启动命令") {
+        ConfigSection(title: String(localized: "启动命令")) {
             VStack(alignment: .leading, spacing: 8) {
                 TextField("例如：/usr/local/bin/server --port 8080", text: $program.command, axis: .vertical)
                     .font(.system(.body, design: .monospaced))
@@ -120,8 +120,8 @@ struct ProgramFormBody: View {
                         .textSelection(.enabled)
                 }
             }
-            FormRow(label: "执行方式") {
-                Picker("执行方式", selection: $program.useShell) {
+            FormRow(label: String(localized: "执行方式")) {
+                Picker(String(localized: "执行方式"), selection: $program.useShell) {
                     Text("直接执行").tag(false)
                     Text("通过 Shell").tag(true)
                 }
@@ -133,7 +133,7 @@ struct ProgramFormBody: View {
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
-            FormRow(label: "工作目录", messages: index.messages(.directory)) {
+            FormRow(label: String(localized: "工作目录"), messages: index.messages(.directory)) {
                 HStack(spacing: 8) {
                     TextField("~", text: optionalText($program.directory))
                         .configField(.directory)
@@ -142,8 +142,8 @@ struct ProgramFormBody: View {
             }
             Divider()
             AdvancedGroup(
-                title: "环境变量",
-                summary: environmentText.isEmpty ? "未添加 · 使用登录环境" : "已配置 \(program.environment.count) 个变量",
+                title: String(localized: "环境变量"),
+                summary: environmentText.isEmpty ? String(localized: "未添加 · 使用登录环境") : String(localized: "已配置 \(program.environment.count) 个变量"),
                 changedCount: 0,
                 hasError: !index.messages(.environment).isEmpty,
                 isExpanded: expandedBinding("environment", initially: !environmentText.isEmpty)
@@ -156,7 +156,7 @@ struct ProgramFormBody: View {
     }
 
     private var lifecycleSection: some View {
-        ConfigSection(title: "运行规则") {
+        ConfigSection(title: String(localized: "运行规则")) {
             VStack(alignment: .leading, spacing: 4) {
                 Toggle("启用此配置", isOn: $program.enabled)
                 Text("保存后生效；此开关不会立即启动或停止程序。")
@@ -164,8 +164,8 @@ struct ProgramFormBody: View {
             }
             if program.kind == .service {
                 Toggle("随 Barback 启动", isOn: $program.autostart)
-                FormRow(label: "自动重启") {
-                    Picker("自动重启", selection: $program.autorestart) {
+                FormRow(label: String(localized: "自动重启")) {
+                    Picker(String(localized: "自动重启"), selection: $program.autorestart) {
                         Text("从不").tag(AutoRestartPolicy.never)
                         Text("仅异常退出").tag(AutoRestartPolicy.unexpected)
                         Text("总是").tag(AutoRestartPolicy.always)
@@ -177,17 +177,17 @@ struct ProgramFormBody: View {
                     .configScrollAnchor("restart")
             } else {
                 Toggle("执行前确认", isOn: $program.confirmBeforeRun)
-                FormRow(label: "执行超时", messages: index.messages(.number("timeoutSeconds"))) {
+                FormRow(label: String(localized: "执行超时"), messages: index.messages(.number("timeoutSeconds"))) {
                     HStack(spacing: 6) {
                         IntField(value: $program.timeoutSeconds)
                             .configField(.number("timeoutSeconds"))
                         Text("秒，0 表示不限").font(.caption).foregroundStyle(.secondary)
                     }
                 }
-                FormRow(label: "成功退出码") {
+                FormRow(label: String(localized: "成功退出码")) {
                     ExitCodesField(program: $program)
                 }
-                FormRow(label: "排列顺序") {
+                FormRow(label: String(localized: "排列顺序")) {
                     HStack(spacing: 6) {
                         IntField(value: $program.priority)
                         Text("数值越小，列表越靠前").font(.caption).foregroundStyle(.secondary)
@@ -215,8 +215,8 @@ struct ProgramFormBody: View {
     private var notesSection: some View {
         ConfigSection {
             AdvancedGroup(
-                title: "备注",
-                summary: program.notes?.isEmpty == false ? "已添加程序说明" : "未添加",
+                title: String(localized: "备注"),
+                summary: program.notes?.isEmpty == false ? String(localized: "已添加程序说明") : String(localized: "未添加"),
                 changedCount: 0,
                 isExpanded: expandedBinding("notes")
             ) {
@@ -301,13 +301,13 @@ struct RestartPolicyGroup: View {
     }
 
     private var summary: String {
-        let defaultSummary = changedCount > 0 ? "" : "默认 · "
-        return defaultSummary + "\(program.startSeconds) 秒存活，最多重试 \(program.startRetries) 次"
+        let defaultSummary = changedCount > 0 ? "" : String(localized: "默认 · ")
+        return defaultSummary + String(localized: "\(program.startSeconds) 秒存活，最多重试 \(program.startRetries) 次")
     }
 
     var body: some View {
         AdvancedGroup(
-            title: "启动判定与重试",
+            title: String(localized: "启动判定与重试"),
             summary: summary,
             changedCount: changedCount,
             hasError: index.hasError(in: Self.errorFields),
@@ -315,7 +315,7 @@ struct RestartPolicyGroup: View {
             onResetAll: reset
         ) {
             FormRow(
-                label: "存活判定",
+                label: String(localized: "存活判定"),
                 changed: program.startSeconds != defaults.startSeconds,
                 messages: index.messages(.number("startSeconds"))
             ) {
@@ -326,7 +326,7 @@ struct RestartPolicyGroup: View {
                 }
             }
             FormRow(
-                label: "启动重试",
+                label: String(localized: "启动重试"),
                 changed: program.startRetries != defaults.startRetries,
                 messages: index.messages(.number("startRetries"))
             ) {
@@ -337,7 +337,7 @@ struct RestartPolicyGroup: View {
                 }
             }
             FormRow(
-                label: "重启间隔",
+                label: String(localized: "重启间隔"),
                 changed: program.backoffBase != defaults.backoffBase || program.backoffMax != defaults.backoffMax,
                 messages: index.messages(.number("backoffBase")) + index.messages(.number("backoffMax"))
             ) {
@@ -355,7 +355,7 @@ struct RestartPolicyGroup: View {
                 }
             }
             FormRow(
-                label: "重启风暴",
+                label: String(localized: "重启风暴"),
                 changed: program.stormWindowSec != defaults.stormWindowSec || program.stormMaxRestarts != defaults.stormMaxRestarts,
                 messages: index.messages(.number("stormWindowSec")) + index.messages(.number("stormMaxRestarts"))
             ) {
@@ -372,14 +372,14 @@ struct RestartPolicyGroup: View {
                     }
                 }
             }
-            FormRow(label: "启动顺序", changed: program.priority != defaults.priority) {
+            FormRow(label: String(localized: "启动顺序"), changed: program.priority != defaults.priority) {
                 HStack(spacing: 6) {
                     IntField(value: $program.priority)
                         .configField(.number("priority"))
                     Text("数值越小，越先启动").font(.caption).foregroundStyle(.secondary)
                 }
             }
-            FormRow(label: "正常退出码", changed: program.exitCodes != defaults.exitCodes) {
+            FormRow(label: String(localized: "正常退出码"), changed: program.exitCodes != defaults.exitCodes) {
                 VStack(alignment: .leading, spacing: 4) {
                     ExitCodesField(program: $program)
                     Text("退出码不在此列表中时，判定为失败。").font(.caption).foregroundStyle(.secondary)
@@ -413,14 +413,14 @@ struct ExecutionAdvancedGroup: View {
 
     var body: some View {
         AdvancedGroup(
-            title: "输出与历史",
-            summary: "每次执行单独记录输出 · 保留 \(program.historyLimit) 条",
+            title: String(localized: "输出与历史"),
+            summary: String(localized: "每次执行单独记录输出 · 保留 \(program.historyLimit) 条"),
             changedCount: program.historyLimit == defaultLimit ? 0 : 1,
             hasError: index.hasError(in: [.number("historyLimit")]),
             isExpanded: $isExpanded,
             onResetAll: { program.historyLimit = defaultLimit }
         ) {
-            FormRow(label: "历史保留", messages: index.messages(.number("historyLimit"))) {
+            FormRow(label: String(localized: "历史保留"), messages: index.messages(.number("historyLimit"))) {
                 HStack(spacing: 6) {
                     IntField(value: $program.historyLimit)
                         .configField(.number("historyLimit"))
@@ -451,20 +451,20 @@ struct StopGroup: View {
     }
 
     private var summary: String {
-        let defaultSummary = changedCount > 0 ? "" : "默认 · "
-        return defaultSummary + "\(program.stopSignal)，\(program.stopWaitSeconds) 秒后强杀"
+        let defaultSummary = changedCount > 0 ? "" : String(localized: "默认 · ")
+        return defaultSummary + String(localized: "\(program.stopSignal)，\(program.stopWaitSeconds) 秒后强杀")
     }
 
     var body: some View {
         AdvancedGroup(
-            title: "停止方式",
+            title: String(localized: "停止方式"),
             summary: summary,
             changedCount: changedCount,
             hasError: index.hasError(in: [.number("stopWaitSeconds")]),
             isExpanded: $isExpanded,
             onResetAll: reset
         ) {
-            FormRow(label: "停止信号", changed: program.stopSignal != defaults.stopSignal) {
+            FormRow(label: String(localized: "停止信号"), changed: program.stopSignal != defaults.stopSignal) {
                 Picker("", selection: $program.stopSignal) {
                     ForEach(["TERM", "INT", "HUP", "QUIT"], id: \.self) { Text($0).tag($0) }
                 }
@@ -472,7 +472,7 @@ struct StopGroup: View {
                 .frame(maxWidth: 140)
             }
             FormRow(
-                label: "强杀等待",
+                label: String(localized: "强杀等待"),
                 changed: program.stopWaitSeconds != defaults.stopWaitSeconds,
                 messages: index.messages(.number("stopWaitSeconds"))
             ) {
@@ -483,7 +483,7 @@ struct StopGroup: View {
                 }
             }
             FormRow(
-                label: "进程组",
+                label: String(localized: "进程组"),
                 changed: program.stopAsGroup != defaults.stopAsGroup || program.killAsGroup != defaults.killAsGroup
             ) {
                 HStack(spacing: 14) {
@@ -528,14 +528,14 @@ struct LogGroup: View {
     }
 
     private var summary: String {
-        let defaultSummary = changedCount > 0 ? "" : "默认 · "
+        let defaultSummary = changedCount > 0 ? "" : String(localized: "默认 · ")
         switch program.logRotatePolicy {
         case .size:
-            return defaultSummary + "按 \(byteSummary) 轮转，保留 \(program.logBackups) 份"
+            return defaultSummary + String(localized: "按 \(byteSummary) 轮转，保留 \(program.logBackups) 份")
         case .onRestart:
-            return defaultSummary + "重启时轮转，保留 \(program.logBackups) 份"
+            return defaultSummary + String(localized: "重启时轮转，保留 \(program.logBackups) 份")
         case .never:
-            return defaultSummary + "不轮转"
+            return defaultSummary + String(localized: "不轮转")
         }
     }
 
@@ -545,7 +545,7 @@ struct LogGroup: View {
 
     var body: some View {
         AdvancedGroup(
-            title: "日志与保留",
+            title: String(localized: "日志与保留"),
             summary: summary,
             changedCount: changedCount,
             hasError: index.hasError(in: Self.errorFields),
@@ -553,7 +553,7 @@ struct LogGroup: View {
             onResetAll: reset
         ) {
             FormRow(
-                label: "输出路径",
+                label: String(localized: "输出路径"),
                 changed: program.logPath != defaults.logPath,
                 messages: index.messages(.logPath)
             ) {
@@ -565,7 +565,7 @@ struct LogGroup: View {
             }
             if !program.logMergeStderr {
                 FormRow(
-                    label: "stderr 路径",
+                    label: String(localized: "stderr 路径"),
                     changed: program.logStderrPath != defaults.logStderrPath,
                     messages: index.messages(.stderrPath)
                 ) {
@@ -573,18 +573,18 @@ struct LogGroup: View {
                         .configField(.stderrPath)
                 }
             }
-            FormRow(label: "轮转策略", changed: program.logRotatePolicy != defaults.logRotatePolicy) {
+            FormRow(label: String(localized: "轮转策略"), changed: program.logRotatePolicy != defaults.logRotatePolicy) {
                 Picker("", selection: $program.logRotatePolicy) {
                     Text("按大小").tag(LogRotatePolicy.size)
                     Text("重启时").tag(LogRotatePolicy.onRestart)
-                    Text("不轮转").tag(LogRotatePolicy.never)
+                    Text(String(localized: "不轮转")).tag(LogRotatePolicy.never)
                 }
                 .labelsHidden()
                 .frame(maxWidth: 160)
             }
             if program.logRotatePolicy == .size || !index.messages(.number("logMaxBytes")).isEmpty {
                 FormRow(
-                    label: "单文件上限",
+                    label: String(localized: "单文件上限"),
                     changed: program.logMaxBytes != defaults.logMaxBytes,
                     messages: index.messages(.number("logMaxBytes"))
                 ) {
@@ -593,7 +593,7 @@ struct LogGroup: View {
             }
             if program.logRotatePolicy != .never || !index.messages(.number("logBackups")).isEmpty {
                 FormRow(
-                    label: "保留份数",
+                    label: String(localized: "保留份数"),
                     changed: program.logBackups != defaults.logBackups,
                     messages: index.messages(.number("logBackups"))
                 ) {
@@ -637,14 +637,14 @@ struct ExitCodesField: View {
             }
         }
         .onAppear { text = Self.format(program.exitCodes) }
-        .onChange(of: program.id) { _ in text = Self.format(program.exitCodes) }
-        .onChange(of: program.exitCodes) { newValue in
+        .onChange(of: program.id) { text = Self.format(program.exitCodes) }
+        .onChange(of: program.exitCodes) { _, newValue in
             // Only an *external* change (a draft switch already caught above, or a section's
             // "恢复默认值") should overwrite what's being typed — never our own commit below,
             // which by construction already parses back to exactly `newValue`.
             if Self.parse(text) != newValue { text = Self.format(newValue) }
         }
-        .onChange(of: text) { newValue in
+        .onChange(of: text) { _, newValue in
             program.exitCodes = Self.parse(newValue)
         }
     }

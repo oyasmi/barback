@@ -3,7 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "Barback",
-    platforms: [.macOS(.v13)],
+    platforms: [.macOS(.v14)],
     products: [
         .executable(name: "BarbackApp", targets: ["BarbackApp"]),
         .library(name: "BarbackCore", targets: ["BarbackCore"])

@@ -205,11 +205,11 @@ final class StatusPanelModel: ObservableObject {
         close()
         let alert = NSAlert()
         alert.alertStyle = .warning
-        alert.messageText = "强制终止「\(snap.program.name)」？"
-        alert.informativeText = "将直接发送 SIGKILL，进程没有机会保存状态或清理资源。"
-        alert.addButton(withTitle: "强制终止")
-        alert.addButton(withTitle: "取消")
-        NSApp.activate(ignoringOtherApps: true)
+        alert.messageText = String(localized: "强制终止「\(snap.program.name)」？")
+        alert.informativeText = String(localized: "将直接发送 SIGKILL，进程没有机会保存状态或清理资源。")
+        alert.addButton(withTitle: String(localized: "强制终止"))
+        alert.addButton(withTitle: String(localized: "取消"))
+        NSApp.activate()
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         appState.supervisor.forceKill(id: snap.id)
     }
@@ -218,33 +218,44 @@ final class StatusPanelModel: ObservableObject {
 
     func startAll() { appState.supervisor.startAll() }
 
-    /// "全部停止" reads as "stop my services" — it silently took down any in-flight one-shot
-    /// too, which is exactly the risk the quit flow already asks about before doing the same
-    /// thing (`AppDelegate.applicationShouldTerminate`). This brings the panel action in line
-    /// with that precedent (design.md §6.3, ex-F04).
+    /// String(localized: "全部停止") / String(localized: "全部重启") sit one click away in a transient popover, and a stray click
+    /// used to take every service down without a word (only in-flight one-shots were asked
+    /// about, ex-F04). Both now confirm first and name what they touch, matching the quit flow
+    /// (`AppDelegate.applicationShouldTerminate`) and the Windows workbench (design.md §6.3).
     func stopAll() {
-        appState.supervisor.hasActiveOneshots { [weak self] hasActive in
-            DispatchQueue.main.async {
-                guard let self else { return }
-                guard hasActive else {
-                    self.appState.supervisor.stopAll()
-                    return
-                }
-                self.close()
-                let alert = NSAlert()
-                alert.alertStyle = .warning
-                alert.messageText = "有一次性命令正在执行"
-                alert.informativeText = "全部停止将同时终止它们。"
-                alert.addButton(withTitle: "全部停止")
-                alert.addButton(withTitle: "取消")
-                NSApp.activate(ignoringOtherApps: true)
-                guard alert.runModal() == .alertFirstButtonReturn else { return }
-                self.appState.supervisor.stopAll()
-            }
-        }
+        let active = appState.snapshot.programs.filter(\.isActive)
+        guard !active.isEmpty else { return }
+        let oneshots = active.filter { $0.program.kind == .oneshot }.count
+        let detail = oneshots > 0
+            ? String(localized: "将停止 \(active.count) 个正在运行的程序，其中 \(oneshots) 个一次性命令会被终止。")
+            : String(localized: "将停止 \(active.count) 个正在运行的服务。")
+        guard confirmBulkAction(title: String(localized: "全部停止？"), detail: detail, names: active.map(\.program.name), button: String(localized: "全部停止")) else { return }
+        appState.supervisor.stopAll()
     }
 
-    func restartAll() { appState.supervisor.restartAll() }
+    func restartAll() {
+        // Same selection as `Supervisor.restartAll`: services that are running right now.
+        let running = appState.snapshot.programs.filter { $0.program.kind == .service && $0.isActive }
+        guard !running.isEmpty else { return }
+        guard confirmBulkAction(title: String(localized: "全部重启？"), detail: String(localized: "将依次重启 \(running.count) 个正在运行的服务。"),
+                                names: running.map(\.program.name), button: String(localized: "全部重启")) else { return }
+        appState.supervisor.restartAll()
+    }
+
+    /// The alert is modal and would pull focus out from under the popover, so the panel
+    /// closes first (same as `forceKill`).
+    private func confirmBulkAction(title: String, detail: String, names: [String], button: String) -> Bool {
+        close()
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = title
+        let listed = names.sorted().prefix(12).joined(separator: "\n")
+        alert.informativeText = detail + "\n\n" + listed + (names.count > 12 ? "\n…" : "")
+        alert.addButton(withTitle: button)
+        alert.addButton(withTitle: String(localized: "取消"))
+        NSApp.activate()
+        return alert.runModal() == .alertFirstButtonReturn
+    }
 
     var canStartAll: Bool {
         appState.snapshot.programs.contains {
@@ -256,8 +267,8 @@ final class StatusPanelModel: ObservableObject {
         appState.snapshot.programs.contains(where: \.isActive)
     }
 
-    var hasServices: Bool {
-        appState.snapshot.programs.contains { $0.program.kind == .service }
+    var canRestartAll: Bool {
+        appState.snapshot.programs.contains { $0.program.kind == .service && $0.isActive }
     }
 
     // MARK: - Keyboard (BAR-10)
@@ -331,11 +342,11 @@ final class StatusPanelModel: ObservableObject {
         var order: [String] = []
         var buckets: [String: [ProgramSnapshot]] = [:]
         for snap in services {
-            let key = snap.program.groupName?.isEmpty == false ? snap.program.groupName! : "未分组"
+            let key = snap.program.groupName?.isEmpty == false ? snap.program.groupName! : String(localized: "未分组")
             if buckets[key] == nil { order.append(key) }
             buckets[key, default: []].append(snap)
         }
-        guard order.count > 1 else { return [ServiceGroup(title: "服务", items: services)] }
+        guard order.count > 1 else { return [ServiceGroup(title: String(localized: "服务"), items: services)] }
         return order.map { ServiceGroup(title: $0, items: buckets[$0] ?? []) }
     }
 
@@ -370,7 +381,7 @@ final class StatusPanelModel: ObservableObject {
     func copy(_ text: String, label: String) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
-        flash("已复制\(label)")
+        flash(String(localized: "已复制\(label)"))
     }
 
     private func flash(_ message: String) {

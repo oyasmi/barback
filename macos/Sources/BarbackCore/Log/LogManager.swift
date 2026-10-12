@@ -15,8 +15,8 @@ public enum LogManagerError: Error, LocalizedError {
     case rotationFailed(String)
     public var errorDescription: String? {
         switch self {
-        case .openFailed(let p): return "无法打开日志文件：\(p)"
-        case .rotationFailed(let detail): return "日志轮转失败：\(detail)"
+        case .openFailed(let p): return String(localized: "无法打开日志文件：\(p)")
+        case .rotationFailed(let detail): return String(localized: "日志轮转失败：\(detail)")
         }
     }
 }

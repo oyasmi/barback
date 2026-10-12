@@ -4,7 +4,7 @@
 | --- | --- |
 | 版本 | v1.0 设计基线 · 2026-09-12 |
 | 前置 | [需求文档](./requirements.md) |
-| 目标 | macOS 13+ / Universal 2 / Swift 6 / 零第三方依赖 |
+| 目标 | macOS 14+ / Universal 2 / Swift 6 / 零第三方依赖 |
 
 ---
 
@@ -116,7 +116,7 @@ start(program)  ← autostart / 用户操作 / 自动重启 / 一次性触发
 - `POSIX_SPAWN_SETSID` 让子进程成为新会话首进程，其派生的子孙默认同属一个进程组 → `kill(-pgid, sig)` 可一网打尽。这正是用户现有配置中 `stopasgroup=true` 依赖的行为。
 - stdin 接 `/dev/null`，防止读 stdin 的程序永久阻塞。
 
-**API 可用性**（已在本机 macOS 15.7 SDK 核对）：`POSIX_SPAWN_SETSID`/`SETSIGDEF`/`SETSIGMASK` 见 `sys/spawn.h`；部署目标 macOS 13 需用 `posix_spawn_file_actions_addchdir_np`（10.15+），该符号自 macOS 26 更名为 `posix_spawn_file_actions_addchdir`，按可用性分支调用；进程启动时刻取自 `proc_pidinfo(PROC_PIDTBSDINFO)`。
+**API 可用性**（已在本机 macOS 15.7 SDK 核对）：`POSIX_SPAWN_SETSID`/`SETSIGDEF`/`SETSIGMASK` 见 `sys/spawn.h`；部署目标 macOS 14 需用 `posix_spawn_file_actions_addchdir_np`（10.15+），该符号自 macOS 26 更名为 `posix_spawn_file_actions_addchdir`，按可用性分支调用；进程启动时刻取自 `proc_pidinfo(PROC_PIDTBSDINFO)`。
 
 ### 3.2 退出感知
 
@@ -524,7 +524,11 @@ SwiftUI `NavigationSplitView` 挂在 AppKit 窗口上，默认 980×680、最小
 
 ### 6.7 无障碍与本地化
 
-菜单项与按钮提供 `accessibilityLabel`；状态不单靠颜色传达；完整键盘导航；尊重"减少动态效果"与系统字号；文案走 String Catalog，首发 zh-Hans + en。
+菜单项与按钮提供 `accessibilityLabel`；状态不单靠颜色传达；完整键盘导航；尊重"减少动态效果"与系统字号；首发 zh-Hans + en。
+
+文案以中文源文本为键：SwiftUI 字面量（`Text("…")`、`Button("…")` 等）自动查表，以 `String` 传递的文案用 `String(localized:)`，含 `%` 的格式串用 `NSLocalizedString`。英文在 `Resources/en.lproj/Localizable.strings`，插值写成格式符（文本 `%@`、`Int` `%lld`、`Int32` `%d`）；缺失条目回退为中文原文，不会出错。SwiftPM 不编译 String Catalog（`.xcstrings`），因此用 `.strings`，由 `Scripts/build.sh` 复制进 app。同一中文在不同语境需要不同译文时，用 `String(localized: "kind.service", defaultValue: "服务")` 这类独立键。
+
+状态栏面板的字号固定（弹出面板不随系统字号变化），但承载信息的文字不小于 10.5 pt，只有装饰图标更小；正文不用 `.quaternary`。
 
 ---
 

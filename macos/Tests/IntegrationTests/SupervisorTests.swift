@@ -35,6 +35,24 @@ struct SupervisorTests {
         #expect(harness.waitForService(id, .running))
     }
 
+    /// After a database restore the previous session's processes can't be recognised any
+    /// more, so the app bootstraps without autostart and leaves starting to the user.
+    @Test func bootstrapWithoutAutostartLeavesServicesStopped() throws {
+        let harness = try SupervisorHarness()
+        defer { harness.cleanup() }
+        var program = Program.longRunningService(name: "svc-no-autostart")
+        program.autostart = true
+        let id = try harness.insert(program)
+
+        harness.bootstrapAndSettle(autostart: false)
+        Thread.sleep(forTimeInterval: 0.5)
+        #expect(harness.serviceState(id) == .stopped)
+        #expect(harness.pid(id) == nil)
+
+        harness.supervisor.start(id: id)
+        #expect(harness.waitForService(id, .running))
+    }
+
     @Test func restartReplacesTheProcess() throws {
         let harness = try SupervisorHarness()
         defer { harness.cleanup() }

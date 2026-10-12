@@ -1,0 +1,7 @@
+/*
+ Simplified Chinese is the development language: the keys in en.lproj are already the
+ Chinese text, so only keys that are not Chinese themselves need an entry here.
+*/
+
+"kind.oneshot" = "一次性命令";
+"kind.service" = "服务";

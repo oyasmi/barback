@@ -19,7 +19,7 @@ struct PillButton: View {
         Button(action: action) {
             HStack(spacing: 4) {
                 Image(systemName: systemImage)
-                    .font(.system(size: 9, weight: .bold))
+                    .font(.system(size: 10, weight: .bold))
                 Text(title)
                     .font(.system(size: 11, weight: .semibold))
             }
@@ -129,7 +129,7 @@ struct SummaryChip: View {
     var body: some View {
         HStack(spacing: 4) {
             Image(systemName: symbol)
-                .font(.system(size: 8, weight: .bold))
+                .font(.system(size: 9, weight: .bold))
                 .foregroundStyle(color)
             Text("\(count)")
                 .font(.system(size: 12, weight: .semibold))
@@ -160,7 +160,7 @@ struct StateBadge: View {
 
     var body: some View {
         Text(text)
-            .font(.system(size: 10, weight: .medium))
+            .font(.system(size: 10.5, weight: .medium))
             .monospacedDigit()
             .foregroundStyle(quiet ? Color.secondary : color)
             .padding(.horizontal, 5)
@@ -176,7 +176,7 @@ struct MetaTag: View {
 
     var body: some View {
         Text(text)
-            .font(.system(size: 10))
+            .font(.system(size: 10.5))
             .foregroundStyle(.secondary)
             .padding(.horizontal, 5)
             .padding(.vertical, 1.5)

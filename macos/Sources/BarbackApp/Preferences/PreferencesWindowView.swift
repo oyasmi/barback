@@ -21,7 +21,7 @@ struct PreferencesWindowView: View {
         Form {
             Section {
                 Toggle("开机自动启动 Barback", isOn: $loginItemEnabled)
-                    .onChange(of: loginItemEnabled) { newValue in LoginItemManager.setEnabled(newValue) }
+                    .onChange(of: loginItemEnabled) { _, newValue in LoginItemManager.setEnabled(newValue) }
                 LabeledContent("面板密度") {
                     Picker("", selection: $menuDensity) {
                         Text("正常").tag(MenuDensity.normal.rawValue)
@@ -60,8 +60,8 @@ struct PreferencesWindowView: View {
                 Text("通知")
             } footer: {
                 Text(notificationsOff
-                     ? "已关闭全部通知，异常仍会记录在事件日志中。"
-                     : "同一服务的同类通知在窗口内只提醒一次，避免重启风暴刷屏；一次性命令的结果不去抖。")
+                     ? String(localized: "已关闭全部通知，异常仍会记录在事件日志中。")
+                     : String(localized: "同一服务的同类通知在窗口内只提醒一次，避免重启风暴刷屏；一次性命令的结果不去抖。"))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

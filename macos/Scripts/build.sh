@@ -49,6 +49,10 @@ mkdir -p "$APP_BUNDLE/Contents/MacOS" "$APP_BUNDLE/Contents/Resources"
 cp "$BIN_PATH" "$APP_BUNDLE/Contents/MacOS/$APP_NAME"
 cp Resources/Info.plist "$APP_BUNDLE/Contents/Info.plist"
 cp Resources/AppIcon.icns "$APP_BUNDLE/Contents/Resources/AppIcon.icns"
+# Localized strings (Resources/<lang>.lproj); without them the app shows its Chinese source text.
+for lproj in Resources/*.lproj; do
+  [ -d "$lproj" ] && cp -R "$lproj" "$APP_BUNDLE/Contents/Resources/"
+done
 if [ -d Resources/Assets.xcassets ]; then
   cp -R Resources/Assets.xcassets "$APP_BUNDLE/Contents/Resources/"
 fi

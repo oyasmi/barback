@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Barback is a macOS (13+, Apple Silicon) menu-bar app that supervises long-running background
+Barback is a macOS (14+, Apple Silicon) menu-bar app that supervises long-running background
 processes (auto-restart, crash-storm protection) and one-shot commands, similar in spirit to
 `supervisor` but as a single-process, zero-dependency, no-daemon app. Swift 6, AppKit/SwiftUI,
 SQLite for persistence. Full narrative docs: `docs/design.md` (architecture, state machines, data
@@ -104,6 +104,15 @@ From design.md §1, in priority order when trade-offs conflict:
 Config (programs, autostart/autorestart, log paths, etc.) is only ever mutated through the GUI —
 there is no CLI and no human-editable config file; don't add code paths that write config outside
 `Store`.
+
+## Localization
+
+UI text is written in Chinese in the sources and that Chinese text is the lookup key; English lives in
+`Resources/en.lproj/Localizable.strings` (copied into the bundle by `Scripts/build.sh`). Literals passed
+straight to SwiftUI initializers localize automatically; strings that travel as `String` (custom view
+parameters, `NSAlert`, menus, model display text) must use `String(localized:)`. When adding or editing a
+string, add or update its `.strings` entry with the interpolation written as a format specifier (`%@`,
+`%lld` for `Int`, `%d` for `Int32`). See design.md §6.7.
 
 ## Git
 

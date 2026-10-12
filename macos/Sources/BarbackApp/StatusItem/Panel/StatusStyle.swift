@@ -4,7 +4,7 @@ import BarbackCore
 
 /// The status panel's visual vocabulary. Every place that paints a state — the dot, the
 /// badge, the row accent, the summary chips — asks here, so they can never disagree about
-/// what "重试中" looks like. State is carried by **shape and wording as well as colour**
+/// what String(localized: "重试中") looks like. State is carried by **shape and wording as well as colour**
 /// (design.md §6.3), never by colour alone.
 enum StatusStyle {
 
@@ -52,27 +52,27 @@ enum StatusStyle {
     static func primaryAction(for snap: ProgramSnapshot) -> PrimaryAction {
         guard snap.program.kind == .service else {
             return snap.oneshotState == .running
-                ? PrimaryAction(kind: .cancel, title: "中止", symbol: "stop.fill", tint: failure)
-                : PrimaryAction(kind: .run, title: "运行", symbol: "play.fill", tint: active)
+                ? PrimaryAction(kind: .cancel, title: String(localized: "中止"), symbol: "stop.fill", tint: failure)
+                : PrimaryAction(kind: .run, title: String(localized: "运行"), symbol: "play.fill", tint: active)
         }
         let state = snap.serviceState ?? .stopped
-        // A disabled-but-inactive service showed a perfectly clickable "启动" even though its
+        // A disabled-but-inactive service showed a perfectly clickable String(localized: "启动") even though its
         // own badge says 已停用 and "停用" is documented to mean "won't start on its own" — the
         // only consistent reading is that starting it manually first requires turning it back
         // on (design.md §6.3, ex-F06). A service disabled while still running keeps its normal
         // stop/restart controls; disabling doesn't touch anything already active.
         if !snap.program.enabled, !state.isActive {
-            return PrimaryAction(kind: .enable, title: "启用", symbol: "checkmark.circle", tint: running)
+            return PrimaryAction(kind: .enable, title: String(localized: "启用"), symbol: "checkmark.circle", tint: running)
         }
         switch state {
         case .stopping:
             // TERM has been sent and we are waiting it out; the only useful escalation here is
             // SIGKILL, so that is what the row offers.
-            return PrimaryAction(kind: .forceKill, title: "强制终止", symbol: "bolt.fill", tint: failure)
+            return PrimaryAction(kind: .forceKill, title: String(localized: "强制终止"), symbol: "bolt.fill", tint: failure)
         case .running, .starting, .backoff:
-            return PrimaryAction(kind: .stop, title: "停止", symbol: "stop.fill", tint: failure)
+            return PrimaryAction(kind: .stop, title: String(localized: "停止"), symbol: "stop.fill", tint: failure)
         case .stopped, .exited, .fatal:
-            return PrimaryAction(kind: .start, title: "启动", symbol: "play.fill", tint: running)
+            return PrimaryAction(kind: .start, title: String(localized: "启动"), symbol: "play.fill", tint: running)
         }
     }
 
@@ -85,42 +85,42 @@ enum StatusStyle {
     private static func service(_ snap: ProgramSnapshot) -> Presentation {
         switch snap.serviceState ?? .stopped {
         case .running:
-            return Presentation(label: "运行中", color: running, symbol: "circle.fill", isQuiet: true)
+            return Presentation(label: String(localized: "运行中"), color: running, symbol: "circle.fill", isQuiet: true)
         case .starting:
-            return Presentation(label: "启动中", color: transitioning, symbol: "circle.bottomhalf.filled", isBusy: true)
+            return Presentation(label: String(localized: "启动中"), color: transitioning, symbol: "circle.bottomhalf.filled", isBusy: true)
         case .backoff:
             let label = snap.program.startRetries > 0
-                ? "重试 \(snap.retryCount)/\(snap.program.startRetries)"
-                : "重试中"
+                ? String(localized: "重试 \(snap.retryCount)/\(snap.program.startRetries)")
+                : String(localized: "重试中")
             // No spinner: a backoff wait is measured in seconds, and the row shows the
             // countdown itself, which says more than indeterminate motion would.
             return Presentation(label: label, color: transitioning, symbol: "arrow.clockwise.circle.fill")
         case .stopping:
-            return Presentation(label: "停止中", color: transitioning, symbol: "circle.bottomhalf.filled", isBusy: true)
+            return Presentation(label: String(localized: "停止中"), color: transitioning, symbol: "circle.bottomhalf.filled", isBusy: true)
         case .stopped:
-            return Presentation(label: "已停止", color: neutral, symbol: "circle")
+            return Presentation(label: String(localized: "已停止"), color: neutral, symbol: "circle")
         case .exited:
-            return Presentation(label: "已退出", color: neutral, symbol: "circle")
+            return Presentation(label: String(localized: "已退出"), color: neutral, symbol: "circle")
         case .fatal:
-            return Presentation(label: "启动失败", color: failure, symbol: "exclamationmark.triangle.fill")
+            return Presentation(label: String(localized: "启动失败"), color: failure, symbol: "exclamationmark.triangle.fill")
         }
     }
 
     private static func oneshot(_ snap: ProgramSnapshot) -> Presentation {
         switch snap.oneshotState ?? .idle {
         case .running:
-            return Presentation(label: "执行中", color: active, symbol: "circle.dotted", isBusy: true)
+            return Presentation(label: String(localized: "执行中"), color: active, symbol: "circle.dotted", isBusy: true)
         case .succeeded:
-            return Presentation(label: "成功", color: running, symbol: "checkmark.circle.fill", isQuiet: true)
+            return Presentation(label: String(localized: "成功"), color: running, symbol: "checkmark.circle.fill", isQuiet: true)
         case .failed:
-            return Presentation(label: "失败", color: failure, symbol: "xmark.circle.fill")
+            return Presentation(label: String(localized: "失败"), color: failure, symbol: "xmark.circle.fill")
         case .timeout:
-            return Presentation(label: "超时", color: transitioning, symbol: "exclamationmark.circle.fill")
+            return Presentation(label: String(localized: "超时"), color: transitioning, symbol: "exclamationmark.circle.fill")
         case .cancelled:
-            return Presentation(label: "已中止", color: neutral, symbol: "minus.circle.fill")
+            return Presentation(label: String(localized: "已中止"), color: neutral, symbol: "minus.circle.fill")
         case .idle:
             guard let outcome = snap.lastRun?.outcome else {
-                return Presentation(label: "尚未执行", color: neutral, symbol: "circle")
+                return Presentation(label: String(localized: "尚未执行"), color: neutral, symbol: "circle")
             }
             return Presentation(label: outcomeLabel(outcome), color: outcomeColor(outcome),
                                 symbol: outcomeSymbol(outcome), isQuiet: outcome == .succeeded)
@@ -162,10 +162,10 @@ enum StatusStyle {
         let hours = (total % 86_400) / 3600
         let minutes = (total % 3600) / 60
         let seconds = total % 60
-        if days > 0 { return hours > 0 ? "\(days) 天 \(hours) 小时" : "\(days) 天" }
-        if hours > 0 { return minutes > 0 ? "\(hours) 小时 \(minutes) 分" : "\(hours) 小时" }
-        if minutes > 0 { return "\(minutes) 分 \(seconds) 秒" }
-        return "\(seconds) 秒"
+        if days > 0 { return hours > 0 ? String(localized: "\(days) 天 \(hours) 小时") : String(localized: "\(days) 天") }
+        if hours > 0 { return minutes > 0 ? String(localized: "\(hours) 小时 \(minutes) 分") : String(localized: "\(hours) 小时") }
+        if minutes > 0 { return String(localized: "\(minutes) 分 \(seconds) 秒") }
+        return String(localized: "\(seconds) 秒")
     }
 
     /// Elapsed time for a still-running program, in the compact `2min` / `1h3min` shape the
@@ -186,8 +186,8 @@ enum StatusStyle {
 
     /// Run durations, which are usually seconds rather than days.
     static func runDuration(_ interval: TimeInterval) -> String {
-        if interval < 1 { return String(format: "%.0f 毫秒", interval * 1000) }
-        if interval < 60 { return String(format: "%.1f 秒", interval) }
+        if interval < 1 { return String(format: NSLocalizedString("%.0f 毫秒", comment: "run duration below one second"), interval * 1000) }
+        if interval < 60 { return String(format: NSLocalizedString("%.1f 秒", comment: "run duration below one minute"), interval) }
         return uptime(interval)
     }
 
@@ -208,8 +208,8 @@ enum StatusStyle {
     /// Times from today read as a clock; older ones carry the date.
     static func timestamp(_ date: Date) -> String {
         let calendar = Calendar.current
-        if calendar.isDateInToday(date) { return "今天 " + clockFormatter.string(from: date) }
-        if calendar.isDateInYesterday(date) { return "昨天 " + clockFormatter.string(from: date) }
+        if calendar.isDateInToday(date) { return String(localized: "今天 ") + clockFormatter.string(from: date) }
+        if calendar.isDateInYesterday(date) { return String(localized: "昨天 ") + clockFormatter.string(from: date) }
         return dateFormatter.string(from: date)
     }
 

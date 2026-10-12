@@ -70,7 +70,7 @@ Barback 是一个常驻状态栏的进程管理器：把你长年跑在 Mac 上�
 
 ## 安装
 
-要求 **macOS 13+ · Apple Silicon**（`ARCHS="arm64 x86_64" Scripts/build.sh` 可构建 Universal 2）、Xcode 命令行工具（Swift 6）。
+要求 **macOS 14+ · Apple Silicon**（`ARCHS="arm64 x86_64" Scripts/build.sh` 可构建 Universal 2）、Xcode 命令行工具（Swift 6）。
 
 ```bash
 git clone https://github.com/oyasmi/barback.git && cd barback/macos

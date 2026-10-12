@@ -48,30 +48,30 @@ struct StatusPanelView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
-                SummaryChip(count: snapshot.runningCount, label: "运行中",
+                SummaryChip(count: snapshot.runningCount, label: String(localized: "运行中"),
                             color: StatusStyle.running, symbol: "circle.fill")
-                SummaryChip(count: snapshot.stoppedCount, label: "已停止",
+                SummaryChip(count: snapshot.stoppedCount, label: String(localized: "已停止"),
                             color: StatusStyle.neutral, symbol: "circle")
                 if snapshot.transitioningCount > 0 {
-                    SummaryChip(count: snapshot.transitioningCount, label: "过渡中",
+                    SummaryChip(count: snapshot.transitioningCount, label: String(localized: "过渡中"),
                                 color: StatusStyle.transitioning, symbol: "circle.bottomhalf.filled")
                 }
                 if snapshot.fatalCount > 0 {
-                    SummaryChip(count: snapshot.fatalCount, label: "失败",
+                    SummaryChip(count: snapshot.fatalCount, label: String(localized: "失败"),
                                 color: StatusStyle.failure, symbol: "exclamationmark.triangle.fill")
                 }
                 if snapshot.oneshotRunningCount > 0 {
-                    SummaryChip(count: snapshot.oneshotRunningCount, label: "执行中",
+                    SummaryChip(count: snapshot.oneshotRunningCount, label: String(localized: "执行中"),
                                 color: StatusStyle.active, symbol: "circle.dotted")
                 }
                 Spacer(minLength: 4)
-                GlyphButton(systemImage: "gearshape", help: "打开配置窗口 (⌘,)") { model.openConfig() }
+                GlyphButton(systemImage: "gearshape", help: String(localized: "打开配置窗口 (⌘,)")) { model.openConfig() }
                     .keyboardShortcut(",", modifiers: .command)
             }
 
             if snapshot.recoveredCount > 0 {
                 noticeStrip(
-                    "上次异常退出，已接管 \(snapshot.recoveredCount) 个仍在运行的进程",
+                    String(localized: "上次异常退出，已接管 \(snapshot.recoveredCount) 个仍在运行的进程"),
                     color: StatusStyle.transitioning,
                     onDismiss: { model.dismissRecoveryNotice() }
                 )
@@ -98,7 +98,7 @@ struct StatusPanelView: View {
                 .focused($searchFocused)
                 .onAppear { searchFocused = true }
             if !model.searchText.isEmpty {
-                GlyphButton(systemImage: "xmark.circle.fill", help: "清除") { model.searchText = "" }
+                GlyphButton(systemImage: "xmark.circle.fill", help: String(localized: "清除")) { model.searchText = "" }
             }
         }
         .padding(.horizontal, 7)
@@ -121,7 +121,7 @@ struct StatusPanelView: View {
                 .lineLimit(2)
             Spacer(minLength: 0)
             if let onDismiss {
-                GlyphButton(systemImage: "xmark", help: "知道了", tint: color, action: onDismiss)
+                GlyphButton(systemImage: "xmark", help: String(localized: "知道了"), tint: color, action: onDismiss)
             }
         }
         .foregroundStyle(color)
@@ -143,7 +143,7 @@ struct StatusPanelView: View {
                         noMatches
                     }
                     if !services.isEmpty {
-                        sectionHeader(title: "服务", count: services.count)
+                        sectionHeader(title: String(localized: "服务"), count: services.count)
                         ForEach(groups, id: \.title) { group in
                             if groups.count > 1 {
                                 groupHeader(group.title, count: group.items.count)
@@ -152,7 +152,7 @@ struct StatusPanelView: View {
                         }
                     }
                     if !oneshots.isEmpty {
-                        sectionHeader(title: "一次性命令", count: oneshots.count)
+                        sectionHeader(title: String(localized: "一次性命令"), count: oneshots.count)
                         ForEach(oneshots) { row(for: $0) }
                     }
                 }
@@ -166,7 +166,7 @@ struct StatusPanelView: View {
             .frame(height: min(max(contentHeight, 44), maxListHeight))
             .onPreferenceChange(ContentHeightKey.self) { contentHeight = $0 }
             // ↑/↓ can walk past the fold, and a cursor you can't see is worse than no cursor.
-            .onChange(of: model.selectedId) { id in
+            .onChange(of: model.selectedId) { _, id in
                 guard let id else { return }
                 withAnimation(.easeOut(duration: 0.12)) { proxy.scrollTo(id, anchor: .center) }
             }
@@ -181,10 +181,10 @@ struct StatusPanelView: View {
     private func sectionHeader(title: String, count: Int) -> some View {
         HStack(spacing: 5) {
             Text(title)
-                .font(.system(size: 10.5, weight: .semibold))
+                .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.secondary)
             Text("\(count)")
-                .font(.system(size: 10))
+                .font(.system(size: 10.5))
                 .monospacedDigit()
                 .foregroundStyle(.tertiary)
             Spacer(minLength: 0)
@@ -197,12 +197,12 @@ struct StatusPanelView: View {
     private func groupHeader(_ title: String, count: Int) -> some View {
         HStack(spacing: 4) {
             Text(title)
-                .font(.system(size: 10))
+                .font(.system(size: 10.5))
                 .foregroundStyle(.tertiary)
             Text("\(count)")
-                .font(.system(size: 9.5))
+                .font(.system(size: 10))
                 .monospacedDigit()
-                .foregroundStyle(.quaternary)
+                .foregroundStyle(.tertiary)
             Spacer(minLength: 0)
         }
         .padding(.leading, 20)
@@ -249,16 +249,16 @@ struct StatusPanelView: View {
     private var footer: some View {
         VStack(spacing: 6) {
             HStack(spacing: 5) {
-                DrawerButton(title: "全部启动", systemImage: "play.fill",
+                DrawerButton(title: String(localized: "全部启动"), systemImage: "play.fill",
                              tint: StatusStyle.running, isEnabled: model.canStartAll) {
                     model.startAll()
                 }
-                DrawerButton(title: "全部停止", systemImage: "stop.fill",
+                DrawerButton(title: String(localized: "全部停止"), systemImage: "stop.fill",
                              tint: StatusStyle.failure, isEnabled: model.canStopAll) {
                     model.stopAll()
                 }
-                DrawerButton(title: "全部重启", systemImage: "arrow.clockwise",
-                             isEnabled: model.hasServices) {
+                DrawerButton(title: String(localized: "全部重启"), systemImage: "arrow.clockwise",
+                             isEnabled: model.canRestartAll) {
                     model.restartAll()
                 }
             }
@@ -266,21 +266,21 @@ struct StatusPanelView: View {
             HStack(spacing: 4) {
                 if let toast = model.toast {
                     Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 9))
+                        .font(.system(size: 10))
                         .foregroundStyle(StatusStyle.running)
                     Text(toast)
-                        .font(.system(size: 10))
+                        .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                 } else {
                     Text("↑↓ 选择 · ↩ 展开 · ⌘↩ 执行 · 右键打开应用菜单")
-                        .font(.system(size: 10))
+                        .font(.system(size: 10.5))
                         .foregroundStyle(.tertiary)
                         .lineLimit(1)
                         .truncationMode(.tail)
                 }
                 Spacer(minLength: 6)
                 Text("Barback \(Self.version)")
-                    .font(.system(size: 10))
+                    .font(.system(size: 10.5))
                     .foregroundStyle(.tertiary)
             }
         }

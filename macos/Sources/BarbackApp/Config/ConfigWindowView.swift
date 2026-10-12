@@ -123,8 +123,8 @@ struct ConfigWindowView: View {
 
     private var deleteMessage: String {
         guard let target = model.deleteTarget else { return "" }
-        var parts = ["配置、执行历史与日志文件会一并删除，此操作不可撤销。"]
-        if target.isActive { parts.insert("该程序正在运行，删除前会先停止它。", at: 0) }
+        var parts = [String(localized: "配置、执行历史与日志文件会一并删除，此操作不可撤销。")]
+        if target.isActive { parts.insert(String(localized: "该程序正在运行，删除前会先停止它。"), at: 0) }
         return parts.joined(separator: "\n")
     }
 }

@@ -71,7 +71,7 @@ Left-click is the most-used surface in the app, so every routine action sits dir
 
 ## Install
 
-Requires **macOS 13+ on Apple Silicon** (`ARCHS="arm64 x86_64" Scripts/build.sh` produces a Universal 2 build) and the Xcode command line tools (Swift 6).
+Requires **macOS 14+ on Apple Silicon** (`ARCHS="arm64 x86_64" Scripts/build.sh` produces a Universal 2 build) and the Xcode command line tools (Swift 6).
 
 ```bash
 git clone https://github.com/oyasmi/barback.git && cd barback/macos

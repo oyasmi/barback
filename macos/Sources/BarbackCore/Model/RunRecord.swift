@@ -8,10 +8,10 @@ public enum RunTrigger: String, Codable, Sendable {
 
     public var displayText: String {
         switch self {
-        case .manual: return "手动"
-        case .autostart: return "开机自启"
-        case .autorestart: return "自动重启"
-        case .retry: return "重试"
+        case .manual: return String(localized: "手动")
+        case .autostart: return String(localized: "开机自启")
+        case .autorestart: return String(localized: "自动重启")
+        case .retry: return String(localized: "重试")
         }
     }
 }
@@ -28,11 +28,11 @@ public enum RunOutcome: String, Codable, Sendable, CaseIterable {
     /// status panel showed 「成功」 for the same run.
     public var displayText: String {
         switch self {
-        case .succeeded: return "成功"
-        case .failed: return "失败"
-        case .timeout: return "超时"
-        case .cancelled: return "已中止"
-        case .unknown: return "结果未知"
+        case .succeeded: return String(localized: "成功")
+        case .failed: return String(localized: "失败")
+        case .timeout: return String(localized: "超时")
+        case .cancelled: return String(localized: "已中止")
+        case .unknown: return String(localized: "结果未知")
         }
     }
 }

@@ -6,8 +6,8 @@ public enum ShellLexerError: Error, LocalizedError, Equatable {
 
     public var errorDescription: String? {
         switch self {
-        case .unterminatedQuote: return "未闭合的引号"
-        case .trailingBackslash: return "命令以反斜杠结尾"
+        case .unterminatedQuote: return String(localized: "未闭合的引号")
+        case .trailingBackslash: return String(localized: "命令以反斜杠结尾")
         }
     }
 }

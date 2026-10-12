@@ -14,10 +14,10 @@ enum ConfigSortMode: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .kind: return "按类型"
-        case .group: return "按分组"
-        case .state: return "按状态"
-        case .name: return "按名称"
+        case .kind: return String(localized: "按类型")
+        case .group: return String(localized: "按分组")
+        case .state: return String(localized: "按状态")
+        case .name: return String(localized: "按名称")
         }
     }
 

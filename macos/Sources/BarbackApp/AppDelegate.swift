@@ -22,21 +22,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             store = try Store(dbPath: AppPaths.dbPath, backupsDir: AppPaths.backupsDir)
         } catch {
             let alert = NSAlert()
-            alert.messageText = "无法初始化数据库"
+            alert.messageText = String(localized: "无法初始化数据库")
             alert.informativeText = "\(error)"
             alert.runModal()
             NSApp.terminate(nil)
             return
         }
 
+        var autostart = true
         if let restoredCount = store.restoredProgramCount {
             let alert = NSAlert()
             alert.alertStyle = .warning
-            alert.messageText = "数据库已损坏，已从最近备份恢复"
-            alert.informativeText = restoredCount > 0
-                ? "已从最近一次配置备份恢复 \(restoredCount) 个程序的配置。运行历史与事件记录已丢失，标记为自动启动的程序即将按原配置启动，建议逐一核对后再使用。"
-                : "未找到可用的配置备份，程序列表已清空。运行历史与事件记录已丢失。"
-            alert.runModal()
+            alert.messageText = String(localized: "数据库已损坏，已从最近备份恢复")
+            if restoredCount > 0 {
+                // The record of which processes were running went with the old database, so
+                // anything still alive from the previous session is invisible to Barback now.
+                // Autostarting by default could launch every service a second time.
+                alert.informativeText = String(localized: "已从最近一次配置备份恢复 \(restoredCount) 个程序的配置。运行历史与事件记录已丢失。\n\n上次运行的进程记录也已丢失，Barback 无法判断那些进程是否仍在运行；此时自动启动可能造成重复实例或端口冲突。建议先核对，再从面板手动启动。")
+                alert.addButton(withTitle: String(localized: "本次不自动启动"))
+                alert.addButton(withTitle: String(localized: "仍按配置自动启动"))
+                autostart = alert.runModal() == .alertSecondButtonReturn
+            } else {
+                alert.informativeText = String(localized: "未找到可用的配置备份，程序列表已清空。运行历史与事件记录已丢失。")
+                alert.runModal()
+            }
         }
 
         supervisor = Supervisor(store: store)
@@ -71,7 +80,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self, selector: #selector(handleWake), name: NSWorkspace.didWakeNotification, object: nil
         )
 
-        supervisor.bootstrap()
+        supervisor.bootstrap(autostart: autostart)
 
         if !hasCompletedOnboarding {
             showOnboarding()
@@ -94,7 +103,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         )
         let hosting = NSHostingController(rootView: view)
         let window = NSWindow(contentViewController: hosting)
-        window.title = "欢迎使用 Barback"
+        window.title = String(localized: "欢迎使用 Barback")
         window.styleMask = [.titled, .closable]
         window.center()
         window.isReleasedWhenClosed = false
@@ -103,7 +112,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // again on every single launch, forever (UJ-1: "一次性欢迎窗口").
         window.delegate = self
         onboardingWindow = window
-        NSApp.activate(ignoringOtherApps: true)
+        NSApp.activate()
         window.makeKeyAndOrderFront(nil)
     }
 
@@ -128,19 +137,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         case .enteredFatal(let name):
             guard Preferences.notifyFatal else { return }
             debounceKey = "fatal:\(name)"
-            content.title = "服务启动失败"
-            content.body = "\(name) 已进入 FATAL 状态，重试已停止。"
+            content.title = String(localized: "服务启动失败")
+            content.body = String(localized: "\(name) 已进入 FATAL 状态，重试已停止。")
         case .unexpectedRestart(let name):
             guard Preferences.notifyRestart else { return }
             debounceKey = "restart:\(name)"
-            content.title = "服务已重启"
-            content.body = "\(name) 意外退出，已自动重启。"
+            content.title = String(localized: "服务已重启")
+            content.body = String(localized: "\(name) 意外退出，已自动重启。")
         case .stopTimeout(let name):
             // Grouped under the FATAL switch: both are "这个服务出问题了" alerts.
             guard Preferences.notifyFatal else { return }
             debounceKey = "stopTimeout:\(name)"
-            content.title = "停止超时"
-            content.body = "\(name) 未在期限内退出，已强制终止。"
+            content.title = String(localized: "停止超时")
+            content.body = String(localized: "\(name) 未在期限内退出，已强制终止。")
         }
         guard passesDebounce(key: debounceKey) else { return }
         let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
@@ -179,10 +188,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 guard let self else { return }
                 if hasActive {
                     let alert = NSAlert()
-                    alert.messageText = "有一次性命令正在执行"
-                    alert.informativeText = "退出将终止它们。"
-                    alert.addButton(withTitle: "退出")
-                    alert.addButton(withTitle: "取消")
+                    alert.messageText = String(localized: "有一次性命令正在执行")
+                    alert.informativeText = String(localized: "退出将终止它们。")
+                    alert.addButton(withTitle: String(localized: "退出"))
+                    alert.addButton(withTitle: String(localized: "取消"))
                     guard alert.runModal() == .alertFirstButtonReturn else {
                         NSApp.reply(toApplicationShouldTerminate: false)
                         return
@@ -222,10 +231,10 @@ final class TerminationProgressWindow {
     }
 
     private init() {
-        let label = NSTextField(labelWithString: "正在停止所有被管进程…")
+        let label = NSTextField(labelWithString: String(localized: "正在停止所有被管进程…"))
         label.frame = NSRect(x: 20, y: 20, width: 260, height: 24)
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 64), styleMask: [.titled], backing: .buffered, defer: false)
-        window.title = "正在退出"
+        window.title = String(localized: "正在退出")
         window.contentView?.addSubview(label)
         window.center()
         window.isReleasedWhenClosed = false
