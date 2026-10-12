@@ -8,6 +8,7 @@ struct EventsWindowView: View {
     @State private var events: [EventRecord] = []
     @State private var levelFilter: EventLevel?
     @State private var programFilter: Int64?
+    @State private var loaded = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -41,6 +42,17 @@ struct EventsWindowView: View {
                         .help(e.detailJSON)
                 }
             }
+            .overlay {
+                if loaded && events.isEmpty {
+                    if levelFilter == nil && programFilter == nil {
+                        ContentUnavailableView("暂无事件", systemImage: "list.bullet.rectangle",
+                                               description: Text("启动、停止、崩溃和重试等事件会记录在这里。"))
+                    } else {
+                        ContentUnavailableView("没有符合条件的事件", systemImage: "line.3.horizontal.decrease.circle",
+                                               description: Text("调整上方的筛选条件，或选择「全部」。"))
+                    }
+                }
+            }
         }
         .onAppear { reload() }
         .onChange(of: levelFilter) { reload() }
@@ -62,7 +74,7 @@ struct EventsWindowView: View {
 
     private func reload() {
         appState.supervisor.fetchEvents(limit: 1000, programId: programFilter, level: levelFilter) { fetched in
-            DispatchQueue.main.async { self.events = fetched }
+            DispatchQueue.main.async { self.events = fetched; self.loaded = true }
         }
     }
 

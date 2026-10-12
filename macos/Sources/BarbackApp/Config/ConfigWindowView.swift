@@ -88,14 +88,7 @@ struct ConfigWindowView: View {
     }
 
     private var placeholder: some View {
-        VStack(spacing: 6) {
-            Image(systemName: "sidebar.left")
-                .font(.system(size: 28))
-                .foregroundStyle(.tertiary)
-            Text("从左侧选择一个程序")
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        ContentUnavailableView("从左侧选择一个程序", systemImage: "sidebar.left")
     }
 
     // MARK: - Alert plumbing
@@ -135,22 +128,17 @@ struct ConfigEmptyStateView: View {
     let onImport: () -> Void
 
     var body: some View {
-        VStack(spacing: 14) {
-            Image(systemName: "tray")
-                .font(.system(size: 40))
-                .foregroundStyle(.tertiary)
-            Text("还没有任何程序")
-                .font(.title3).bold()
+        ContentUnavailableView {
+            Label("还没有任何程序", systemImage: "tray")
+        } description: {
             Text("添加一个常驻服务，或一条按需执行的命令。")
-                .foregroundStyle(.secondary)
+        } actions: {
             HStack(spacing: 10) {
                 Button("新建服务") { onCreate(.service) }
                     .buttonStyle(.borderedProminent)
                 Button("新建一次性命令") { onCreate(.oneshot) }
                 Button("从 supervisor 粘贴导入…") { onImport() }
             }
-            .padding(.top, 4)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }

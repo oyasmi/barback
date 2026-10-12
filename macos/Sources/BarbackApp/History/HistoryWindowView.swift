@@ -10,6 +10,7 @@ struct HistoryWindowView: View {
     @State private var outcomeFilter: RunOutcome?
     @State private var viewingRun: RunRecord?
     @State private var confirmingClear = false
+    @State private var loaded = false
     let onRerun: (Int64) -> Void
 
     init(appState: AppState, initialProgramId: Int64?, onRerun: @escaping (Int64) -> Void) {
@@ -65,6 +66,18 @@ struct HistoryWindowView: View {
                     }
                 }
             }
+            .overlay {
+                // Before the first fetch returns the table is empty for no reason worth stating.
+                if loaded && filteredRuns.isEmpty {
+                    if selectedProgramId == nil && outcomeFilter == nil {
+                        ContentUnavailableView("暂无执行记录", systemImage: "clock.arrow.circlepath",
+                                               description: Text("程序每次运行的记录会显示在这里。"))
+                    } else {
+                        ContentUnavailableView("没有符合条件的记录", systemImage: "line.3.horizontal.decrease.circle",
+                                               description: Text("调整上方的筛选条件，或选择「全部」。"))
+                    }
+                }
+            }
         }
         .onAppear { reload() }
         .onChange(of: selectedProgramId) { reload() }
@@ -90,7 +103,7 @@ struct HistoryWindowView: View {
 
     private func reload() {
         appState.supervisor.fetchRuns(programId: selectedProgramId, limit: 500) { fetched in
-            DispatchQueue.main.async { self.runs = fetched }
+            DispatchQueue.main.async { self.runs = fetched; self.loaded = true }
         }
     }
 

@@ -400,3 +400,10 @@
 "默认" = "Default";
 "默认 · " = "Default · ";
 "默认（应用日志目录）" = "Default (app log folder)";
+"暂无执行记录" = "No runs yet";
+"程序每次运行的记录会显示在这里。" = "Each run of a program is recorded here.";
+"没有符合条件的记录" = "No matching runs";
+"调整上方的筛选条件，或选择「全部」。" = "Adjust the filters above, or choose All.";
+"暂无事件" = "No events yet";
+"启动、停止、崩溃和重试等事件会记录在这里。" = "Starts, stops, crashes, retries and other events are recorded here.";
+"没有符合条件的事件" = "No matching events";

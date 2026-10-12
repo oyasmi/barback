@@ -71,9 +71,10 @@ struct ConfigSidebarView: View {
 
     @ViewBuilder private var emptyListHint: some View {
         if model.searchText.isEmpty {
+            // The detail pane carries the full first-run state with its actions; this stays a hint.
             Text("还没有程序").foregroundStyle(.secondary)
         } else {
-            Text("没有匹配「\(model.searchText)」的程序").foregroundStyle(.secondary)
+            ContentUnavailableView.search(text: model.searchText)
         }
     }
 
