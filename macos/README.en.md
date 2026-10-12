@@ -42,30 +42,36 @@ Left-click is the most-used surface in the app, so every routine action sits dir
 
 ```
 ┌─ Left-click panel ─────────────────────────────────────────┐
-│ ●1 running  ○2 stopped  ⚠1 failed  ◌1 busy            ⚙  │
+│ ●2 Running  ○1 Stopped  ◑1 In transition  ⚠1 Failed  ⚙  ⋯ │
 │ 🔍 Search                                  (appears at > 8)│
 ├────────────────────────────────────────────────────────────┤
-│ Services 4                                                 │
-│ ▎● nslocal        running          [■ Stop ] [↻] [📄] [⌄] │
-│    PID 4821 · up 2d3h · CPU 0.3% · 48.0 MB                 │
-│ ▎◑ api-server     retry 2/3        [■ Stop ] [↻] [📄] [⌄] │
-│    retrying in 12s · last exit today 22:26 · code 1        │
+│ ⓘ Needs Attention 2                                       │
+│ ▎◑ api-server                     [■ Stop ]               │
+│    Retry 2/3 · Retrying in 12s · Last exit 3 min ago       │
 │    ▁▁▁▁▁▁▁▁▃▃▃▃▃▃▃▃▃▃▃▃                                   │
-│ ▎⚠ tunnel         start failed     [▶ Start] [↻] [📄] [⌄] │
-│    3 retries · last exit today 22:21 · code 127            │
-│    ⚠ Auto-retry stopped, needs attention        Clear      │
+│ ▎⚠ tunnel                         [▶ Start]               │
+│    Failed to start · Retried 3 times · Last exit 8 min ago │
+│    ⚠ Automatic retries stopped · Exit code 127  View log   │
+│ Services 3                                                 │
+│ ▎● nslocal                        [  Stop ]               │
+│    Running · up 2d3h · CPU 0.3% · 48.0 MB                  │
+│ ▎● web-api                        [■ Stop ] [↻] [📄] [⌄]  │
+│    Running · up 5h12min · CPU 1.8% · 212 MB                │
 │ One-shot commands 1                                        │
-│ ▎✓ backup-db      succeeded        [▶ Run  ] [📄] [🕑] [⌄] │
-│    last today 20:27 · took 3.4s · 27 runs                  │
+│ ▎✓ backup-db                      [  Run  ]               │
+│    Succeeded · Last run 2 h ago · Took 3.4 s · 27 runs     │
 ├────────────────────────────────────────────────────────────┤
-│ [▶ Start all]   [■ Stop all]   [↻ Restart all]             │
+│ ⚠ tunnel Gave up starting · 8 min ago      [▶ Start All][⌄]│
 └────────────────────────────────────────────────────────────┘
 ```
 
-- The primary button follows the state: **Stop** while running, **Start** while stopped, **Force kill** (with confirmation) while a stop is in flight.
-- Click anywhere on a row to expand a drawer with the command, working directory, log path, config summary, and *Reveal in Finder* / *Copy PID* / *Edit configuration*.
-- State is carried by shape and wording as well as colour, never colour alone; failure states offer the remedy as a button you can press right there.
-- **Right-click** (or Control-click) opens Barback's own menu — configuration window, run history, event log, preferences, paste-import, quit — with no overlap with the left-click panel.
+- The primary button follows the state: **Stop** while running, **Start** while stopped, **Force kill** (with confirmation) while a stop is in flight. At rest it is a neutral capsule that takes its red or green only as the pointer approaches; only remedies (Start after a failure, Force kill on a stuck stop) stay coloured, so colour marks the rows that need you.
+- Failing, retrying and restart-pending services float to a *Needs Attention* section at the top; click a summary chip in the header (e.g. "⚠ 1 Failed") to show only that kind.
+- Click a row to expand a drawer with the command, working directory, log path, config summary, and *Reveal in Finder* / *Copy PID* / *Edit configuration*.
+- State is carried by shape and wording as well as colour, never colour alone; a failed row offers *View log* right there.
+- The footer shows the newest problem event from the last 24 hours (click for the event log), or the combined CPU / memory of what is running, next to the bulk actions.
+- The menu bar icon is always the wine glass, with a corner badge: red = something failed, accent = a command is running, hollow ring = a service that should be up is stopped.
+- **Right-click** (or Control-click, or ⋯ in the panel header) opens Barback's own menu — configuration window, run history, event log, preferences, open at login, paste-import, quit (⌘Q).
 
 > The interface is currently Simplified Chinese only; English localization is planned.
 
@@ -92,10 +98,10 @@ First launch walks you through the login item and notification permissions and a
 | What you want | Where it is |
 | --- | --- |
 | Start / stop / restart a service | Left-click → the row's primary button |
-| Read a program's log | Left-click → 📄 on the row |
-| See PID / uptime / CPU / memory | Left-click — the metrics are on the row, sampled when the panel opens (no idle polling) |
+| Read a program's log | Left-click → 📄 on the row (or select it and press ⌘L) |
+| See uptime / CPU / memory | Left-click — the metrics are on the row, sampled when the panel opens (no idle polling); the PID is in the expanded drawer |
 | See the command, directory, log path | Left-click → click the row to expand its drawer |
-| Add, edit or delete a program | Right-click → *Open configuration window* (⌘,) |
+| Add, edit or delete a program | ⚙ in the panel header, or right-click → *Open configuration window* (⌘,) |
 | Migrate from supervisor | Right-click → *Paste-import from supervisor* |
 
 ### Migrating from supervisor

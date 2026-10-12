@@ -19,7 +19,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
     /// So `refreshIcon` — called on every snapshot publish — can skip rebuilding an `NSImage`
     /// (one of the pricier Foundation/AppKit objects to construct) when the icon wouldn't
     /// actually change, which is most of the time (design.md §6.2, ex-F20).
-    private var lastIconSymbol: String?
+    private var lastIcon: IconState?
     /// Installed only while the panel is on screen. SwiftUI in a popover never gets a first
     /// responder of its own for anything but the search field, so arrow-key navigation has to
     /// come from AppKit (BAR-10).
@@ -40,25 +40,104 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         refreshIcon()
     }
 
-    private func symbolName(for snapshot: SupervisorSnapshot) -> String {
-        if snapshot.fatalCount > 0 {
-            return "exclamationmark.triangle.fill"
-        } else if snapshot.oneshotRunningCount > 0 {
-            return "circle.dotted"
-        } else if snapshot.runningCount > 0 {
-            return "wineglass.fill"
-        } else {
-            return "wineglass"
+    // MARK: - Icon (design.md §6.1)
+
+    /// What the menu-bar glyph says. The glass is always the glass — swapping it wholesale for
+    /// a warning triangle or a dotted circle, as it used to, left a status item nobody could
+    /// recognise as Barback at exactly the moment it wanted attention. State rides on a badge
+    /// in the corner instead.
+    private struct IconState: Equatable {
+        enum Badge: Equatable {
+            /// FATAL, or a one-shot whose last run failed or timed out. Red, and not a
+            /// template, so it survives the menu bar's monochrome.
+            case failure
+            /// A one-shot is executing. Accent colour.
+            case busy
+            /// A service meant to be up (enabled + autostart) is stopped or has exited.
+            /// Monochrome ring: worth noticing, not alarming.
+            case stopped
         }
+
+        var filled: Bool
+        var badge: Badge?
+    }
+
+    private func iconState(for snapshot: SupervisorSnapshot) -> IconState {
+        let programs = snapshot.programs
+        let failing = programs.contains { snap in
+            if snap.serviceState == .fatal { return true }
+            guard snap.program.kind == .oneshot, snap.oneshotState != .running else { return false }
+            let outcome = snap.lastRun?.outcome
+            return outcome == .failed || outcome == .timeout
+        }
+        let badge: IconState.Badge?
+        if failing {
+            badge = .failure
+        } else if snapshot.oneshotRunningCount > 0 {
+            badge = .busy
+        } else if programs.contains(where: { snap in
+            snap.program.kind == .service && snap.program.enabled && snap.program.autostart
+                && (snap.serviceState == .stopped || snap.serviceState == .exited)
+        }) {
+            badge = .stopped
+        } else {
+            badge = nil
+        }
+        return IconState(filled: snapshot.runningCount > 0, badge: badge)
     }
 
     func refreshIcon() {
-        let symbol = symbolName(for: appState.snapshot)
-        guard symbol != lastIconSymbol else { return }
-        lastIconSymbol = symbol
-        let image = NSImage(systemSymbolName: symbol, accessibilityDescription: "Barback")
-        image?.isTemplate = true
-        statusItem.button?.image = image
+        let state = iconState(for: appState.snapshot)
+        guard state != lastIcon else { return }
+        lastIcon = state
+        statusItem.button?.image = Self.makeIcon(state)
+    }
+
+    private static func makeIcon(_ state: IconState) -> NSImage? {
+        guard let glass = NSImage(systemSymbolName: state.filled ? "wineglass.fill" : "wineglass",
+                                  accessibilityDescription: "Barback") else { return nil }
+        guard let badge = state.badge else {
+            glass.isTemplate = true
+            return glass
+        }
+
+        let dot: CGFloat = 6
+        let size = NSSize(width: glass.size.width + 2, height: glass.size.height)
+        let badgeRect = NSRect(x: size.width - dot, y: 0, width: dot, height: dot)
+        // A colour badge means the image can't be a template, so the glass has to be inked by
+        // hand. The handler runs at draw time with the button's appearance current, so
+        // `labelColor` resolves to the menu bar's light or dark ink, and AppKit re-runs it
+        // when that appearance changes.
+        let isTemplate = badge == .stopped
+        let image = NSImage(size: size, flipped: false) { _ in
+            let glassRect = NSRect(origin: .zero, size: glass.size)
+            glass.draw(in: glassRect)
+            (isTemplate ? NSColor.black : NSColor.labelColor).set()
+            glassRect.fill(using: .sourceAtop)
+
+            // Knock a gap around the badge so it reads as separate from the glass's foot.
+            NSGraphicsContext.current?.compositingOperation = .clear
+            NSBezierPath(ovalIn: badgeRect.insetBy(dx: -1.5, dy: -1.5)).fill()
+            NSGraphicsContext.current?.compositingOperation = .sourceOver
+
+            switch badge {
+            case .failure:
+                NSColor.systemRed.setFill()
+                NSBezierPath(ovalIn: badgeRect).fill()
+            case .busy:
+                NSColor.controlAccentColor.setFill()
+                NSBezierPath(ovalIn: badgeRect).fill()
+            case .stopped:
+                NSColor.black.setStroke()
+                let ring = NSBezierPath(ovalIn: badgeRect.insetBy(dx: 0.75, dy: 0.75))
+                ring.lineWidth = 1.5
+                ring.stroke()
+            }
+            return true
+        }
+        image.isTemplate = isTemplate
+        image.accessibilityDescription = "Barback"
+        return image
     }
 
     @objc private func handleClick(_ sender: NSStatusBarButton) {

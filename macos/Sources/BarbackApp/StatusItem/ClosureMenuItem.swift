@@ -1,8 +1,10 @@
 import AppKit
 
 /// `NSMenuItem` that carries its own action closure so menu-building can stay inline.
-final class ClosureMenuItem: NSMenuItem {
+final class ClosureMenuItem: NSMenuItem, NSMenuItemValidation {
     private let handler: () -> Void
+    /// For a check-marked item: its state, read whenever AppKit validates the menu.
+    var stateProvider: (() -> Bool)?
 
     init(title: String, handler: @escaping () -> Void) {
         self.handler = handler
@@ -20,5 +22,11 @@ final class ClosureMenuItem: NSMenuItem {
 
     @objc private func fire() {
         handler()
+    }
+
+    /// The item is its own target, so AppKit asks it right before the menu is shown.
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if let stateProvider { menuItem.state = stateProvider() ? .on : .off }
+        return true
     }
 }

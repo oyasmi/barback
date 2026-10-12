@@ -46,13 +46,5 @@ public struct SupervisorSnapshot: Equatable, Sendable {
     }
 
     public var runningCount: Int { programs.filter { $0.serviceState == .running }.count }
-    /// Services that are neither settled-running nor settled-stopped. Without this the
-    /// header's chips silently dropped them: three services with one in BACKOFF read as
-    /// 「1 运行中 · 1 已停止」 and the third was simply missing from the tally.
-    public var transitioningCount: Int {
-        programs.filter { $0.serviceState == .starting || $0.serviceState == .backoff || $0.serviceState == .stopping }.count
-    }
-    public var stoppedCount: Int { programs.filter { $0.program.kind == .service && ($0.serviceState == .stopped || $0.serviceState == .exited) }.count }
-    public var fatalCount: Int { programs.filter { $0.serviceState == .fatal }.count }
     public var oneshotRunningCount: Int { programs.filter { $0.oneshotState == .running }.count }
 }

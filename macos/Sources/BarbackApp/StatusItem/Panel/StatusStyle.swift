@@ -47,6 +47,12 @@ enum StatusStyle {
         var title: String
         var symbol: String
         var tint: Color
+        /// Whether the button keeps its tint at rest. Most primaries are the routine verb for
+        /// a healthy row — a column of red 停止 capsules down a panel of running services spent
+        /// the colour budget `isQuiet` exists to save — so they stay neutral until the row is
+        /// approached. Only the verbs that answer a problem (启动 on FATAL, 强制终止 on a stuck
+        /// stop) are coloured all the time.
+        var isUrgent = false
     }
 
     static func primaryAction(for snap: ProgramSnapshot) -> PrimaryAction {
@@ -68,11 +74,27 @@ enum StatusStyle {
         case .stopping:
             // TERM has been sent and we are waiting it out; the only useful escalation here is
             // SIGKILL, so that is what the row offers.
-            return PrimaryAction(kind: .forceKill, title: String(localized: "强制终止"), symbol: "bolt.fill", tint: failure)
+            return PrimaryAction(kind: .forceKill, title: String(localized: "强制终止"), symbol: "bolt.fill", tint: failure, isUrgent: true)
         case .running, .starting, .backoff:
             return PrimaryAction(kind: .stop, title: String(localized: "停止"), symbol: "stop.fill", tint: failure)
         case .stopped, .exited, .fatal:
-            return PrimaryAction(kind: .start, title: String(localized: "启动"), symbol: "play.fill", tint: running)
+            return PrimaryAction(kind: .start, title: String(localized: "启动"), symbol: "play.fill", tint: running,
+                                 isUrgent: state == .fatal)
+        }
+    }
+
+    /// A service that is failing or waiting on someone, which the panel lifts into a 需要处理
+    /// section above everything else instead of leaving it at its priority-order position.
+    ///
+    /// STARTING counts only while retrying: a crash loop alternates BACKOFF ↔ STARTING every
+    /// few seconds, and a row that hopped between sections on each attempt would be
+    /// impossible to click. A first, ordinary start is not a problem.
+    static func needsAttention(_ snap: ProgramSnapshot) -> Bool {
+        guard snap.program.kind == .service else { return false }
+        switch snap.serviceState ?? .stopped {
+        case .fatal, .backoff: return true
+        case .starting: return snap.retryCount > 0
+        default: return snap.needsRestart
         }
     }
 
@@ -171,8 +193,8 @@ enum StatusStyle {
     /// Elapsed time for a still-running program, in the compact `2min` / `1h3min` shape the
     /// detail line prefixes with `up ` / `run `. Deliberately English and unspaced: it sits
     /// between `PID 1234` and `CPU 3.2%`, where a "已运行 1 小时 3 分" reads as an intrusion.
-    /// Rounded to whole minutes — the figure is only refreshed when the panel opens, so a
-    /// live-looking seconds digit would be stale the moment it is drawn.
+    /// Rounded to whole minutes: the panel clock ticks once a second, but a seconds digit
+    /// churning on every row is motion nobody asked for.
     static func uptimeShort(_ interval: TimeInterval) -> String {
         let total = max(0, Int(interval))
         let days = total / 86_400
@@ -203,6 +225,17 @@ enum StatusStyle {
     static func cpu(_ percent: Double?) -> String {
         guard let percent else { return "—" }
         return percent < 10 ? String(format: "%.1f%%", percent) : String(format: "%.0f%%", percent)
+    }
+
+    /// How long ago, for the last-run / last-exit figures: "12 分钟前" scans faster than a
+    /// clock time someone has to subtract from now. Past a day the absolute timestamp is the
+    /// more useful answer.
+    static func relative(_ date: Date, now: Date) -> String {
+        let elapsed = max(0, Int(now.timeIntervalSince(date)))
+        if elapsed < 60 { return String(localized: "刚刚") }
+        if elapsed < 3600 { return String(localized: "\(elapsed / 60) 分钟前") }
+        if elapsed < 86_400 { return String(localized: "\(elapsed / 3600) 小时前") }
+        return timestamp(date)
     }
 
     /// Times from today read as a clock; older ones carry the date.

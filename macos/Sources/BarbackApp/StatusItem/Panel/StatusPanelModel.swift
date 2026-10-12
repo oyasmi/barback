@@ -21,6 +21,13 @@ final class StatusPanelModel: ObservableObject {
     @Published var selectedId: Int64?
     /// Transient confirmation line in the footer ("已复制 PID"), instead of a modal.
     @Published private(set) var toast: String?
+    /// The header chip someone clicked, narrowing the list to that state. Cleared on its own
+    /// once nothing matches any more — the chip it belongs to may have disappeared with its
+    /// count, and a filter with no visible way to turn it off is a trap.
+    @Published var filter: PanelFilter?
+    /// Newest warn/error event from the last day, for the footer: the supervisor restarts a
+    /// crashed service silently, and this is where someone finds out it happened at all.
+    @Published private(set) var recentProblem: EventRecord?
 
     let appState: AppState
     weak var windowController: WindowController?
@@ -41,12 +48,22 @@ final class StatusPanelModel: ObservableObject {
     /// Longest remaining time seen for the current backoff window, so the hairline has
     /// something to be a fraction of.
     private var backoffSpan: [Int64: TimeInterval] = [:]
+    /// Between `startTicking` and `stopTicking`; the event query only runs while it is set.
+    private var isOpen = false
 
     init(appState: AppState, windowController: WindowController?) {
         self.appState = appState
         self.windowController = windowController
+        // `$snapshot` fires before the property is assigned, so read the value it hands over.
         appState.$snapshot
-            .sink { [weak self] _ in self?.snapshotReceivedAt = Date() }
+            .sink { [weak self] snapshot in
+                guard let self else { return }
+                self.snapshotReceivedAt = Date()
+                if let filter = self.filter, !snapshot.programs.contains(where: filter.matches) {
+                    self.filter = nil
+                }
+                if self.isOpen { self.fetchRecentProblem() }
+            }
             .store(in: &cancellables)
     }
 
@@ -64,6 +81,8 @@ final class StatusPanelModel: ObservableObject {
     /// load. The follow-up sample supplies the other end of the window and then stops; the
     /// row shows "CPU —" in between.
     func startTicking() {
+        isOpen = true
+        fetchRecentProblem()
         tick()
         cpuSampleTask = Task { [weak self] in
             try? await Task.sleep(nanoseconds: Self.cpuWindowNanoseconds)
@@ -98,6 +117,7 @@ final class StatusPanelModel: ObservableObject {
     }
 
     func stopTicking() {
+        isOpen = false
         cpuSampleTask?.cancel()
         cpuSampleTask = nil
         clockTask?.cancel()
@@ -124,6 +144,41 @@ final class StatusPanelModel: ObservableObject {
         snap.pid.flatMap { samples[$0] }
     }
 
+    /// Footer line when nothing more pressing is showing: how many processes are live and
+    /// what they cost together. CPU drops out until the second sample lands (see `cpu`).
+    var resourceSummary: String? {
+        let active = appState.snapshot.programs.filter(\.isActive)
+        guard !active.isEmpty else { return nil }
+        var parts = [String(localized: "\(active.count) 个进程运行中")]
+        let sampled = active.compactMap { sample(for: $0) }
+        let cpus = sampled.compactMap(\.cpuPercent)
+        if !cpus.isEmpty { parts.append("CPU \(StatusStyle.cpu(cpus.reduce(0, +)))") }
+        if !sampled.isEmpty { parts.append(StatusStyle.memory(sampled.reduce(0) { $0 + $1.rssBytes })) }
+        return parts.joined(separator: " · ")
+    }
+
+    /// One indexed read of the newest events, on open and whenever the snapshot moves while
+    /// open — no polling (design.md §1).
+    private func fetchRecentProblem() {
+        let cutoff = Date().addingTimeInterval(-86_400)
+        appState.supervisor.fetchEvents(limit: 50, programId: nil, level: nil) { events in
+            let problem = events.first { $0.level != .info && $0.ts >= cutoff }
+            Task { @MainActor in
+                guard self.isOpen else { return }
+                self.recentProblem = problem
+            }
+        }
+    }
+
+    /// "nslocal 进程已退出 · 12 分钟前" — the program, what happened, how long ago.
+    func describe(_ event: EventRecord) -> String {
+        var head = event.type.displayText
+        if let id = event.programId, let snap = appState.program(id: id) {
+            head = snap.program.name + " " + head
+        }
+        return head + " · " + StatusStyle.relative(event.ts, now: now)
+    }
+
     /// Backoff seconds left, advanced past the snapshot we were handed.
     func backoffRemaining(for snap: ProgramSnapshot) -> TimeInterval? {
         guard let published = snap.backoffRemaining else { return nil }
@@ -143,10 +198,21 @@ final class StatusPanelModel: ObservableObject {
 
     var isSearchable: Bool { appState.snapshot.programs.count > 8 }
 
+    /// Chip counts come from the same predicate the filter applies, so a chip can never
+    /// promise rows the filter then doesn't show.
+    func count(_ filter: PanelFilter) -> Int {
+        appState.snapshot.programs.filter(filter.matches).count
+    }
+
+    func toggleFilter(_ filter: PanelFilter) {
+        self.filter = self.filter == filter ? nil : filter
+    }
+
     func visiblePrograms(kind: ProgramKind) -> [ProgramSnapshot] {
         let query = searchText.trimmingCharacters(in: .whitespaces)
         return appState.snapshot.programs.filter { snap in
             guard snap.program.kind == kind else { return false }
+            if let filter, !filter.matches(snap) { return false }
             guard !query.isEmpty else { return true }
             return snap.program.name.localizedCaseInsensitiveContains(query)
                 || snap.program.command.localizedCaseInsensitiveContains(query)
@@ -218,6 +284,11 @@ final class StatusPanelModel: ObservableObject {
 
     func startAll() { appState.supervisor.startAll() }
 
+    /// The footer's one visible bulk button: 全部启动 while anything is left to start,
+    /// otherwise 全部停止. The other two live in the chevron menu beside it — they are rare,
+    /// and both already stop to confirm.
+    var prefersStartAll: Bool { canStartAll || !canStopAll }
+
     /// String(localized: "全部停止") / String(localized: "全部重启") sit one click away in a transient popover, and a stray click
     /// used to take every service down without a word (only in-flight one-shots were asked
     /// about, ex-F04). Both now confirm first and name what they touch, matching the quit flow
@@ -273,10 +344,13 @@ final class StatusPanelModel: ObservableObject {
 
     // MARK: - Keyboard (BAR-10)
 
-    /// The rows in the order the panel draws them — services by group, then one-shots — so
-    /// ↑/↓ walks the list the eye sees rather than the order the dictionary happened to give.
+    /// The rows in the order the panel draws them — 需要处理, services by group, then
+    /// one-shots — so ↑/↓ walks the list the eye sees rather than the order the dictionary
+    /// happened to give.
     var navigableIds: [Int64] {
-        serviceGroups.flatMap { $0.items.map(\.id) } + visiblePrograms(kind: .oneshot).map(\.id)
+        attentionPrograms.map(\.id)
+            + serviceGroups.flatMap { $0.items.map(\.id) }
+            + visiblePrograms(kind: .oneshot).map(\.id)
     }
 
     /// Handles a key the panel claims, and reports whether it did. Returning `false` lets the
@@ -303,7 +377,27 @@ final class StatusPanelModel: ObservableObject {
             }
             return true
         case 0x1B: // esc
-            close()
+            // Peel back one layer at a time, the way a search field's Esc does everywhere else.
+            if !searchText.isEmpty {
+                searchText = ""
+            } else if filter != nil {
+                filter = nil
+            } else {
+                close()
+            }
+            return true
+        default:
+            break
+        }
+        // ⌘L / ⌘R reach the two secondary actions people use most without opening the drawer.
+        guard event.modifierFlags.contains(.command), let snap = selectedProgram else { return false }
+        switch event.charactersIgnoringModifiers?.lowercased() {
+        case "l":
+            openLog(snap)
+            return true
+        case "r":
+            guard snap.program.kind == .service, snap.serviceState?.isActive == true else { return false }
+            restart(snap)
             return true
         default:
             return false
@@ -334,11 +428,19 @@ final class StatusPanelModel: ObservableObject {
         let items: [ProgramSnapshot]
     }
 
+    /// Failing or waiting services, lifted above everything else so a FATAL fifteen rows down
+    /// is not below the fold (StatusStyle.needsAttention).
+    var attentionPrograms: [ProgramSnapshot] {
+        visiblePrograms(kind: .service).filter(StatusStyle.needsAttention)
+    }
+
     /// Services are only broken out by group once more than one group is actually in use —
     /// otherwise the headers are pure noise. Lives here rather than in the view because
-    /// keyboard traversal has to walk the same order the view draws.
+    /// keyboard traversal has to walk the same order the view draws. Rows shown under
+    /// 需要处理 are left out, so nothing appears twice.
     var serviceGroups: [ServiceGroup] {
-        let services = visiblePrograms(kind: .service)
+        let services = visiblePrograms(kind: .service).filter { !StatusStyle.needsAttention($0) }
+        guard !services.isEmpty else { return [] }
         var order: [String] = []
         var buckets: [String: [ProgramSnapshot]] = [:]
         for snap in services {
@@ -376,6 +478,25 @@ final class StatusPanelModel: ObservableObject {
         windowController?.showHistoryWindow(programId: snap.id)
     }
 
+    func openEvents() {
+        close()
+        windowController?.showEventsWindow()
+    }
+
+    /// Pops the right-click menu up from the panel's ⋯ button. Each action opens a window or
+    /// a modal, so the panel gets out of the way first; the login-item toggle doesn't, and
+    /// leaves it open.
+    func showAppMenu() {
+        let entries = AppMenuBuilder.entries(windowController: windowController).map { entry -> AppMenuEntry in
+            guard case let .action(title, key, handler) = entry else { return entry }
+            return .action(title: title, key: key, handler: { [weak self] in
+                self?.close()
+                handler()
+            })
+        }
+        AppMenuBuilder.menu(from: entries).popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+    }
+
     // MARK: - Clipboard
 
     func copy(_ text: String, label: String) {
@@ -396,5 +517,32 @@ final class StatusPanelModel: ObservableObject {
 
     func close() {
         onRequestClose?()
+    }
+}
+
+/// What a header chip narrows the list to. The cases mirror the chips one for one.
+enum PanelFilter: Hashable {
+    case running
+    case stopped
+    case transitioning
+    case fatal
+    case oneshotRunning
+
+    func matches(_ snap: ProgramSnapshot) -> Bool {
+        switch self {
+        case .running:
+            return snap.serviceState == .running
+        case .stopped:
+            return snap.serviceState == .stopped || snap.serviceState == .exited
+        // Services that are neither settled-running nor settled-stopped. Without this the
+        // chips silently dropped them: three services with one in BACKOFF read as
+        // 「1 运行中 · 1 已停止」 and the third was simply missing from the tally.
+        case .transitioning:
+            return snap.serviceState == .starting || snap.serviceState == .backoff || snap.serviceState == .stopping
+        case .fatal:
+            return snap.serviceState == .fatal
+        case .oneshotRunning:
+            return snap.oneshotState == .running
+        }
     }
 }

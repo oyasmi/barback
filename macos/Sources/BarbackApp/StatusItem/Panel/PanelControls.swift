@@ -5,12 +5,16 @@ import SwiftUI
 /// metrics leave no room for four actions plus a status line on one row.
 
 /// The row's primary verb — 启动 / 停止 / 运行 / 中止. Tinted by consequence, so the
-/// destructive direction never looks like the constructive one.
+/// destructive direction never looks like the constructive one — but only once it is
+/// `isEmphasized` (the row is approached, or the action is urgent). At rest it is a neutral
+/// capsule, so a healthy panel doesn't wear a red 停止 on every line (StatusStyle.PrimaryAction).
 struct PillButton: View {
     let title: String
     let systemImage: String
     var tint: Color = .accentColor
     var isEnabled = true
+    var isEmphasized = true
+    var help = ""
     let action: () -> Void
 
     @State private var isHovering = false
@@ -23,26 +27,34 @@ struct PillButton: View {
                 Text(title)
                     .font(.system(size: 11, weight: .semibold))
             }
-            .foregroundStyle(isEnabled ? tint : Color.secondary)
+            .foregroundStyle(ink)
             .frame(height: 21)
             .padding(.horizontal, 9)
-            .background(
-                Capsule().fill((isEnabled ? tint : Color.secondary).opacity(fillOpacity))
-            )
-            .overlay(
-                Capsule().stroke((isEnabled ? tint : Color.secondary).opacity(isEnabled ? 0.22 : 0.12), lineWidth: 1)
-            )
+            .background(Capsule().fill(ink.opacity(fillOpacity)))
+            .overlay(Capsule().stroke(ink.opacity(strokeOpacity), lineWidth: 1))
             .contentShape(Capsule())
         }
         .buttonStyle(.plain)
         .disabled(!isEnabled)
+        .help(help)
         .onHover { isHovering = $0 }
         .animation(.easeOut(duration: 0.14), value: isHovering)
+        .animation(.easeOut(duration: 0.14), value: isEmphasized)
     }
+
+    private var isTinted: Bool { isEnabled && (isEmphasized || isHovering) }
+
+    private var ink: Color { isTinted ? tint : Color.secondary }
 
     private var fillOpacity: Double {
         guard isEnabled else { return 0.07 }
+        guard isTinted else { return 0.08 }
         return isHovering ? 0.26 : 0.14
+    }
+
+    private var strokeOpacity: Double {
+        guard isEnabled else { return 0.12 }
+        return isTinted ? 0.22 : 0.16
     }
 }
 
@@ -120,31 +132,83 @@ struct DrawerButton: View {
 }
 
 /// One count in the header summary. Dot + number + word: readable without colour.
+///
+/// Also a filter toggle: clicking 「⚠ 1 失败」 narrows the list to that one row, which is the
+/// question someone opening the panel after a notification is actually asking. A zero count
+/// has nothing to narrow to and doesn't respond.
 struct SummaryChip: View {
     let count: Int
     let label: String
     let color: Color
     let symbol: String
+    var showsLabel = true
+    var isSelected = false
+    /// Another chip's filter is on; this one steps back so the selected one reads as selected.
+    var isDimmed = false
+    let action: () -> Void
+
+    @State private var isHovering = false
 
     var body: some View {
-        HStack(spacing: 4) {
-            Image(systemName: symbol)
-                .font(.system(size: 9, weight: .bold))
-                .foregroundStyle(color)
-            Text("\(count)")
-                .font(.system(size: 12, weight: .semibold))
-                .monospacedDigit()
-            Text(label)
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
+        Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: symbol)
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(color)
+                Text("\(count)")
+                    .font(.system(size: 12, weight: .semibold))
+                    .monospacedDigit()
+                if showsLabel {
+                    Text(label)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(Capsule().fill(color.opacity(fillOpacity)))
+            .overlay(Capsule().stroke(color.opacity(isSelected ? 0.6 : 0), lineWidth: 1))
+            .opacity(isDimmed ? 0.55 : 1)
+            .contentShape(Capsule())
         }
-        .padding(.horizontal, 7)
-        .padding(.vertical, 3)
-        .background(
-            Capsule().fill(color.opacity(0.1))
-        )
+        .buttonStyle(.plain)
+        .disabled(count == 0)
+        .help(isSelected ? String(localized: "\(label) · 点按显示全部") : String(localized: "\(label) · 点按只看这一类"))
+        .onHover { isHovering = $0 }
+        .animation(.easeOut(duration: 0.14), value: isHovering)
         .accessibilityElement(children: .combine)
         .accessibilityLabel("\(count) 项\(label)")
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : [.isButton])
+    }
+
+    private var fillOpacity: Double {
+        if isSelected { return 0.22 }
+        return isHovering && count > 0 ? 0.17 : 0.1
+    }
+}
+
+/// A glyph that opens a menu — the footer's chevron of less common bulk actions.
+///
+/// On macOS a SwiftUI `Menu` is drawn by an AppKit pop-up button, which flattens any custom
+/// label down to an image and a title; so this keeps to a bare symbol, sized to sit on the
+/// same 22 × 21 grid as `GlyphButton`.
+struct MenuGlyph<Content: View>: View {
+    let systemImage: String
+    let help: String
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        Menu(content: content) {
+            Image(systemName: systemImage)
+                .font(.system(size: 11, weight: .semibold))
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .frame(width: 22, height: 21)
+        .foregroundStyle(.secondary)
+        .help(help)
+        .accessibilityLabel(help)
     }
 }
 

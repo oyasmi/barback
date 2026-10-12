@@ -11,17 +11,23 @@
 "%.1f 秒" = "%.1f s";
 "%.1f 秒后" = "in %.1f s";
 "%@ %lld/%lld · %lld秒" = "%1$@ %2$lld/%3$lld · %4$llds";
+"%@ (⌘↩)" = "%@ (⌘↩)";
+"%@ · 点按只看这一类" = "%@ · click to show only these";
+"%@ · 点按显示全部" = "%@ · click to show all";
 "%@ 已进入 FATAL 状态，重试已停止。" = "%@ entered the FATAL state; retries have stopped.";
 "%@ 意外退出，已自动重启。" = "%@ exited unexpectedly and was restarted.";
 "%@ 未在期限内退出，已强制终止。" = "%@ did not exit in time and was force quit.";
 "%@，%lld 秒后强杀" = "%1$@, kill after %2$lld s";
+"%lld 个进程运行中" = "%lld processes running";
 "%lld 分" = "%lld min";
 "%lld 分 %lld 秒" = "%lld min %lld s";
 "%lld 分钟" = "%lld min";
+"%lld 分钟前" = "%lld min ago";
 "%lld 天" = "%lld d";
 "%lld 天 %lld 小时" = "%lld d %lld h";
 "%lld 小时" = "%lld h";
 "%lld 小时 %lld 分" = "%lld h %lld min";
+"%lld 小时前" = "%lld h ago";
 "%lld 次" = "%lld";
 "%lld 秒" = "%lld s";
 "%lld 秒后重试" = "Retrying in %llds";
@@ -36,7 +42,6 @@
 "kind.service" = "Service";
 "posix_spawn 失败：%@" = "posix_spawn failed: %@";
 "stderr 路径" = "stderr path";
-"↑↓ 选择 · ↩ 展开 · ⌘↩ 执行 · 右键打开应用菜单" = "↑↓ select · ↩ expand · ⌘↩ run · right-click for the app menu";
 "「%@」有未保存的更改" = "“%@” has unsaved changes";
 "「%@」有未保存的更改。切换后未保存的内容会丢失。" = "“%@” has unsaved changes. Switching discards them.";
 "一次性命令" = "One-shot commands";
@@ -81,9 +86,11 @@
 "全选" = "Select All";
 "全部" = "All";
 "全部停止" = "Stop All";
+"全部停止…" = "Stop All…";
 "全部停止？" = "Stop all?";
 "全部启动" = "Start All";
 "全部重启" = "Restart All";
+"全部重启…" = "Restart All…";
 "全部重启？" = "Restart all?";
 "共 %@ 项" = "%@ in total";
 "共 %lld 次" = "%lld runs";
@@ -94,6 +101,7 @@
 "分组" = "Group";
 "分组 %@" = "Group %@";
 "分组方式" = "Group by";
+"刚刚" = "just now";
 "删除" = "Delete";
 "删除…" = "Delete…";
 "删除「%@」？" = "Delete “%@”?";
@@ -155,6 +163,7 @@
 "尚未保存" = "Not saved yet";
 "尚未执行" = "Never run";
 "尚未执行过" = "Never run";
+"展开详情 (↩)" = "Show details (↩)";
 "展开详情" = "Show details";
 "崩溃后接管" = "Adopted after a crash";
 "工作目录" = "Working directory";
@@ -191,6 +200,7 @@
 "成功" = "Succeeded";
 "成功退出码" = "Success exit codes";
 "手动" = "Manual";
+"打开事件日志" = "Open event log";
 "打开日志目录" = "Open Logs Folder";
 "打开配置窗口" = "Open Configuration";
 "打开配置窗口 (⌘,)" = "Open configuration (⌘,)";
@@ -215,6 +225,7 @@
 "搜索程序" = "Search programs";
 "搜索程序…" = "Search programs…";
 "撤销" = "Undo";
+"收起详情 (↩)" = "Hide details (↩)";
 "收起详情" = "Hide details";
 "改动 shell 配置（如 PATH）后重新抓取，新启动的程序才会用上新的环境变量。" = "After changing your shell configuration (such as PATH), capture again so newly started programs get the new environment.";
 "放弃更改" = "Discard Changes";
@@ -243,6 +254,8 @@
 "时间" = "Time";
 "昨天 " = "Yesterday ";
 "暂不支持自定义 umask" = "A custom umask is not supported yet";
+"更多" = "More";
+"更多批量操作" = "More bulk actions";
 "有 %lld 项需要修正" = "%lld fields need fixing";
 "有一次性命令正在执行" = "One-shot commands are running";
 "有未保存的更改" = "Unsaved changes";
@@ -263,8 +276,10 @@
 "未闭合的引号" = "Unterminated quote";
 "本次不自动启动" = "Don’t Autostart This Time";
 "条，超出后连同输出一并清理" = "runs; older ones are removed together with their output";
+"查看日志 (⌘L)" = "View log (⌘L)";
 "查看日志" = "View log";
 "查看日志…" = "View Log…";
+"查看本次输出 (⌘L)" = "View this run’s output (⌘L)";
 "查看本次输出" = "View this run’s output";
 "查看输出" = "View Output";
 "次后停止自动重试" = "restarts before automatic retries stop";
@@ -280,6 +295,7 @@
 "每次执行的输出单独保存，可从右上角的「日志」或「历史」查看。" = "Each run’s output is saved separately; open it from Log or History at the top right.";
 "每行一个 KEY=VALUE，覆盖登录环境中的同名变量。变量名前加 * 标记敏感值，导出时打码。" = "One KEY=VALUE per line; overrides variables of the same name in the login environment. Prefix a name with * to mark the value sensitive; it is masked in exports.";
 "没有匹配「%@」的程序" = "No programs match “%@”";
+"没有符合筛选的程序" = "No programs match this filter";
 "活动中" = "Active";
 "添加一个常驻服务，或一条按需执行的命令。" = "Add a long-running service, or a command you run on demand.";
 "添加程序" = "Add program";
@@ -330,7 +346,7 @@
 "耗时 %@" = "Took %@";
 "自动启动" = "Autostart";
 "自动重启" = "Auto-restart";
-"自动重试已停止，需要人工处理" = "Automatic retries stopped; needs your attention";
+"自动重试已停止" = "Automatic retries stopped";
 "自定义 %lld 项" = "%lld customized";
 "被信号 %@ 终止" = "Terminated by signal %@";
 "解析" = "Parse";
@@ -381,6 +397,7 @@
 "配置已修改" = "Configuration changed";
 "配置已变更，重启后生效" = "Configuration changed; takes effect after a restart";
 "重做" = "Redo";
+"重启 (⌘R)" = "Restart (⌘R)";
 "重启" = "Restart";
 "重启时" = "On restart";
 "重启时轮转，保留 %lld 份" = "rotate on restart, keep %lld";
@@ -394,6 +411,7 @@
 "重跑" = "Run Again";
 "随 Barback 启动" = "Start with Barback";
 "需确认" = "Ask first";
+"需要处理" = "Needs Attention";
 "非预期退出" = "On unexpected exit";
 "非预期退出并自动重启" = "Unexpected exits with automatic restart";
 "面板密度" = "Panel density";
