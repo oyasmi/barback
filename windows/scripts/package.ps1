@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
  [ValidateSet('x64','arm64')][string]$Architecture='x64',
- [string]$Version='0.3.2.0',
+ [string]$Version='0.3.5.0',
  [switch]$SelfContained,
  [string]$Publisher='CN=Oyasmi',
  [string]$CertificateThumbprint,

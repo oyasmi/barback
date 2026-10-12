@@ -38,7 +38,7 @@ cd windows
 ./scripts/package-portable.ps1 -Architecture x64 -FrameworkDependent
 ```
 
-生成 `dist/Barback-0.3.2.0-<架构>-portable.zip`，内含 Release 自包含构建及 .NET / Windows App SDK 运行时。完整解压后以普通用户双击 `Barback.App.exe`，无需安装 MSIX 或另装 .NET。必须保留同目录的 `Barback.ConsoleHost.exe`、DLL 和 `Assets`，不能只复制主 EXE；当前交付的是免安装目录版，不是单文件 EXE。构建脚本在 `artifacts/portable/` 保留对应的未压缩目录。
+生成 `dist/Barback-0.3.5.0-<架构>-portable.zip`，内含 Release 自包含构建及 .NET / Windows App SDK 运行时。完整解压后以普通用户双击 `Barback.App.exe`，无需安装 MSIX 或另装 .NET。必须保留同目录的 `Barback.ConsoleHost.exe`、DLL 和 `Assets`，不能只复制主 EXE；当前交付的是免安装目录版，不是单文件 EXE。构建脚本在 `artifacts/portable/` 保留对应的未压缩目录。
 
 portable 的数据仍使用 `%LOCALAPPDATA%\Barback\Dev`，**与非打包开发版共享同一数据目录和单实例互斥名**（两者不能同时运行，配置互相可见），不会随程序目录移动。是否改用独立的 `Portable` 目录（需要首次启动从 `Dev` 复制以免老用户“丢数据”）待维护者决定。跨机器通过设置导出/导入配置，DPAPI 敏感值需重新填写。内置“登录 Windows 时启动”目前要求 MSIX 安装；更新前正常退出并停止任务，再替换程序目录。此版本仍为开发候选，实机验收状态见开发验证记录。
 
