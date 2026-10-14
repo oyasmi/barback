@@ -324,6 +324,73 @@ public final class Store {
         return try readRuns(stmt)
     }
 
+    /// Apply outcome filters before LIMIT; rare results must remain discoverable past page one.
+    public func fetchHistory(programId: Int64?, outcome: RunOutcome?, limit: Int = 500) throws -> RunHistoryPage {
+        var predicate = "1 = 1"
+        if programId != nil { predicate += " AND program_id = ?" }
+        if outcome != nil { predicate += " AND outcome = ?" }
+        let countStmt = try db.prepare("SELECT COUNT(*) FROM run WHERE \(predicate)")
+        Self.bindRunFilter(countStmt, programId: programId, outcome: outcome)
+        _ = try countStmt.step()
+        let total = Int(countStmt.columnInt64(0))
+        let stmt = try db.prepare("SELECT id, program_id, trigger, pid, started_at, ended_at, exit_code, term_signal, outcome, log_path FROM run WHERE \(predicate) ORDER BY started_at DESC, id DESC LIMIT ?")
+        Self.bindRunFilter(stmt, programId: programId, outcome: outcome)
+        stmt.bind(Int32(1 + (programId == nil ? 0 : 1) + (outcome == nil ? 0 : 1)), max(1, limit))
+        return RunHistoryPage(runs: try readRuns(stmt), totalCount: total)
+    }
+
+    /// Capture identities as well as IDs: SQLite may reuse an ID after history is pruned.
+    public func completedRuns(programId: Int64?, outcome: RunOutcome?) throws -> [RunRecord] {
+        var predicate = "ended_at IS NOT NULL"
+        if programId != nil { predicate += " AND program_id = ?" }
+        if outcome != nil { predicate += " AND outcome = ?" }
+        let stmt = try db.prepare("SELECT id, program_id, trigger, pid, started_at, ended_at, exit_code, term_signal, outcome, log_path FROM run WHERE \(predicate) ORDER BY id")
+        Self.bindRunFilter(stmt, programId: programId, outcome: outcome)
+        return try readRuns(stmt)
+    }
+
+    /// Delete only confirmed records, in bounded chunks and one transaction. Reused IDs,
+    /// newly inserted rows and runs completed during confirmation are all excluded.
+    public func deleteRuns(records: [RunRecord]) throws -> (count: Int, paths: [String]) {
+        let unique = Dictionary(records.filter { $0.endedAt != nil }.map { ($0.id, $0) },
+                                uniquingKeysWith: { first, _ in first }).values.sorted { $0.id < $1.id }
+        guard !unique.isEmpty else { return (0, []) }
+        try db.exec("BEGIN IMMEDIATE")
+        do {
+            var count = 0
+            var paths: [String] = []
+            for start in stride(from: 0, to: unique.count, by: 100) {
+                let chunk = Array(unique[start..<min(start + 100, unique.count)])
+                let matches = Array(repeating: "(id = ? AND program_id = ? AND started_at = ? AND ended_at = ?)", count: chunk.count).joined(separator: " OR ")
+                let predicate = "ended_at IS NOT NULL AND (\(matches))"
+                let select = try db.prepare("SELECT log_path FROM run WHERE \(predicate)")
+                Self.bindRunIdentities(select, records: chunk)
+                while try select.step() {
+                    count += 1
+                    if let path = select.columnStringOptional(0) { paths.append(path) }
+                }
+                let delete = try db.prepare("DELETE FROM run WHERE \(predicate)")
+                Self.bindRunIdentities(delete, records: chunk)
+                try delete.run()
+            }
+            try db.exec("COMMIT")
+            return (count, paths)
+        } catch {
+            try? db.exec("ROLLBACK")
+            throw error
+        }
+    }
+
+    private static func bindRunIdentities(_ stmt: SQLiteStatement, records: [RunRecord]) {
+        for (offset, run) in records.enumerated() {
+            let first = Int32(offset * 4 + 1)
+            stmt.bind(first, run.id)
+            stmt.bind(first + 1, run.programId)
+            stmt.bind(first + 2, run.startedAt.timeIntervalSince1970)
+            stmt.bindOptional(first + 3, run.endedAt?.timeIntervalSince1970)
+        }
+    }
+
     private func readRuns(_ stmt: SQLiteStatement) throws -> [RunRecord] {
         var results: [RunRecord] = []
         while try stmt.step() {

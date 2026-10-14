@@ -5,7 +5,7 @@ import BarbackCore
 /// Owns the status item and its two click targets: a SwiftUI panel on the left, the
 /// app-level `NSMenu` on the right (design.md §6.2).
 ///
-/// Both are built only when opened and dropped when closed — the panel's per-second
+    /// Both are built only when opened and dropped when closed — the panel's periodic
 /// sampling therefore exists exactly while it is on screen, which is what keeps idle cost
 /// at zero (design.md §6.2 常态零开销).
 @MainActor
@@ -51,7 +51,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
             /// FATAL, or a one-shot whose last run failed or timed out. Red, and not a
             /// template, so it survives the menu bar's monochrome.
             case failure
-            /// A one-shot is executing. Accent colour.
+            /// A one-shot is executing. Blue, matching the panel's execution state.
             case busy
             /// A service meant to be up (enabled + autostart) is stopped or has exited.
             /// Monochrome ring: worth noticing, not alarming.
@@ -66,9 +66,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
         let programs = snapshot.programs
         let failing = programs.contains { snap in
             if snap.serviceState == .fatal { return true }
-            guard snap.program.kind == .oneshot, snap.oneshotState != .running else { return false }
-            let outcome = snap.lastRun?.outcome
-            return outcome == .failed || outcome == .timeout
+            return snap.hasOneshotProblem
         }
         let badge: IconState.Badge?
         if failing {
@@ -125,7 +123,7 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
                 NSColor.systemRed.setFill()
                 NSBezierPath(ovalIn: badgeRect).fill()
             case .busy:
-                NSColor.controlAccentColor.setFill()
+                NSColor.systemBlue.setFill()
                 NSBezierPath(ovalIn: badgeRect).fill()
             case .stopped:
                 NSColor.black.setStroke()
@@ -193,7 +191,11 @@ final class StatusItemController: NSObject, NSPopoverDelegate {
             let consumed = MainActor.assumeIsolated { () -> Bool in
                 // Scoped to the open panel: a monitor left armed would swallow arrow keys in
                 // the config window too.
-                guard let self, self.popover?.isShown == true, let model = self.panelModel else { return false }
+                guard let self, self.popover?.isShown == true,
+                      event.window === self.popover?.contentViewController?.view.window,
+                      let model = self.panelModel else { return false }
+                // IME candidate navigation and confirmation belong to the field editor.
+                if let editor = event.window?.firstResponder as? NSTextView, editor.hasMarkedText() { return false }
                 return model.handleKeyDown(event)
             }
             return consumed ? nil : event

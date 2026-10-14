@@ -1,4 +1,5 @@
 import Foundation
+import Combine
 import BarbackCore
 #if canImport(Darwin)
 import Darwin
@@ -12,6 +13,9 @@ final class LogTailModel: ObservableObject {
     /// Bumped whenever the displayed text changes; views compare it with what they last drew.
     @Published private(set) var revision = 0
     @Published var sizeDescription: String = ""
+    @Published private(set) var fileAvailable = false
+    @Published var failure: String?
+    private(set) var isTailTruncated = false
 
     /// Completed lines, already cleaned for display (`LogLineAssembler`).
     private var lines: [String] = []
@@ -26,8 +30,13 @@ final class LogTailModel: ObservableObject {
     private var edits: [(revision: Int, from: Int?)] = []
 
     private var source: DispatchSourceFileSystemObject?
+    private var directorySource: DispatchSourceFileSystemObject?
+    private var watchedDirectory: String?
+    private var watchedDirectoryInode: UInt64?
+    private var isFollowing = false
     private var lastInode: UInt64?
     private var pendingFSWork: DispatchWorkItem?
+    private var watchGeneration = UUID()
 
     static let maxBytes: Int64 = 2 * 1024 * 1024
     static let maxLines = 5000
@@ -41,19 +50,33 @@ final class LogTailModel: ObservableObject {
     }
 
     func start() {
-        loadTail()
         resumeFollowing()
     }
 
     func stop() {
+        isFollowing = false
+        watchGeneration = UUID()
         pendingFSWork?.cancel()
         pendingFSWork = nil
         source?.cancel()
         source = nil
+        directorySource?.cancel()
+        directorySource = nil
+        watchedDirectory = nil
+        watchedDirectoryInode = nil
     }
 
     func resumeFollowing() {
-        guard source == nil else { return }
+        stop()
+        isFollowing = true
+        watchDirectory()
+        watchFile()
+        // Reload immediately, also catching same-length rewrites while updates were paused.
+        loadTail()
+    }
+
+    private func watchFile() {
+        guard isFollowing, source == nil else { return }
         let newFD = open(path, O_EVTONLY)
         guard newFD >= 0 else { return }
         let src = DispatchSource.makeFileSystemObjectSource(fileDescriptor: newFD, eventMask: [.write, .extend, .rename, .delete], queue: .main)
@@ -74,19 +97,63 @@ final class LogTailModel: ObservableObject {
     }
 
     func pauseFollowing() {
-        source?.cancel()
-        source = nil
+        stop()
+    }
+
+    /// Watch the nearest existing ancestor too, so creation and rename-based rotation can
+    /// replace a missing/dead file descriptor without polling while a window is open.
+    private func watchDirectory() {
+        guard isFollowing else { return }
+        var directory = (path as NSString).deletingLastPathComponent
+        var isDirectory: ObjCBool = false
+        while !directory.isEmpty {
+            if FileManager.default.fileExists(atPath: directory, isDirectory: &isDirectory), isDirectory.boolValue { break }
+            let parent = (directory as NSString).deletingLastPathComponent
+            if parent == directory { return }
+            directory = parent
+        }
+        let inode = (try? FileManager.default.attributesOfItem(atPath: directory)[.systemFileNumber]) as? UInt64
+        guard !directory.isEmpty, directory != watchedDirectory || inode != watchedDirectoryInode else { return }
+        directorySource?.cancel()
+        directorySource = nil
+        watchedDirectory = nil
+        let fd = open(directory, O_EVTONLY)
+        guard fd >= 0 else { return }
+        let watcher = DispatchSource.makeFileSystemObjectSource(fileDescriptor: fd, eventMask: [.write, .rename, .delete], queue: .main)
+        watcher.setEventHandler { [weak self] in self?.handleFSEvent() }
+        watcher.setCancelHandler { close(fd) }
+        watchedDirectory = directory
+        watchedDirectoryInode = inode
+        directorySource = watcher
+        watcher.resume()
     }
 
     /// Truncates the file on disk. Irreversible — callers confirm with the user first.
     func clearFile() {
-        guard let handle = FileHandle(forWritingAtPath: path) else { return }
-        handle.truncateFile(atOffset: 0)
-        try? handle.close()
-        loadTail()
+        do {
+            let handle = try FileHandle(forWritingTo: URL(fileURLWithPath: path))
+            defer { try? handle.close() }
+            try handle.truncate(atOffset: 0)
+            loadTail()
+        } catch {
+            failure = error.localizedDescription
+        }
     }
 
     var fileName: String { (path as NSString).lastPathComponent }
+
+    var loadedRangeDescription: String {
+        let count = lines.count + (partial.isEmpty || !fileAvailable ? 0 : 1)
+        return isTailTruncated
+            ? String(localized: "仅显示末尾 \(count) 行，较早内容请外部打开")
+            : String(localized: "已加载 \(count) 行")
+    }
+
+    func matchingLineCount(_ query: String) -> Int {
+        guard fileAvailable else { return 0 }
+        return lines.filter { $0.localizedCaseInsensitiveContains(query) }.count
+            + (!partial.isEmpty && partial.localizedCaseInsensitiveContains(query) ? 1 : 0)
+    }
 
     /// The whole display text.
     var text: String { committed + partial }
@@ -129,26 +196,37 @@ final class LogTailModel: ObservableObject {
     /// faster than once every 100ms kept pushing the deadline back and the view could go
     /// arbitrarily long without a single refresh (R13).
     private func handleFSEvent() {
-        guard pendingFSWork == nil else { return }
+        guard isFollowing, pendingFSWork == nil else { return }
+        let generation = watchGeneration
         let work = DispatchWorkItem { [weak self] in
-            self?.pendingFSWork = nil
-            self?.processFSEvent()
+            guard let self, self.watchGeneration == generation else { return }
+            self.pendingFSWork = nil
+            self.processFSEvent()
         }
         pendingFSWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: work)
     }
 
     private func processFSEvent() {
+        guard isFollowing else { return }
+        watchDirectory()
         guard let attrs = try? FileManager.default.attributesOfItem(atPath: path),
               let inode = attrs[.systemFileNumber] as? UInt64 else {
+            source?.cancel()
+            source = nil
+            lastInode = nil
             loadTail()
             return
         }
-        if let lastInode, lastInode != inode {
+        if lastInode != inode {
             // Rotated (or recreated); reload from scratch.
+            source?.cancel()
+            source = nil
+            watchFile()
             loadTail()
             return
         }
+        watchFile()
         appendNewData()
     }
 
@@ -157,12 +235,16 @@ final class LogTailModel: ObservableObject {
     private func loadTail() {
         assembler = LogLineAssembler()
         guard let handle = FileHandle(forReadingAtPath: path) else {
+            lastInode = nil
+            fileAvailable = false
+            isTailTruncated = false
             replaceAll(lines: [], partial: String(localized: "(日志文件尚不存在)"))
             readOffset = 0
             sizeDescription = "0 B"
             return
         }
         defer { try? handle.close() }
+        fileAvailable = true
         let size = (try? handle.seekToEnd()) ?? 0
         let start = size > UInt64(Self.maxBytes) ? size - UInt64(Self.maxBytes) : 0
         try? handle.seek(toOffset: start)
@@ -178,6 +260,7 @@ final class LogTailModel: ObservableObject {
             }
         }
         var loaded = assembler.append(data)
+        isTailTruncated = start > 0 || loaded.count > Self.maxLines
         if loaded.count > Self.maxLines {
             loaded = Array(loaded.suffix(Self.maxLines))
         }
@@ -231,6 +314,7 @@ final class LogTailModel: ObservableObject {
         let changedFrom = committedLength
         lines.append(contentsOf: newLines)
         if lines.count > Self.maxLines + Self.trimBatch {
+            isTailTruncated = true
             replaceAll(lines: Array(lines.suffix(Self.maxLines)), partial: newPartial)
             return
         }

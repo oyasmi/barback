@@ -223,9 +223,7 @@ private struct ProgramRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            Circle()
-                .fill(dotColor)
-                .frame(width: 8, height: 8)
+            StatusGlyph(style: StatusStyle.presentation(for: snap), size: 12)
             VStack(alignment: .leading, spacing: 1) {
                 Text(snap.program.name)
                     .lineLimit(1)
@@ -242,16 +240,10 @@ private struct ProgramRow: View {
     }
 
     private var subtitle: String {
-        guard snap.program.enabled else { return isDirty ? String(localized: "未保存 · 已停用") : String(localized: "已停用") }
-        if isDirty { return String(localized: "未保存 · ") + snap.statusText }
-        return snap.statusText
+        var parts = [StatusStyle.presentation(for: snap).label]
+        if !snap.program.enabled { parts.append(String(localized: "已停用")) }
+        if isDirty { parts.insert(String(localized: "未保存"), at: 0) }
+        return parts.joined(separator: " · ")
     }
 
-    /// Delegates to `StatusStyle`, the single place that maps state → colour, rather than
-    /// re-deriving the same switch here — a second copy that only needed to stay accurate is
-    /// exactly the kind of thing that quietly drifts (see also `ProgramFormView.StatusPill`).
-    private var dotColor: Color {
-        guard snap.program.enabled else { return .secondary.opacity(0.4) }
-        return StatusStyle.presentation(for: snap).color
-    }
 }

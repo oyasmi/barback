@@ -178,4 +178,59 @@ struct StoreTests {
         #expect(remaining.count == 1)
         #expect(remaining[0].endedAt == nil)
     }
+
+    @Test func historyFiltersBeforePaginationAndReportsFullCount() throws {
+        let store = try makeStore()
+        let id = try store.insertProgram(Program(name: "paged", kind: .oneshot, command: "/bin/true"))
+        let other = try store.insertProgram(Program(name: "other", kind: .oneshot, command: "/bin/true"))
+        for i in 0..<520 {
+            _ = try store.insertRun(RunRecord(programId: id, trigger: .manual,
+                startedAt: Date(timeIntervalSince1970: Double(i)), endedAt: Date(),
+                outcome: i < 10 ? .failed : .succeeded))
+        }
+        _ = try store.insertRun(RunRecord(programId: other, trigger: .manual, endedAt: Date(), outcome: .failed))
+        let first = try store.fetchHistory(programId: id, outcome: nil)
+        #expect(first.totalCount == 520)
+        #expect(first.runs.count == 500)
+        let failures = try store.fetchHistory(programId: id, outcome: .failed, limit: 5)
+        #expect(failures.totalCount == 10)
+        #expect(failures.runs.count == 5)
+        #expect(failures.runs.allSatisfy { $0.programId == id && $0.outcome == .failed })
+        #expect(try store.fetchHistory(programId: nil, outcome: .failed).totalCount == 11)
+    }
+
+    @Test func confirmedHistoryClearPreservesNewAndNewlyFinishedRuns() throws {
+        let store = try makeStore()
+        let id = try store.insertProgram(Program(name: "clear-snapshot", kind: .oneshot, command: "/bin/true"))
+        for i in 0..<820 {
+            _ = try store.insertRun(RunRecord(programId: id, trigger: .manual,
+                endedAt: Date(), outcome: .succeeded, logPath: "/tmp/run-\(i).log"))
+        }
+        let active = try store.insertRun(RunRecord(programId: id, trigger: .manual))
+        let approved = try store.completedRuns(programId: id, outcome: .succeeded)
+        #expect(approved.count == 820)
+        try store.finalizeRun(id: active, endedAt: Date(), exitCode: 0, termSignal: nil, outcome: .succeeded)
+        let new = try store.insertRun(RunRecord(programId: id, trigger: .manual, endedAt: Date(), outcome: .succeeded))
+        let stillActive = try store.insertRun(RunRecord(programId: id, trigger: .manual))
+        // Duplicates and accidentally supplied active IDs must not inflate counts or delete activity.
+        let removed = try store.deleteRuns(records: approved + approved + [RunRecord(id: stillActive, programId: id, trigger: .manual)])
+        #expect(removed.count == 820)
+        #expect(removed.paths.count == 820)
+        #expect(Set(try store.fetchRuns(programId: id).map(\.id)) == Set([active, new, stillActive]))
+        #expect(try store.deleteRuns(records: approved).count == 0)
+    }
+
+    @Test func historyClearDoesNotDeleteAReusedSQLiteId() throws {
+        let store = try makeStore()
+        let id = try store.insertProgram(Program(name: "reused-id", kind: .oneshot, command: "/bin/true"))
+        let original = try store.insertRun(RunRecord(programId: id, trigger: .manual,
+            startedAt: Date(timeIntervalSince1970: 1), endedAt: Date(timeIntervalSince1970: 2), outcome: .succeeded))
+        let approved = try store.completedRuns(programId: id, outcome: nil)
+        _ = try store.deleteRuns(programId: id, outcome: nil)
+        let reused = try store.insertRun(RunRecord(programId: id, trigger: .manual,
+            startedAt: Date(timeIntervalSince1970: 3), endedAt: Date(timeIntervalSince1970: 4), outcome: .succeeded))
+        #expect(reused == original)
+        #expect(try store.deleteRuns(records: approved).count == 0)
+        #expect(try store.fetchRuns(programId: id).count == 1)
+    }
 }

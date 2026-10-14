@@ -12,6 +12,8 @@ enum StatusStyle {
 
     /// System colours, so the panel tracks light/dark mode and "increase contrast".
     static let running = Color(nsColor: .systemGreen)
+    /// Execution is transient work, distinct from a service's sustained green status.
+    static let executing = Color(nsColor: .systemBlue)
     static let transitioning = Color(nsColor: .systemOrange)
     static let failure = Color(nsColor: .systemRed)
     static let active = Color(nsColor: .controlAccentColor)
@@ -26,8 +28,8 @@ enum StatusStyle {
         /// "Everything is fine" shouldn't shout. A panel of ten healthy services used to be a
         /// wall of saturated green capsules, which spends the whole colour budget on the one
         /// state nobody needs to be alerted about — and leaves BACKOFF orange and FATAL red
-        /// competing with it. A quiet state keeps its colour on the dot and the accent bar
-        /// (where it stays scannable) and renders its badge in plain secondary text.
+        /// competing with it. A quiet state keeps its colour on the status glyph (and the
+        /// service's accent bar) and renders its badge in plain secondary text.
         var isQuiet = false
     }
 
@@ -131,30 +133,39 @@ enum StatusStyle {
     private static func oneshot(_ snap: ProgramSnapshot) -> Presentation {
         switch snap.oneshotState ?? .idle {
         case .running:
-            return Presentation(label: String(localized: "执行中"), color: active, symbol: "circle.dotted", isBusy: true)
+            return Presentation(label: String(localized: "执行中"), color: executing, symbol: "circle.dotted", isBusy: true)
         case .succeeded:
-            return Presentation(label: String(localized: "成功"), color: running, symbol: "checkmark.circle.fill", isQuiet: true)
+            return lastOutcomePresentation(.succeeded)
         case .failed:
-            return Presentation(label: String(localized: "失败"), color: failure, symbol: "xmark.circle.fill")
+            return lastOutcomePresentation(.failed)
         case .timeout:
-            return Presentation(label: String(localized: "超时"), color: transitioning, symbol: "exclamationmark.circle.fill")
+            return lastOutcomePresentation(.timeout)
         case .cancelled:
-            return Presentation(label: String(localized: "已中止"), color: neutral, symbol: "minus.circle.fill")
+            return lastOutcomePresentation(.cancelled)
         case .idle:
             guard let outcome = snap.lastRun?.outcome else {
-                return Presentation(label: String(localized: "尚未执行"), color: neutral, symbol: "circle")
+                return Presentation(label: String(localized: "尚未执行"), color: neutral, symbol: "terminal")
             }
-            return Presentation(label: outcomeLabel(outcome), color: outcomeColor(outcome),
-                                symbol: outcomeSymbol(outcome), isQuiet: outcome == .succeeded)
+            return lastOutcomePresentation(outcome)
         }
     }
 
-    // MARK: - Run outcomes
+    /// A completed command reports history, including after the app restores an idle row.
+    /// History entries themselves keep their simple outcome labels.
+    private static func lastOutcomePresentation(_ outcome: RunOutcome) -> Presentation {
+        let label: String
+        switch outcome {
+        case .succeeded: label = String(localized: "上次成功")
+        case .failed: label = String(localized: "上次失败")
+        case .timeout: label = String(localized: "上次超时")
+        case .cancelled: label = String(localized: "上次已中止")
+        case .unknown: label = String(localized: "上次结果未知")
+        }
+        return Presentation(label: label, color: outcomeColor(outcome),
+                            symbol: outcomeSymbol(outcome), isQuiet: outcome == .succeeded)
+    }
 
-    /// Kept as a shim over `RunOutcome.displayText` now that the label lives with the enum —
-    /// the history window and the config sidebar need the same words and used to print the
-    /// raw case name instead.
-    static func outcomeLabel(_ outcome: RunOutcome) -> String { outcome.displayText }
+    // MARK: - Run outcomes
 
     static func outcomeColor(_ outcome: RunOutcome) -> Color {
         switch outcome {

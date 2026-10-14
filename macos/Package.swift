@@ -28,6 +28,10 @@ let package = Package(
             dependencies: ["BarbackCore"]
         ),
         .testTarget(
+            name: "AppTests",
+            dependencies: ["BarbackApp", "BarbackCore"]
+        ),
+        .testTarget(
             name: "ProcessTests",
             dependencies: ["BarbackCore"]
         ),

@@ -9,12 +9,11 @@ import BarbackCore
 /// 常态零开销).
 @MainActor
 final class StatusPanelModel: ObservableObject {
-    /// The panel's clock, advanced once a second by `startClock` while anything is running
-    /// and frozen the rest of the time. Uptimes and the backoff countdown read from it rather
-    /// than calling `Date()` during layout, so every row in one frame agrees on "now".
+    /// The panel's clock advances once a second while open. Uptimes and countdowns read it
+    /// instead of calling `Date()` during layout, so every row agrees on "now".
     @Published private(set) var now = Date()
     @Published private(set) var samples: [Int32: ProcSample] = [:]
-    @Published var searchText = ""
+    @Published var searchText = "" { didSet { reconcileSelection(in: appState.snapshot.programs) } }
     @Published var expandedId: Int64?
     /// Keyboard cursor. `nil` until someone presses ↑/↓ — the panel is a pointer-first
     /// surface and a selection ring on open would just be noise (BAR-10).
@@ -24,7 +23,7 @@ final class StatusPanelModel: ObservableObject {
     /// The header chip someone clicked, narrowing the list to that state. Cleared on its own
     /// once nothing matches any more — the chip it belongs to may have disappeared with its
     /// count, and a filter with no visible way to turn it off is a trap.
-    @Published var filter: PanelFilter?
+    @Published var filter: PanelFilter? { didSet { reconcileSelection(in: appState.snapshot.programs) } }
     /// Newest warn/error event from the last day, for the footer: the supervisor restarts a
     /// crashed service silently, and this is where someone finds out it happened at all.
     @Published private(set) var recentProblem: EventRecord?
@@ -62,6 +61,7 @@ final class StatusPanelModel: ObservableObject {
                 if let filter = self.filter, !snapshot.programs.contains(where: filter.matches) {
                     self.filter = nil
                 }
+                self.reconcileSelection(in: snapshot.programs)
                 if self.isOpen { self.fetchRecentProblem() }
             }
             .store(in: &cancellables)
@@ -71,9 +71,7 @@ final class StatusPanelModel: ObservableObject {
 
     /// Samples CPU/RSS for whatever is showing right now, and starts the panel's clock.
     ///
-    /// Sampling is driven by the panel opening rather than by a repeating timer — nobody
-    /// needs second-by-second precision on these figures, and skipping the timer means zero
-    /// sampling while the panel just sits open.
+    /// Refresh resource samples every three seconds while open; closing cancels all work.
     ///
     /// Services display cumulative CPU time, available immediately from the first sample.
     /// Running one-shots still display CPU%, which needs a second sample over a wall-clock
@@ -98,22 +96,18 @@ final class StatusPanelModel: ObservableObject {
     /// publishes nothing while it waits — so without a clock of its own the panel showed a
     /// countdown and a progress hairline that both sat perfectly still for as long as anyone
     /// looked at them, which design.md §6.3 explicitly says they shouldn't ("面板按本地时钟
-    /// 推进，不必等定时器到点才更新"). This is a `Date()` assignment, not a resample: CPU/RSS
-    /// are sampled only on open (plus a follow-up for one-shots), and the clock is skipped
-    /// entirely when nothing is running, so an all-stopped panel is as free as before.
+    /// 推进，不必等定时器到点才更新"). Resource sampling runs every third clock tick.
     private func startClock() {
         clockTask = Task { [weak self] in
+            var seconds = 0
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
                 guard !Task.isCancelled, let self else { return }
-                guard self.needsClock else { continue }
                 self.now = Date()
+                seconds += 1
+                if seconds % 3 == 0 { self.tick() }
             }
         }
-    }
-
-    private var needsClock: Bool {
-        appState.snapshot.programs.contains(where: \.isActive)
     }
 
     func stopTicking() {
@@ -130,7 +124,7 @@ final class StatusPanelModel: ObservableObject {
     private func tick() {
         now = Date()
         var fresh: [Int32: ProcSample] = [:]
-        for snap in appState.snapshot.programs {
+        for snap in appState.snapshot.programs where snap.isActive {
             guard let pid = snap.pid else { continue }
             if let sample = ProcSampler.sample(pid: pid) { fresh[pid] = sample }
         }
@@ -148,7 +142,7 @@ final class StatusPanelModel: ObservableObject {
     /// the memory they hold together. CPU is left out — services report cumulative CPU time
     /// since their own start, and a sum of those means nothing.
     var resourceSummary: String? {
-        let active = appState.snapshot.programs.filter(\.isActive)
+        let active = appState.snapshot.programs.filter { $0.isActive && $0.pid != nil }
         guard !active.isEmpty else { return nil }
         var parts = [String(localized: "\(active.count) 个进程运行中")]
         let sampled = active.compactMap { sample(for: $0) }
@@ -195,7 +189,21 @@ final class StatusPanelModel: ObservableObject {
 
     // MARK: - Filtering
 
-    var isSearchable: Bool { appState.snapshot.programs.count > 8 }
+    var isSearchable: Bool { appState.snapshot.programs.count > 8 || !searchText.isEmpty }
+
+    private func isVisible(_ snap: ProgramSnapshot) -> Bool {
+        let query = searchText.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let filter, !filter.matches(snap) { return false }
+        return query.isEmpty || snap.program.name.localizedCaseInsensitiveContains(query)
+            || snap.program.command.localizedCaseInsensitiveContains(query)
+            || (snap.program.groupName?.localizedCaseInsensitiveContains(query) ?? false)
+    }
+
+    private func reconcileSelection(in programs: [ProgramSnapshot]) {
+        let visibleIds = Set(programs.filter(isVisible).map(\.id))
+        if let selectedId, !visibleIds.contains(selectedId) { self.selectedId = nil }
+        if let expandedId, !visibleIds.contains(expandedId) { self.expandedId = nil }
+    }
 
     /// Chip counts come from the same predicate the filter applies, so a chip can never
     /// promise rows the filter then doesn't show.
@@ -208,15 +216,7 @@ final class StatusPanelModel: ObservableObject {
     }
 
     func visiblePrograms(kind: ProgramKind) -> [ProgramSnapshot] {
-        let query = searchText.trimmingCharacters(in: .whitespaces)
-        return appState.snapshot.programs.filter { snap in
-            guard snap.program.kind == kind else { return false }
-            if let filter, !filter.matches(snap) { return false }
-            guard !query.isEmpty else { return true }
-            return snap.program.name.localizedCaseInsensitiveContains(query)
-                || snap.program.command.localizedCaseInsensitiveContains(query)
-                || (snap.program.groupName?.localizedCaseInsensitiveContains(query) ?? false)
-        }
+        appState.snapshot.programs.filter { $0.program.kind == kind && isVisible($0) }
     }
 
     // MARK: - Per-program actions
@@ -274,6 +274,8 @@ final class StatusPanelModel: ObservableObject {
         alert.informativeText = String(localized: "将直接发送 SIGKILL，进程没有机会保存状态或清理资源。")
         alert.addButton(withTitle: String(localized: "强制终止"))
         alert.addButton(withTitle: String(localized: "取消"))
+        alert.buttons[0].keyEquivalent = ""
+        alert.buttons[1].keyEquivalent = "\r"
         NSApp.activate()
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         appState.supervisor.forceKill(id: snap.id)
@@ -282,11 +284,6 @@ final class StatusPanelModel: ObservableObject {
     // MARK: - Global actions
 
     func startAll() { appState.supervisor.startAll() }
-
-    /// The footer's one visible bulk button: 全部启动 while anything is left to start,
-    /// otherwise 全部停止. The other two live in the chevron menu beside it — they are rare,
-    /// and both already stop to confirm.
-    var prefersStartAll: Bool { canStartAll || !canStopAll }
 
     /// String(localized: "全部停止") / String(localized: "全部重启") sit one click away in a transient popover, and a stray click
     /// used to take every service down without a word (only in-flight one-shots were asked
@@ -323,6 +320,8 @@ final class StatusPanelModel: ObservableObject {
         alert.informativeText = detail + "\n\n" + listed + (names.count > 12 ? "\n…" : "")
         alert.addButton(withTitle: button)
         alert.addButton(withTitle: String(localized: "取消"))
+        alert.buttons[0].keyEquivalent = ""
+        alert.buttons[1].keyEquivalent = "\r"
         NSApp.activate()
         return alert.runModal() == .alertFirstButtonReturn
     }
@@ -359,9 +358,11 @@ final class StatusPanelModel: ObservableObject {
         guard let scalar = event.charactersIgnoringModifiers?.unicodeScalars.first else { return false }
         switch Int(scalar.value) {
         case NSUpArrowFunctionKey:
+            guard event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty else { return false }
             moveSelection(-1)
             return true
         case NSDownArrowFunctionKey:
+            guard event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty else { return false }
             moveSelection(1)
             return true
         case NSCarriageReturnCharacter, NSEnterCharacter:
@@ -404,8 +405,8 @@ final class StatusPanelModel: ObservableObject {
     }
 
     var selectedProgram: ProgramSnapshot? {
-        guard let selectedId else { return nil }
-        return appState.program(id: selectedId)
+        guard let selectedId, let snap = appState.program(id: selectedId), isVisible(snap) else { return nil }
+        return snap
     }
 
     private func moveSelection(_ delta: Int) {
@@ -525,6 +526,7 @@ enum PanelFilter: Hashable {
     case stopped
     case transitioning
     case fatal
+    case oneshotProblem
     case oneshotRunning
 
     func matches(_ snap: ProgramSnapshot) -> Bool {
@@ -540,6 +542,8 @@ enum PanelFilter: Hashable {
             return snap.serviceState == .starting || snap.serviceState == .backoff || snap.serviceState == .stopping
         case .fatal:
             return snap.serviceState == .fatal
+        case .oneshotProblem:
+            return snap.hasOneshotProblem
         case .oneshotRunning:
             return snap.oneshotState == .running
         }

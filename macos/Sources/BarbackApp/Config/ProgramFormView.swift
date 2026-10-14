@@ -23,6 +23,7 @@ struct ProgramFormView: View {
     let onShowHistory: () -> Void
     let onDuplicate: () -> Void
     let onDelete: () -> Void
+    @State private var confirmingRevert = false
 
     private var index: FieldErrorIndex { FieldErrorIndex(errors, environmentErrors: environmentErrors, program: program) }
     private var needsRestart: Bool {
@@ -51,6 +52,13 @@ struct ProgramFormView: View {
         }
         .frame(minWidth: 540)
         .disabled(isSaving)
+        .confirmationDialog("放弃这些更改？", isPresented: $confirmingRevert, titleVisibility: .visible) {
+            Button("放弃更改", role: .destructive, action: onRevert)
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("将丢弃「\(program.name)」的未保存内容。")
+        }
+        .onChange(of: program.id) { confirmingRevert = false }
     }
 
     // MARK: - Header
@@ -64,7 +72,7 @@ struct ProgramFormView: View {
                     .help(program.name)
                 Spacer(minLength: 8)
                 if !isNew {
-                    Button("日志", action: onShowLog)
+                    Button(program.kind == .oneshot ? String(localized: "本次输出") : String(localized: "日志"), action: onShowLog)
                     if program.kind == .oneshot { Button("历史", action: onShowHistory) }
                     Menu {
                         Button("复制程序", action: onDuplicate)
@@ -83,6 +91,7 @@ struct ProgramFormView: View {
             HStack(spacing: 8) {
                 Text(program.kind == .service ? String(localized: "kind.service", defaultValue: "服务") : String(localized: "kind.oneshot", defaultValue: "一次性命令"))
                 if let snapshot { StatusPill(snap: snapshot) }
+                if !program.enabled { MetaTag(text: String(localized: "已停用")) }
                 Text(subtitle).lineLimit(1).help(subtitle)
             }
             .font(.caption)
@@ -99,10 +108,10 @@ struct ProgramFormView: View {
         guard let snapshot, !isNew else { return String(localized: "尚未保存") }
         var parts: [String] = []
         if let pid = snapshot.pid { parts.append("PID \(pid)") }
-        if let startedAt = snapshot.startedAt { parts.append(String(localized: "已运行 \(Self.uptime(since: startedAt))")) }
-        if let run = snapshot.lastRun, snapshot.program.kind == .oneshot {
-            parts.append(String(localized: "上次 \(run.outcome?.displayText ?? "—")"))
-            if let duration = run.duration { parts.append(String(format: "%.1fs", duration)) }
+        if snapshot.isActive, let startedAt = snapshot.startedAt { parts.append(String(localized: "已运行 \(Self.uptime(since: startedAt))")) }
+        if let run = snapshot.lastRun, snapshot.program.kind == .oneshot, !snapshot.isActive {
+            parts.append(StatusStyle.timestamp(run.startedAt))
+            if let duration = run.duration { parts.append(String(localized: "耗时 \(StatusStyle.runDuration(duration))")) }
         }
         if let code = snapshot.lastRun?.exitCode, snapshot.program.kind == .service, !snapshot.isActive {
             parts.append(String(localized: "上次退出码 \(code)"))
@@ -143,8 +152,7 @@ struct ProgramFormView: View {
             }
             Spacer(minLength: 8)
             if isDirty {
-                Button("放弃更改", action: onRevert)
-                    .keyboardShortcut(.cancelAction)
+                Button("放弃更改…") { confirmingRevert = true }
             }
             if needsRestart {
                 if isDirty {
@@ -187,18 +195,17 @@ struct ProgramFormView: View {
 
 private struct StatusPill: View {
     let snap: ProgramSnapshot
+    private var style: StatusStyle.Presentation { StatusStyle.presentation(for: snap) }
 
     var body: some View {
         HStack(spacing: 5) {
-            Circle().fill(color).frame(width: 7, height: 7)
-            Text(snap.statusText).font(.caption)
+            StatusGlyph(style: style, size: 12)
+            Text(style.label).font(.caption)
         }
         .padding(.horizontal, 9)
         .padding(.vertical, 4)
-        .background(color.opacity(0.12), in: Capsule())
+        .background(style.isQuiet ? Color.primary.opacity(0.06) : style.color.opacity(0.12), in: Capsule())
+        .fixedSize()
     }
 
-    /// Delegates to `StatusStyle`, the single place that maps state → colour/label/symbol, so
-    /// this pill can never quietly drift from what the status panel shows for the same state.
-    private var color: Color { StatusStyle.presentation(for: snap).color }
 }

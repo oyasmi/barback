@@ -16,9 +16,7 @@ struct ProgramRowView: View {
     private var isExpanded: Bool { model.expandedId == snap.id }
     private var isSelected: Bool { model.selectedId == snap.id }
     private var style: StatusStyle.Presentation { StatusStyle.presentation(for: snap) }
-    /// Secondary actions are revealed on approach — pointer, keyboard cursor, or an open
-    /// drawer. The primary button stays put; four permanent controls per row turned a list of
-    /// ten services into forty buttons to scan past (design.md §6.3).
+    /// Approach highlights the primary; secondary actions live in one persistent menu.
     private var showsSecondaryActions: Bool { isHovering || isSelected || isExpanded }
     private var isService: Bool { snap.program.kind == .service }
     private var serviceState: ServiceState { snap.serviceState ?? .stopped }
@@ -105,12 +103,20 @@ struct ProgramRowView: View {
                 .foregroundStyle(snap.program.enabled ? .primary : .secondary)
                 .lineLimit(1)
                 .truncationMode(.middle)
+                .help(snap.program.name)
             // The state's wording leads the detail line below, which leaves the title row its
             // width for the name. Compact density has no detail line, so there the badge stays.
-            // A disabled program's 已停用 is an attribute rather than a state and stays up here.
+            // Disabled is an attribute, never a replacement for the live state.
             if !snap.program.enabled {
-                MetaTag(text: String(localized: "已停用"))
-            } else if isCompact {
+                if isCompact {
+                    Image(systemName: "pause.circle")
+                        .font(.system(size: 11)).foregroundStyle(.secondary)
+                        .help("已停用").accessibilityLabel("已停用")
+                } else {
+                    MetaTag(text: String(localized: "已停用"))
+                }
+            }
+            if isCompact {
                 StateBadge(text: style.label, color: style.color, quiet: style.isQuiet)
             }
             Spacer(minLength: 4)
@@ -122,50 +128,34 @@ struct ProgramRowView: View {
         }
     }
 
-    @ViewBuilder
     private var statusIcon: some View {
-        if style.isBusy {
-            ProgressView()
-                .progressViewStyle(.circular)
-                .controlSize(.small)
-                .scaleEffect(0.6)
-                .frame(width: 14, height: 14)
-        } else {
-            Image(systemName: style.symbol)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(style.color)
-                .frame(width: 14, height: 14)
-        }
+        StatusGlyph(style: style)
     }
 
     private var actionCluster: some View {
         HStack(spacing: 2) {
             primaryButton
             secondaryActions
-                // Kept in the layout rather than removed, so the primary button doesn't shift
-                // sideways the moment the pointer arrives.
-                .opacity(showsSecondaryActions ? 1 : 0)
-                .allowsHitTesting(showsSecondaryActions)
-                .animation(.easeOut(duration: 0.12), value: showsSecondaryActions)
         }
     }
 
     @ViewBuilder
     private var secondaryActions: some View {
-        HStack(spacing: 2) {
+        MenuGlyph(systemImage: "ellipsis", help: String(localized: "程序操作")) {
             if isService {
-                GlyphButton(systemImage: "arrow.clockwise", help: String(localized: "重启 (⌘R)"), isEnabled: serviceState.isActive) {
-                    model.restart(snap)
-                }
-                GlyphButton(systemImage: "doc.plaintext", help: String(localized: "查看日志 (⌘L)")) { model.openLog(snap) }
+                Button("查看日志 (⌘L)") { model.openLog(snap) }
+                Button("重启 (⌘R)") { model.restart(snap) }
+                    .disabled(!serviceState.isActive)
             } else {
-                GlyphButton(systemImage: "doc.plaintext", help: String(localized: "查看本次输出 (⌘L)")) { model.openLog(snap) }
-                GlyphButton(systemImage: "clock.arrow.circlepath", help: String(localized: "执行历史")) { model.openHistory(snap) }
+                Button("查看本次输出 (⌘L)") { model.openLog(snap) }
+                    .disabled(snap.lastRun == nil)
+                Button("执行历史") { model.openHistory(snap) }
             }
-            GlyphButton(systemImage: isExpanded ? "chevron.up" : "chevron.down",
-                        help: isExpanded ? String(localized: "收起详情 (↩)") : String(localized: "展开详情 (↩)")) {
+            Divider()
+            Button(isExpanded ? String(localized: "收起详情 (↩)") : String(localized: "展开详情 (↩)")) {
                 model.toggleExpanded(snap.id)
             }
+            Button("编辑配置…") { model.openConfig(selecting: snap.id) }
         }
     }
 
@@ -193,14 +183,15 @@ struct ProgramRowView: View {
             Spacer(minLength: 0)
         }
         .padding(.leading, 22)
+        .help(detailText)
     }
 
     /// "运行中 · up 2d3h · CPU 累计 12.3s · 48.0 MB": the state's word first, in its colour unless
     /// it is a quiet one, then the figures. Compact density keeps the word in the title row's
-    /// badge instead, and an inactive disabled row lets 已停用 speak for it.
+    /// badge instead. Disabled configuration is an independent attribute.
     private var detailText: Text {
         let rest = isService ? serviceDetail() : oneshotDetail()
-        let leadsWithState = !isCompact && (snap.program.enabled || snap.isActive)
+        let leadsWithState = !isCompact
         guard leadsWithState else { return Text(rest).foregroundColor(.secondary) }
         let lead = Text(style.label)
             .fontWeight(.medium)
@@ -438,13 +429,16 @@ struct ProgramRowView: View {
         return style.color.opacity(isExpanded ? 0.2 : 0)
     }
 
-    /// The scannable spine. A quiet state keeps it, but dimmer: on a healthy panel it should
-    /// read as texture, and let an orange or red bar be the thing that catches the eye.
+    /// Services have a scannable state spine. Commands use their spinner/result glyph only:
+    /// a green bar on a completed command would read as a still-running service.
+    @ViewBuilder
     private var accentBar: some View {
-        Capsule()
-            .fill(style.color.opacity(snap.isActive ? (style.isQuiet ? 0.45 : 0.8) : 0.3))
-            .frame(width: 3, height: 18)
-            .padding(.leading, 1)
-            .padding(.top, 8)
+        if isService {
+            Capsule()
+                .fill(style.color.opacity(snap.isActive ? (style.isQuiet ? 0.45 : 0.8) : 0.3))
+                .frame(width: 3, height: 18)
+                .padding(.leading, 1)
+                .padding(.top, 8)
+        }
     }
 }

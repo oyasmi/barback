@@ -1342,22 +1342,27 @@ public final class Supervisor: @unchecked Sendable {
         }
     }
 
-    /// Deletes completed runs (and their output files) matching the history window's current
-    /// filter. Runs still in flight are never touched by `Store.deleteRuns`, so this can't
-    /// clip a program mid-execution no matter what filter is showing (design.md §6.6, ex-F02).
-    public func clearHistory(programId: Int64?, outcome: RunOutcome?, completion: @escaping @Sendable () -> Void) {
-        queue.async { [self] in
-            if let paths = try? store.deleteRuns(programId: programId, outcome: outcome) {
-                removeRunOutputFiles(paths)
+    public func fetchHistory(programId: Int64?, outcome: RunOutcome?, limit: Int,
+                             completion: @escaping @Sendable (Result<RunHistoryPage, Error>) -> Void) {
+        queue.async { completion(Result { try self.store.fetchHistory(programId: programId, outcome: outcome, limit: limit) }) }
+    }
+
+    public func prepareHistoryClear(programId: Int64?, outcome: RunOutcome?,
+                                    completion: @escaping @Sendable (Result<[RunRecord], Error>) -> Void) {
+        queue.async { completion(Result { try self.store.completedRuns(programId: programId, outcome: outcome) }) }
+    }
+
+    public func clearHistory(records: [RunRecord], completion: @escaping @Sendable (Result<Int, Error>) -> Void) {
+        queue.async {
+            do {
+                let removed = try self.store.deleteRuns(records: records)
+                self.removeRunOutputFiles(removed.paths)
+                self.loadLastRuns()
+                self.publishSnapshot()
+                completion(.success(removed.count))
+            } catch {
+                completion(.failure(error))
             }
-            // The rows the cache mirrors may be exactly the ones just deleted.
-            if let programId {
-                refreshLastRun(programId: programId)
-            } else {
-                loadLastRuns()
-            }
-            publishSnapshot()
-            completion()
         }
     }
 

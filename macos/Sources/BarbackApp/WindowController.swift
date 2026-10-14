@@ -12,6 +12,7 @@ final class WindowController: NSObject, NSWindowDelegate {
     private var configWindow: NSWindow?
     private var configModel: ConfigWindowModel?
     private var historyWindow: NSWindow?
+    private var historyModel: HistoryWindowModel?
     private var eventsWindow: NSWindow?
     private var preferencesWindow: NSWindow?
     private var importWindow: NSWindow?
@@ -76,16 +77,23 @@ final class WindowController: NSObject, NSWindowDelegate {
     func showLogWindow(programId: Int64) {
         guard let snap = appState.program(id: programId) else { return }
         if let existing = logWindows[programId] {
+            existing.title = outputTitle(snap)
             existing.makeKeyAndOrderFront(nil)
             NSApp.activate()
             return
         }
-        let view = LogViewerView(programName: snap.program.name, path: ProgramLogPath.resolve(for: snap))
-        let window = makeWindow(title: String(localized: "日志 · \(snap.program.name)"), size: NSSize(width: 760, height: 520), autosaveName: "barback.log.\(programId)", content: view)
+        let view = ProgramLogViewerView(appState: appState, programId: programId)
+        let window = makeWindow(title: outputTitle(snap), size: NSSize(width: 760, height: 520), autosaveName: "barback.log.\(programId)", content: view)
         window.delegate = self
         logWindows[programId] = window
         NSApp.activate()
         window.makeKeyAndOrderFront(nil)
+    }
+
+    private func outputTitle(_ snap: ProgramSnapshot) -> String {
+        snap.program.kind == .oneshot
+            ? String(localized: "本次输出 · \(snap.program.name)")
+            : String(localized: "日志 · \(snap.program.name)")
     }
 
     func revealLog(programId: Int64) {
@@ -95,14 +103,18 @@ final class WindowController: NSObject, NSWindowDelegate {
 
     func showHistoryWindow(programId: Int64?) {
         if historyWindow == nil {
+            let model = HistoryWindowModel(appState: appState, initialProgramId: programId)
             let view = HistoryWindowView(
+                model: model,
                 appState: appState,
-                initialProgramId: programId,
-                onRerun: { [weak self] id in self?.runOneshotRespectingConfirm(programId: id) }
+                onRerun: { [weak self] run in self?.confirmRerun(run) }
             )
             let window = makeWindow(title: String(localized: "执行历史"), size: NSSize(width: 820, height: 520), autosaveName: "barback.history", content: view)
             window.delegate = self
             historyWindow = window
+            historyModel = model
+        } else {
+            historyModel?.selectProgram(programId)
         }
         NSApp.activate()
         historyWindow?.makeKeyAndOrderFront(nil)
@@ -153,15 +165,18 @@ final class WindowController: NSObject, NSWindowDelegate {
         }
     }
 
-    /// The single place a one-shot gets (re)started from outside the status panel, so the
-    /// `confirmBeforeRun` gate applies no matter which window asked for it (design.md CFG-4).
-    func runOneshotRespectingConfirm(programId: Int64) {
-        guard let snap = appState.program(id: programId), snap.program.kind == .oneshot else { return }
-        if snap.program.confirmBeforeRun {
-            confirmRun(programId: programId)
-        } else {
-            appState.supervisor.runOneshot(id: programId)
-        }
+    private func confirmRerun(_ run: RunRecord) {
+        guard run.endedAt != nil, let snap = appState.program(id: run.programId),
+              snap.program.kind == .oneshot, !snap.isActive else { return }
+        let alert = NSAlert()
+        alert.messageText = String(localized: "用当前配置再次运行「\(snap.program.name)」？")
+        alert.informativeText = String(localized: "所选记录：\(StatusStyle.timestamp(run.startedAt))\n将按当前已保存的配置创建新的执行，不会恢复历史配置。\n当前命令：\(snap.program.command)")
+        alert.addButton(withTitle: String(localized: "再次运行"))
+        alert.addButton(withTitle: String(localized: "取消"))
+        guard alert.runModal() == .alertFirstButtonReturn,
+              let latest = appState.program(id: run.programId), latest.program.updatedAt == snap.program.updatedAt,
+              !latest.isActive else { return }
+        appState.supervisor.runOneshot(id: run.programId)
     }
 
     func exportDiagnostics() {
@@ -215,12 +230,17 @@ final class WindowController: NSObject, NSWindowDelegate {
             configWindow = nil
             configModel = nil
         }
-        if window === historyWindow { historyWindow = nil }
+        if window === historyWindow {
+            historyModel?.stop()
+            historyModel = nil
+            historyWindow = nil
+        }
         if window === eventsWindow { eventsWindow = nil }
         if window === preferencesWindow { preferencesWindow = nil }
         if window === importWindow { importWindow = nil }
         if let id = logWindows.first(where: { $0.value === window })?.key {
             logWindows.removeValue(forKey: id)
+            window.contentViewController = nil
         }
     }
 }

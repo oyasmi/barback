@@ -46,7 +46,7 @@ struct StatusPanelView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
-                // All five chips with their words don't fit beside the two buttons; when they
+                // All six chips with their words don't fit beside the two buttons; when they
                 // all show up at once, the words go and dot + number carry it (the label stays
                 // in the tooltip and for VoiceOver).
                 ViewThatFits(in: .horizontal) {
@@ -88,9 +88,11 @@ struct StatusPanelView: View {
                  showsLabel: showsLabels, always: true)
             chip(.transitioning, label: String(localized: "过渡中"), color: StatusStyle.transitioning,
                  symbol: "circle.bottomhalf.filled", showsLabel: showsLabels)
-            chip(.fatal, label: String(localized: "失败"), color: StatusStyle.failure,
+            chip(.fatal, label: String(localized: "服务失败"), color: StatusStyle.failure,
                  symbol: "exclamationmark.triangle.fill", showsLabel: showsLabels)
-            chip(.oneshotRunning, label: String(localized: "执行中"), color: StatusStyle.active,
+            chip(.oneshotProblem, label: String(localized: "命令异常"), color: StatusStyle.failure,
+                 symbol: "xmark.circle.fill", showsLabel: showsLabels)
+            chip(.oneshotRunning, label: String(localized: "执行中"), color: StatusStyle.executing,
                  symbol: "circle.dotted", showsLabel: showsLabels)
         }
         .fixedSize()
@@ -339,37 +341,25 @@ struct StatusPanelView: View {
                 .monospacedDigit()
                 .foregroundStyle(.tertiary)
                 .lineLimit(1)
+                .help("资源数据在面板打开期间每 3 秒更新")
         }
     }
 
-    /// One visible bulk button that follows the situation, with the rest one chevron away.
+    /// Stable verbs and an explicit global scope, independent of search/filter state.
     private var bulkActions: some View {
-        HStack(spacing: 2) {
-            if model.prefersStartAll {
-                DrawerButton(title: String(localized: "全部启动"), systemImage: "play.fill",
-                             tint: StatusStyle.running, isEnabled: model.canStartAll) {
-                    model.startAll()
-                }
-                .fixedSize()
-            } else {
-                DrawerButton(title: String(localized: "全部停止"), systemImage: "stop.fill",
-                             tint: StatusStyle.failure) {
-                    model.stopAll()
-                }
-                .fixedSize()
-            }
-            MenuGlyph(systemImage: "chevron.down", help: String(localized: "更多批量操作")) {
-                if !model.prefersStartAll {
-                    Button("全部启动") { model.startAll() }
-                        .disabled(!model.canStartAll)
-                }
-                if model.prefersStartAll {
-                    Button("全部停止…") { model.stopAll() }
-                        .disabled(!model.canStopAll)
-                }
-                Button("全部重启…") { model.restartAll() }
-                    .disabled(!model.canRestartAll)
-            }
+        Menu("批量操作") {
+            Text("作用于全部程序，不受当前筛选影响")
+            Divider()
+            Button("启动全部已启用服务") { model.startAll() }
+                .disabled(!model.canStartAll)
+            Button("停止全部程序…") { model.stopAll() }
+                .disabled(!model.canStopAll)
+            Button("重启全部活动服务…") { model.restartAll() }
+                .disabled(!model.canRestartAll)
         }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .font(.system(size: 11))
+        .help("作用于全部程序，不受当前筛选影响")
     }
 }

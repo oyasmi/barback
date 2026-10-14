@@ -20,6 +20,12 @@ public struct ProgramSnapshot: Identifiable, Equatable, Sendable {
         serviceState?.isActive ?? (oneshotState?.isActive ?? false)
     }
 
+    /// Completed command failures remain visible until the command runs again or history is cleared.
+    public var hasOneshotProblem: Bool {
+        guard program.kind == .oneshot, !isActive else { return false }
+        return lastRun?.outcome == .failed || lastRun?.outcome == .timeout
+    }
+
     public var statusText: String {
         switch program.kind {
         case .service:

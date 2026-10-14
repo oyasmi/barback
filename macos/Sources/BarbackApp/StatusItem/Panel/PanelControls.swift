@@ -1,5 +1,30 @@
 import SwiftUI
 
+/// Shared shape, motion and colour for the panel, configuration list and detail header.
+struct StatusGlyph: View {
+    let style: StatusStyle.Presentation
+    var size: CGFloat = 14
+
+    var body: some View {
+        Group {
+            if style.isBusy {
+                ProgressView()
+                    .progressViewStyle(.circular)
+                    .tint(style.color)
+                    .colorMultiply(style.color)
+                    .controlSize(.small)
+                    .scaleEffect(0.6)
+            } else {
+                Image(systemName: style.symbol)
+                    .font(.system(size: max(10, size - 3), weight: .semibold))
+                    .foregroundStyle(style.color)
+            }
+        }
+        .frame(width: size, height: size)
+        .accessibilityHidden(true)
+    }
+}
+
 /// The small controls the status panel is built from. They are deliberately hand-rolled
 /// rather than `.bordered` buttons: a menu-bar panel is dense, and the stock control
 /// metrics leave no room for four actions plus a status line on one row.
@@ -187,7 +212,7 @@ struct SummaryChip: View {
     }
 }
 
-/// A glyph that opens a menu — the footer's chevron of less common bulk actions.
+/// A glyph that opens a row's menu of secondary actions.
 ///
 /// On macOS a SwiftUI `Menu` is drawn by an AppKit pop-up button, which flattens any custom
 /// label down to an image and a title; so this keeps to a bare symbol, sized to sit on the
@@ -214,9 +239,9 @@ struct MenuGlyph<Content: View>: View {
 
 /// The state badge that sits beside a program's name.
 ///
-/// `quiet` is for the states that need no attention (运行中 / 成功): they keep their colour on
-/// the row's dot and accent bar, but their badge drops to plain secondary text so a screen of
-/// healthy services doesn't spend the whole colour budget saying "fine" (StatusStyle.isQuiet).
+/// `quiet` is for the states that need no attention (运行中 / 上次成功): they keep their colour
+/// on the status glyph and the service's accent bar, but their badge uses secondary text so
+/// healthy rows don't spend the whole colour budget saying "fine" (StatusStyle.isQuiet).
 struct StateBadge: View {
     let text: String
     let color: Color
