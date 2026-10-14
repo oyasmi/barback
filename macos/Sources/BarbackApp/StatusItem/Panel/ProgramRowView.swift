@@ -16,7 +16,7 @@ struct ProgramRowView: View {
     private var isExpanded: Bool { model.expandedId == snap.id }
     private var isSelected: Bool { model.selectedId == snap.id }
     private var style: StatusStyle.Presentation { StatusStyle.presentation(for: snap) }
-    /// Approach highlights the primary; secondary actions live in one persistent menu.
+    /// Hovering, keyboard selection or an open drawer reveals the inline actions.
     private var showsSecondaryActions: Bool { isHovering || isSelected || isExpanded }
     private var isService: Bool { snap.program.kind == .service }
     private var serviceState: ServiceState { snap.serviceState ?? .stopped }
@@ -136,26 +136,30 @@ struct ProgramRowView: View {
         HStack(spacing: 2) {
             primaryButton
             secondaryActions
+                // Reserve their width so the primary stays put as the pointer approaches.
+                .opacity(showsSecondaryActions ? 1 : 0)
+                .allowsHitTesting(showsSecondaryActions)
+                .accessibilityHidden(!showsSecondaryActions)
+                .animation(.easeOut(duration: 0.12), value: showsSecondaryActions)
         }
     }
 
     @ViewBuilder
     private var secondaryActions: some View {
-        MenuGlyph(systemImage: "ellipsis", help: String(localized: "程序操作")) {
+        HStack(spacing: 2) {
             if isService {
-                Button("查看日志 (⌘L)") { model.openLog(snap) }
-                Button("重启 (⌘R)") { model.restart(snap) }
-                    .disabled(!serviceState.isActive)
+                GlyphButton(systemImage: "arrow.clockwise", help: String(localized: "重启 (⌘R)"), isEnabled: serviceState.isActive) {
+                    model.restart(snap)
+                }
+                GlyphButton(systemImage: "doc.plaintext", help: String(localized: "查看日志 (⌘L)")) { model.openLog(snap) }
             } else {
-                Button("查看本次输出 (⌘L)") { model.openLog(snap) }
-                    .disabled(snap.lastRun == nil)
-                Button("执行历史") { model.openHistory(snap) }
+                GlyphButton(systemImage: "doc.plaintext", help: String(localized: "查看本次输出 (⌘L)"), isEnabled: snap.lastRun != nil) { model.openLog(snap) }
+                GlyphButton(systemImage: "clock.arrow.circlepath", help: String(localized: "执行历史")) { model.openHistory(snap) }
             }
-            Divider()
-            Button(isExpanded ? String(localized: "收起详情 (↩)") : String(localized: "展开详情 (↩)")) {
+            GlyphButton(systemImage: isExpanded ? "chevron.up" : "chevron.down",
+                        help: isExpanded ? String(localized: "收起详情 (↩)") : String(localized: "展开详情 (↩)")) {
                 model.toggleExpanded(snap.id)
             }
-            Button("编辑配置…") { model.openConfig(selecting: snap.id) }
         }
     }
 
